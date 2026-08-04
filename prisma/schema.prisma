@@ -166,6 +166,7 @@ model Tbl_UserDetails {
   EmailAddress  String   @unique @db.VarChar(200)
   PhoneNumber   String?  @db.VarChar(50)
   PasswordHash  String   @db.VarChar(255)
+  Gender        String?  @db.VarChar(50)
   CreatedAt     DateTime @default(now())
 
   @@index([EmailAddress])
