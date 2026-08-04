@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  phone     String?
+  createdAt DateTime @default(now())
+}
+
+model Admin {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  passwordHash String   @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model SiteConfig {
+  id         Int      @id @default(autoincrement())
+  configKey  String   @unique @db.VarChar(50)
+  configData Json
+  updatedAt  DateTime @default(now()) @updatedAt
+
+  @@index([configKey])
+}
+
+model AdminActivityLog {
+  id            Int      @id @default(autoincrement())
+  adminUsername String   @db.VarChar(100)
+  action        String   @db.VarChar(255)
+  section       String   @db.VarChar(50)
+  timestamp     DateTime @default(now())
+
+  @@index([adminUsername])
+  @@index([timestamp])
+}
+
+// ── SITE CONFIG MODELS ──
+
+model NavConfig {
+  id               Int      @id @default(1)
+  logo_text        String   @default("SAYO") @db.VarChar(50)
+  contact_btn_text String   @default("CONTACT US") @db.VarChar(100)
+  contact_btn_link String   @default("/contact") @db.VarChar(200)
+  nav_items        Json
+  updated_at       DateTime @updatedAt
+  updated_by       String   @default("admin") @db.VarChar(100)
+}
+
+model HomeConfig {
+  id            Int      @id @default(1)
+  hero_eyebrow  String   @default("Experienced hair stylists") @db.VarChar(200)
+  hero_heading  String   @default("Enjoy Professional Beauty Services!") @db.VarChar(500)
+  hero_body     String   @db.Text
+  hero_cta_text String   @default("Reserve Experience") @db.VarChar(100)
+  hero_cta_link String   @default("/contact") @db.VarChar(200)
+  updated_at    DateTime @updatedAt
+  updated_by    String   @default("admin") @db.VarChar(100)
+}
+
+model FooterConfig {
+  id               Int      @id @default(1)
+  brand_name       String   @default("SAYO") @db.VarChar(100)
+  brand_tagline    String   @default("We are experienced in making you more beautiful") @db.VarChar(300)
+  contact_phone    String   @default("+94 77 233 6233") @db.VarChar(50)
+  contact_email    String   @default("hello@sayobeauty.com") @db.VarChar(100)
+  contact_address  String   @db.Text
+  copyright_text   String   @default("© 2025 SAYO Beauty. All rights reserved.") @db.VarChar(300)
+  locations        Json
+  quick_links      Json
+  social_whatsapp  String   @default("") @db.VarChar(300)
+  social_facebook  String   @default("") @db.VarChar(300)
+  social_instagram String   @default("") @db.VarChar(300)
+  updated_at       DateTime @updatedAt
+  updated_by       String   @default("admin") @db.VarChar(100)
+}
+
+model AboutConfig {
+  id                    Int      @id @default(1)
+  hero_eyebrow          String   @default("OUR STORY") @db.VarChar(200)
+  hero_heading          String   @default("We are experience in making you more beautiful") @db.VarChar(500)
+  hero_body             String   @db.Text
+  team_section_title    String   @default("Meet the Visionaries") @db.VarChar(200)
+  staff                 Json
+  gallery_section_title String   @default("Transformations & Artistry") @db.VarChar(200)
+  gallery_description   String   @db.Text
+  gallery_images        Json
+  review_section_title  String   @default("What Our Clients Say") @db.VarChar(200)
+  reviews               Json
+  updated_at            DateTime @updatedAt
+  updated_by            String   @default("admin") @db.VarChar(100)
+}
+
+model ServicesConfig {
+  id            Int      @id @default(1)
+  hero_heading  String   @default("Tailored Treatments for Your Unique Glow") @db.VarChar(500)
+  hero_subtitle String   @db.Text
+  categories    Json
+  price_list    Json
+  updated_at    DateTime @updatedAt
+  updated_by    String   @default("admin") @db.VarChar(100)
+}
+
+model ContactConfig {
+  id                 Int      @id @default(1)
+  hero_eyebrow       String   @default("Luxury Concierge Experience") @db.VarChar(200)
+  hero_heading       String   @default("GET IN TOUCH") @db.VarChar(200)
+  hero_subtitle      String   @db.Text
+  cta_primary_text   String   @default("Send an Inquiry") @db.VarChar(100)
+  cta_secondary_text String   @default("Call Us Now") @db.VarChar(100)
+  phone_number       String   @default("0772336233") @db.VarChar(50)
+  email_address      String   @default("info@sayobeauty.com") @db.VarChar(100)
+  stats              Json
+  map_embed_src      String   @db.Text
+  map_address        String   @db.Text
+  map_open_href      String   @db.Text
+  social_instagram   String   @default("") @db.VarChar(300)
+  social_facebook    String   @default("") @db.VarChar(300)
+  social_whatsapp    String   @default("") @db.VarChar(300)
+  branches           Json
+  updated_at         DateTime @updatedAt
+  updated_by         String   @default("admin") @db.VarChar(100)
+}
+
+model Tbl_Feedback {
+  id          Int      @id @default(autoincrement())
+  cusName     String   @db.VarChar(200)
+  cusEmail    String   @db.VarChar(200)
+  cusLocation String   @db.VarChar(100)
+  cusService  String   @db.VarChar(200)
+  cusRating   Int      @default(0)
+  cusComment  String   @db.Text
+  cusConsent  Boolean  @default(false)
+  isPublished Boolean  @default(false)   
+  submittedAt DateTime @default(now())
+
+  @@index([cusEmail])
+  @@index([submittedAt])
+  @@index([cusLocation])
+  @@index([cusRating])
+  @@index([isPublished])
+}
+model GalleryConfig {
+  id                Int      @id @default(autoincrement())
+  hero_eyebrow      String   @default("")
+  hero_title        String   @default("")
+  hero_subtitle     String   @default("")
+  section_title     String   @default("")
+  section_subtitle  String   @default("")
+  items             Json
+  updated_by        String?
+  updatedAt         DateTime @updatedAt
+}
