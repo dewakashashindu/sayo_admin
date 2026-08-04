@@ -159,3 +159,24 @@ model GalleryConfig {
   updated_by        String?
   updatedAt         DateTime @updatedAt
 }
+
+model Tbl_UserDetails {
+  UserId        Int      @id @default(autoincrement())
+  UserName      String   @db.VarChar(200)
+  EmailAddress  String   @unique @db.VarChar(200)
+  PhoneNumber   String?  @db.VarChar(50)
+  PasswordHash  String   @db.VarChar(255)
+  CreatedAt     DateTime @default(now())
+
+  @@index([EmailAddress])
+}
+
+model Tbl_OtpStore {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique @db.VarChar(200)
+  code      String   @db.VarChar(6)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}

@@ -30,6 +30,7 @@ export default function RegisterPage() {
   const [agree, setAgree]                     = useState(false);
   const [loading, setLoading]                 = useState(false);
   const [success, setSuccess]                 = useState(false);
+  const [serverError, setServerError]         = useState('');   // ← new
 
   const [tName, setTName]         = useState(false);
   const [tEmail, setTEmail]       = useState(false);
@@ -38,12 +39,12 @@ export default function RegisterPage() {
   const [tConfirm, setTConfirm]   = useState(false);
   const [tAgree, setTAgree]       = useState(false);
 
-  const errName    = tName    && !name.trim()               ? 'Full name is required.'                   : '';
-  const errEmail   = tEmail   && !isValidEmail(email)        ? 'Enter a valid email address.'             : '';
-  const errPhone   = tPhone   && !isValidPhone(phone)        ? 'Enter a valid phone number.'              : '';
-  const errPass    = tPassword && password.length < 6        ? 'Password must be at least 6 characters.'  : '';
-  const errConfirm = tConfirm  && confirmPassword !== password ? 'Passwords do not match.'                : '';
-  const errAgree   = tAgree   && !agree                      ? 'You must agree to the terms.'             : '';
+  const errName    = tName    && !name.trim()                ? 'Full name is required.'                    : '';
+  const errEmail   = tEmail   && !isValidEmail(email)         ? 'Enter a valid email address.'              : '';
+  const errPhone   = tPhone   && !isValidPhone(phone)         ? 'Enter a valid phone number.'               : '';
+  const errPass    = tPassword && password.length < 6         ? 'Password must be at least 6 characters.'  : '';
+  const errConfirm = tConfirm  && confirmPassword !== password ? 'Passwords do not match.'                  : '';
+  const errAgree   = tAgree   && !agree                       ? 'You must agree to the terms.'              : '';
 
   const canSubmit =
     !!name.trim() &&
@@ -53,17 +54,39 @@ export default function RegisterPage() {
     confirmPassword === password &&
     agree;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  /* ══ SUBMIT ══ */
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setTName(true); setTEmail(true); setTPhone(true);
     setTPassword(true); setTConfirm(true); setTAgree(true);
     if (!canSubmit) return;
+
     setLoading(true);
-    /* ── replace with real API call ── */
-    setTimeout(() => {
-      setLoading(false);
+    setServerError('');
+
+    try {
+      const res = await fetch('/api/auth/register', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ name, email, phone, password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        // e.g. 409 duplicate email, 400 validation, 500 server error
+        setServerError(data.error ?? 'Registration failed. Please try again.');
+        return;
+      }
+
+      // ✅ success
       setSuccess(true);
-    }, 1300);
+
+    } catch {
+      setServerError('Network error. Please check your connection and try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   /* ══ SUCCESS ══ */
@@ -294,6 +317,22 @@ export default function RegisterPage() {
                   />
                 </div>
                 {errAgree && <p className="field-err" style={{ marginBottom: '1rem' }}>{errAgree}</p>}
+
+                {/* ── server-side error banner ── */}
+                {serverError && (
+                  <div style={{
+                    background: 'rgba(220,38,38,0.12)',
+                    border: '1px solid rgba(220,38,38,0.4)',
+                    borderRadius: '0.5rem',
+                    padding: '0.7rem 1rem',
+                    marginBottom: '1rem',
+                    color: '#fca5a5',
+                    fontSize: '0.83rem',
+                    fontFamily: tokens.font.family,
+                  }}>
+                    {serverError}
+                  </div>
+                )}
 
                 {/* submit */}
                 <button
