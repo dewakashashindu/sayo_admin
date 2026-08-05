@@ -64,3 +64,6 @@ if (process.env.NODE_ENV !== 'production') {
   globalForPrisma.localPrisma = localPrisma;
   globalForPrisma.cloudPrisma = cloudPrisma;
 }
+
+// ── Export default alias for single-instance routes ─────────────────────────
+export const prisma = localPrisma;

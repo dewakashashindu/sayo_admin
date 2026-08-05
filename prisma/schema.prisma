@@ -160,17 +160,7 @@ model GalleryConfig {
   updatedAt         DateTime @updatedAt
 }
 
-model Tbl_UserDetails {
-  UserId        Int      @id @default(autoincrement())
-  UserName      String   @db.VarChar(200)
-  EmailAddress  String   @unique @db.VarChar(200)
-  PhoneNumber   String?  @db.VarChar(50)
-  PasswordHash  String   @db.VarChar(255)
-  Gender        String?  @db.VarChar(50)
-  CreatedAt     DateTime @default(now())
 
-  @@index([EmailAddress])
-}
 
 model Tbl_OtpStore {
   id        Int      @id @default(autoincrement())
@@ -180,4 +170,43 @@ model Tbl_OtpStore {
   createdAt DateTime @default(now())
 
   @@index([email])
+}
+
+
+// schema.prisma
+model Tbl_UserDetails {
+  UserId        Int      @id @default(autoincrement())
+  UserName      String   @db.VarChar(200)
+  EmailAddress  String   @unique @db.VarChar(200)
+  PhoneNumber   String?  @db.VarChar(50)
+  PasswordHash  String   @db.VarChar(255)
+  Gender        String?  @db.VarChar(50)
+  CreatedAt     DateTime @default(now())
+
+  bookings      Tbl_Bookings[]
+
+  @@index([EmailAddress])
+}
+
+model Tbl_Bookings {
+  BookingId       Int      @id @default(autoincrement())
+  UserId          Int
+  BookingMode     String   @db.VarChar(50)
+  Gender          String   @db.VarChar(10)
+  Location        String   @db.VarChar(100)
+  Services        String   @db.Text
+  Categories      String   @db.VarChar(255)
+  TotalDuration   Int
+  TotalPrice      Int
+  Providers       String   @db.VarChar(255)
+  BookingDate     String   @db.VarChar(50)
+  TimeSlot        String   @db.VarChar(50)
+  SpecialNotes    String?  @db.Text
+  Status          String   @default("pending") @db.VarChar(50)
+  CreatedAt       DateTime @default(now())
+
+  user            Tbl_UserDetails @relation(fields: [UserId], references: [UserId])
+
+  @@index([UserId])
+  @@index([BookingDate])
 }

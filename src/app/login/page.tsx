@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   tokens,
   globalCss,
@@ -20,22 +20,32 @@ import {
   spinnerStyle,
 } from '@/components/auth/shared';
 
-export default function LoginPage() {
-  const router = useRouter();
+// Shape of the object saved to localStorage under key 'user'.
+// Extend this interface (and the save call below) when your API
+// returns Gender and PhoneNumber.
+interface StoredUser {
+  userId: number;
+  name:   string;
+  email:  string;
+  gender?:      string;
+  phoneNumber?: string;
+}
 
-  const [email, setEmail]       = useState('');
+export default function LoginPage() {
+  const router       = useRouter();
+  const searchParams = useSearchParams();
+
+  const [email,    setEmail]    = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
-  const [loading, setLoading]   = useState(false);
-  const [success, setSuccess]   = useState(false);
-  const [userName, setUserName] = useState('');
+  const [loading,  setLoading]  = useState(false);
   const [apiError, setApiError] = useState('');
 
-  const [tEmail, setTEmail]       = useState(false);
+  const [tEmail,    setTEmail]    = useState(false);
   const [tPassword, setTPassword] = useState(false);
 
-  const errEmail    = tEmail    && !isValidEmail(email) ? 'Enter a valid email address.'            : '';
-  const errPassword = tPassword && password.length < 6  ? 'Password must be at least 6 characters.' : '';
+  const errEmail    = tEmail    && !isValidEmail(email)   ? 'Enter a valid email address.'             : '';
+  const errPassword = tPassword && password.length < 6    ? 'Password must be at least 6 characters.'  : '';
   const canSubmit   = isValidEmail(email) && password.length >= 6;
 
   /* ══ SUBMIT ══ */
@@ -60,18 +70,23 @@ export default function LoginPage() {
         return;
       }
 
-      /* ── store minimal session info ── */
-      sessionStorage.setItem('sayo_user', JSON.stringify({
+      // ── Persist user details to localStorage ──────────────────────────────
+      // The API currently returns: userId, name, email.
+      // When your API also returns gender / phoneNumber, add them here and
+      // to the StoredUser interface above.
+      const user: StoredUser = {
         userId: data.userId,
         name:   data.name,
         email:  data.email,
-      }));
+        gender:      data.gender,
+        phoneNumber: data.phoneNumber,
+      };
+      localStorage.setItem('user', JSON.stringify(user));
+      // ──────────────────────────────────────────────────────────────────────
 
-      setUserName(data.name);
-      setSuccess(true);
-
-      /* ── auto-redirect after 2 s ── */
-      setTimeout(() => router.push('/booking'), 2000);
+      // ── Redirect immediately (honour ?redirect= query param) ──────────────
+      const redirectTo = searchParams.get('redirect') ?? '/booking';
+      router.push(redirectTo);
 
     } catch {
       setApiError('Network error. Please check your connection and try again.');
@@ -79,81 +94,6 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
-
-  /* ══ SUCCESS ══ */
-  if (success) {
-    return (
-      <>
-        <style>{globalCss}</style>
-        <main style={mainStyle}>
-          <div style={overlayStyle} />
-          <div style={{
-            position: 'relative', zIndex: 1,
-            minHeight: '100vh', display: 'flex',
-            alignItems: 'center', justifyContent: 'center', padding: '2rem',
-          }}>
-            <div className="reveal-up" style={{ maxWidth: '460px', textAlign: 'center' }}>
-
-              <div className="check-pop" style={{
-                width: '5.5rem', height: '5.5rem', borderRadius: '50%',
-                background: 'rgba(184,134,11,0.15)',
-                border: `2px solid ${tokens.color.gold}`,
-                display: 'flex', alignItems: 'center',
-                justifyContent: 'center', margin: '0 auto 1.5rem',
-              }}>
-                <Ico.Check s={34} c={tokens.color.gold} />
-              </div>
-
-              <p style={{
-                color: tokens.color.gold, fontSize: '0.68rem', fontWeight: 700,
-                letterSpacing: '0.28em', textTransform: 'uppercase', marginBottom: '0.5rem',
-              }}>
-                Signed In Successfully
-              </p>
-
-              <h2 style={{
-                color: '#fff', fontSize: 'clamp(1.6rem,3vw,2.2rem)',
-                fontWeight: 600, marginBottom: '0.75rem',
-              }}>
-                Welcome Back, {userName.split(' ')[0]}!
-              </h2>
-
-              <p style={{
-                color: tokens.color.whiteMuted, fontSize: '0.88rem',
-                lineHeight: 1.8, marginBottom: '2rem',
-              }}>
-                You have successfully signed in to your Sayo account.
-                <br />
-                <span style={{ color: tokens.color.whiteFaint, fontSize: '0.8rem' }}>
-                  Redirecting you to the booking page…
-                </span>
-              </p>
-
-              <Link
-                href="/booking"
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '0.45rem',
-                  padding: '0.85rem 2.5rem', fontSize: '0.9rem',
-                  background: 'linear-gradient(135deg,#B8860B,#d4a017)',
-                  color: '#fff', borderRadius: '0.75rem',
-                  fontFamily: tokens.font.family, fontWeight: 600,
-                  letterSpacing: '0.06em', textDecoration: 'none',
-                  boxShadow: '0 8px 28px rgba(184,134,11,0.38)',
-                }}
-              >
-                Go to Booking Page
-                <svg width={15} height={15} viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2.5"
-                  strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </Link>
-            </div>
-          </div>
-        </main>
-      </>
-    );
-  }
 
   /* ══ FORM ══ */
   return (

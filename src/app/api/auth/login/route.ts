@@ -1,5 +1,3 @@
-// app/api/auth/login/route.ts
-
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { localPrisma, cloudPrisma } from '@/lib/prisma';
@@ -16,13 +14,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { email, password } = body as { email?: string; password?: string };
 
-    /* ── basic validation ── */
-    if (!email?.trim())              return NextResponse.json({ error: 'Email address is required.'              }, { status: 400 });
-    if (!password || password.length < 6) return NextResponse.json({ error: 'Password must be at least 6 characters.' }, { status: 400 });
+    if (!email?.trim())
+      return NextResponse.json({ error: 'Email address is required.' }, { status: 400 });
+    if (!password || password.length < 6)
+      return NextResponse.json({ error: 'Password must be at least 6 characters.' }, { status: 400 });
 
     const emailNorm = email.trim().toLowerCase();
 
-    /* ── try cloud first, fall back to local ── */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const localClient = localPrisma as any;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,19 +31,35 @@ export async function POST(req: NextRequest) {
     const cloudModel  = MODEL_NAMES.find(n => typeof cloudClient[n]?.findUnique === 'function');
 
     if (!localModel && !cloudModel) {
-      return NextResponse.json({ error: 'User model not found. Run: npx prisma generate' }, { status: 500 });
+      return NextResponse.json(
+        { error: 'User model not found. Run: npx prisma generate' },
+        { status: 500 }
+      );
     }
 
     const modelName = cloudModel ?? localModel!;
 
-    /* ── look up user ── */
-    let user: { UserId: number; UserName: string; EmailAddress: string; PasswordHash: string } | null = null;
+    let user: {
+      UserId:       number;
+      UserName:     string;
+      EmailAddress: string;
+      PasswordHash: string;
+      PhoneNumber:  string | null;  // ← ADD
+      Gender:       string | null;  // ← ADD
+    } | null = null;
     let source = 'cloud';
 
     try {
       user = await cloudClient[modelName].findUnique({
-        where: { EmailAddress: emailNorm },
-        select: { UserId: true, UserName: true, EmailAddress: true, PasswordHash: true },
+        where:  { EmailAddress: emailNorm },
+        select: {
+          UserId:       true,
+          UserName:     true,
+          EmailAddress: true,
+          PasswordHash: true,
+          PhoneNumber:  true,   // ← ADD
+          Gender:       true,   // ← ADD
+        },
       });
     } catch (err) {
       console.warn('[login] cloud lookup failed, trying local:', errMsg(err));
@@ -54,8 +68,15 @@ export async function POST(req: NextRequest) {
     if (!user && localModel) {
       try {
         user = await localClient[localModel].findUnique({
-          where: { EmailAddress: emailNorm },
-          select: { UserId: true, UserName: true, EmailAddress: true, PasswordHash: true },
+          where:  { EmailAddress: emailNorm },
+          select: {
+            UserId:       true,
+            UserName:     true,
+            EmailAddress: true,
+            PasswordHash: true,
+            PhoneNumber:  true,   // ← ADD
+            Gender:       true,   // ← ADD
+          },
         });
         source = 'local';
       } catch (err) {
@@ -63,24 +84,30 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    /* ── user not found ── */
     if (!user) {
-      return NextResponse.json({ error: 'No account found with this email address.' }, { status: 401 });
+      return NextResponse.json(
+        { error: 'No account found with this email address.' },
+        { status: 401 }
+      );
     }
 
-    /* ── verify password ── */
     const passwordMatch = await bcrypt.compare(password, user.PasswordHash);
     if (!passwordMatch) {
-      return NextResponse.json({ error: 'Incorrect password. Please try again.' }, { status: 401 });
+      return NextResponse.json(
+        { error: 'Incorrect password. Please try again.' },
+        { status: 401 }
+      );
     }
 
-    /* ── success ── */
     console.log(`[login] success — UserId: ${user.UserId} source: ${source}`);
+
     return NextResponse.json({
-      success: true,
-      userId:  user.UserId,
-      name:    user.UserName,
-      email:   user.EmailAddress,
+      success:     true,
+      userId:      user.UserId,
+      name:        user.UserName,
+      email:       user.EmailAddress,
+      phoneNumber: user.PhoneNumber ?? '',   // ← ADD
+      gender:      user.Gender      ?? '',   // ← ADD
     }, { status: 200 });
 
   } catch (err) {

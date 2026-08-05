@@ -23,6 +23,7 @@ import {
 import GenderSelect, { type GenderValue } from '@/components/auth/GenderSelect';
 
 export default function RegisterPage() {
+  /* ── field state ── */
   const [name,            setName           ] = useState('');
   const [email,           setEmail          ] = useState('');
   const [phone,           setPhone          ] = useState('');
@@ -30,11 +31,13 @@ export default function RegisterPage() {
   const [password,        setPassword       ] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agree,           setAgree          ] = useState(false);
-  const [loading,         setLoading        ] = useState(false);
-  const [success,         setSuccess        ] = useState(false);
-  const [serverError,     setServerError    ] = useState('');
 
-  /* touched flags */
+  /* ── ui state ── */
+  const [loading,     setLoading    ] = useState(false);
+  const [success,     setSuccess    ] = useState(false);
+  const [serverError, setServerError] = useState('');
+
+  /* ── touched flags ── */
   const [tName,     setTName    ] = useState(false);
   const [tEmail,    setTEmail   ] = useState(false);
   const [tPhone,    setTPhone   ] = useState(false);
@@ -43,15 +46,16 @@ export default function RegisterPage() {
   const [tConfirm,  setTConfirm ] = useState(false);
   const [tAgree,    setTAgree   ] = useState(false);
 
-  /* inline errors */
-  const errName    = tName     && !name.trim()                 ? 'Full name is required.'                   : '';
-  const errEmail   = tEmail    && !isValidEmail(email)          ? 'Enter a valid email address.'             : '';
-  const errPhone   = tPhone    && !isValidPhone(phone)          ? 'Enter a valid phone number.'              : '';
-  const errGender  = tGender   && !gender                       ? 'Please select your gender.'              : '';
-  const errPass    = tPassword && password.length < 6           ? 'Password must be at least 6 characters.' : '';
-  const errConfirm = tConfirm  && confirmPassword !== password  ? 'Passwords do not match.'                 : '';
-  const errAgree   = tAgree    && !agree                        ? 'You must agree to the terms.'            : '';
+  /* ── inline validation errors ── */
+  const errName    = tName     && !name.trim()                ? 'Full name is required.'                   : '';
+  const errEmail   = tEmail    && !isValidEmail(email)         ? 'Enter a valid email address.'             : '';
+  const errPhone   = tPhone    && !isValidPhone(phone)         ? 'Enter a valid phone number.'              : '';
+  const errGender  = tGender   && !gender                      ? 'Please select your gender.'              : '';
+  const errPass    = tPassword && password.length < 6          ? 'Password must be at least 6 characters.' : '';
+  const errConfirm = tConfirm  && confirmPassword !== password ? 'Passwords do not match.'                 : '';
+  const errAgree   = tAgree    && !agree                       ? 'You must agree to the terms.'            : '';
 
+  /* ── gate ── */
   const canSubmit =
     !!name.trim()        &&
     isValidEmail(email)  &&
@@ -65,7 +69,6 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    /* touch everything */
     setTName(true); setTEmail(true); setTPhone(true);
     setTGender(true); setTPassword(true); setTConfirm(true); setTAgree(true);
 
@@ -81,16 +84,43 @@ export default function RegisterPage() {
         body:    JSON.stringify({ name, email, phone, gender, password }),
       });
 
-      const data = await res.json();
+      console.log('[register page] response status:', res.status);
 
-      if (!res.ok) {
-        setServerError(data.error ?? 'Registration failed. Please try again.');
+      let data: Record<string, unknown> = {};
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        console.error('[register page] JSON parse error:', parseErr);
+        if (res.ok) {
+          setSuccess(true);
+          return;
+        }
+        setServerError('Unexpected server response. Please try again.');
         return;
       }
 
+      console.log('[register page] response data:', data);
+
+      if (!res.ok) {
+        setServerError(
+          (data.error as string) ?? 'Registration failed. Please try again.',
+        );
+        return;
+      }
+
+      if (data.warning) {
+        console.warn('[register page] warning:', data.warning);
+      }
+
       setSuccess(true);
-    } catch {
-      setServerError('Network error. Please check your connection and try again.');
+
+    } catch (err) {
+      console.error('[register page] fetch error:', err);
+      setServerError(
+        err instanceof TypeError
+          ? 'Cannot reach the server. Please check your internet connection.'
+          : 'An unexpected error occurred. Please try again.',
+      );
     } finally {
       setLoading(false);
     }
@@ -103,6 +133,7 @@ export default function RegisterPage() {
         <style>{globalCss}</style>
         <main style={mainStyle}>
           <div style={overlayStyle} />
+
           <div style={{
             position:       'relative',
             zIndex:         1,
@@ -114,28 +145,30 @@ export default function RegisterPage() {
           }}>
             <div className="reveal-up" style={{ maxWidth: '480px', textAlign: 'center' }}>
 
-              {/* check circle */}
-              <div className="check-pop" style={{
-                width:          '5.5rem',
-                height:         '5.5rem',
-                borderRadius:   '50%',
-                background:     'rgba(184,134,11,0.15)',
-                border:         `2px solid ${tokens.color.gold}`,
-                display:        'flex',
-                alignItems:     'center',
-                justifyContent: 'center',
-                margin:         '0 auto 1.5rem',
-              }}>
+              <div
+                className="check-pop"
+                style={{
+                  width:          '5.5rem',
+                  height:         '5.5rem',
+                  borderRadius:   '50%',
+                  background:     'rgba(184,134,11,0.15)',
+                  border:         `2px solid ${tokens.color.gold}`,
+                  display:        'flex',
+                  alignItems:     'center',
+                  justifyContent: 'center',
+                  margin:         '0 auto 1.5rem',
+                }}
+              >
                 <Ico.Check s={34} c={tokens.color.gold} />
               </div>
 
               <p style={{
-                color:          tokens.color.gold,
-                fontSize:       '0.68rem',
-                fontWeight:     700,
-                letterSpacing:  '0.28em',
-                textTransform:  'uppercase',
-                marginBottom:   '0.5rem',
+                color:         tokens.color.gold,
+                fontSize:      '0.68rem',
+                fontWeight:    700,
+                letterSpacing: '0.28em',
+                textTransform: 'uppercase',
+                marginBottom:  '0.5rem',
               }}>
                 Account Created
               </p>
@@ -193,15 +226,26 @@ export default function RegisterPage() {
         <div style={overlayStyle} />
         <div style={pageWrapStyle}>
 
-          {/* back link */}
-          <div className="reveal-up" style={{ maxWidth: '480px', margin: '0 auto', width: '100%' }}>
-            <Link href="/" className="back-link" style={{ marginBottom: '1.75rem', display: 'inline-flex' }}>
+          <div
+            className="reveal-up"
+            style={{ maxWidth: '480px', margin: '0 auto', width: '100%' }}
+          >
+            <Link
+              href="/"
+              className="back-link"
+              style={{ marginBottom: '1.75rem', display: 'inline-flex' }}
+            >
               <Ico.ArrowLeft s={13} /> Back to Home
             </Link>
           </div>
 
-          {/* hero */}
-          <div className="reveal-up" style={{ textAlign: 'center', marginBottom: 'clamp(1.5rem,4vw,2.5rem)' }}>
+          <div
+            className="reveal-up"
+            style={{
+              textAlign:    'center',
+              marginBottom: 'clamp(1.5rem,4vw,2.5rem)',
+            }}
+          >
             <div style={{
               width:          '3.5rem',
               height:         '3.5rem',
@@ -217,12 +261,12 @@ export default function RegisterPage() {
             </div>
 
             <p style={{
-              color:          tokens.color.gold,
-              fontSize:       '0.68rem',
-              fontWeight:     700,
-              letterSpacing:  '0.3em',
-              textTransform:  'uppercase',
-              marginBottom:   '0.55rem',
+              color:         tokens.color.gold,
+              fontSize:      '0.68rem',
+              fontWeight:    700,
+              letterSpacing: '0.3em',
+              textTransform: 'uppercase',
+              marginBottom:  '0.55rem',
             }}>
               Join Us
             </p>
@@ -238,23 +282,30 @@ export default function RegisterPage() {
             </h1>
 
             <p style={{
-              color:     tokens.color.whiteMuted,
-              fontSize:  tokens.font.heroSub,
+              color:      tokens.color.whiteMuted,
+              fontSize:   tokens.font.heroSub,
               lineHeight: 1.7,
-              maxWidth:  '420px',
-              margin:    '0 auto',
+              maxWidth:   '420px',
+              margin:     '0 auto',
             }}>
               Sign up to book appointments and enjoy exclusive member benefits.
             </p>
           </div>
 
-          {/* card */}
-          <div className="reveal-up-d1" style={{ maxWidth: '480px', margin: '0 auto', width: '100%' }}>
+          <div
+            className="reveal-up-d1"
+            style={{ maxWidth: '480px', margin: '0 auto', width: '100%' }}
+          >
             <Card>
               <form onSubmit={handleSubmit}>
                 <Label text="Your Details" />
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.4rem' }}>
+                <div style={{
+                  display:       'flex',
+                  flexDirection: 'column',
+                  gap:           '1rem',
+                  marginBottom:  '1.4rem',
+                }}>
 
                   {/* ── full name ── */}
                   <div>
@@ -372,6 +423,7 @@ export default function RegisterPage() {
                       error={errConfirm}
                     />
                   </div>
+
                 </div>
 
                 {/* ── agree to terms ── */}
@@ -390,7 +442,9 @@ export default function RegisterPage() {
                   />
                 </div>
                 {errAgree && (
-                  <p className="field-err" style={{ marginBottom: '1rem' }}>{errAgree}</p>
+                  <p className="field-err" style={{ marginBottom: '1rem' }}>
+                    {errAgree}
+                  </p>
                 )}
 
                 {/* ── server error banner ── */}
@@ -404,12 +458,13 @@ export default function RegisterPage() {
                     color:        '#fca5a5',
                     fontSize:     '0.83rem',
                     fontFamily:   tokens.font.family,
+                    lineHeight:   1.5,
                   }}>
                     {serverError}
                   </div>
                 )}
 
-                {/* ── submit ── */}
+                {/* ── submit button (fixed) ── */}
                 <button
                   type="submit"
                   className="btn-gold"
@@ -421,10 +476,18 @@ export default function RegisterPage() {
                     marginBottom: '1.4rem',
                   }}
                 >
-                  {loading
-                    ? <><span style={spinnerStyle} />Creating Account…</>
-                    : 'Create Account'
-                  }
+                  {loading ? (
+                    <span style={{
+                      display:    'inline-flex',
+                      alignItems: 'center',
+                      gap:        '0.5rem',
+                    }}>
+                      <span style={spinnerStyle} />
+                      Creating Account…
+                    </span>
+                  ) : (
+                    'Create Account'
+                  )}
                 </button>
 
                 <Divider />
@@ -438,6 +501,7 @@ export default function RegisterPage() {
                   Already have an account?{' '}
                   <Link href="/login" className="auth-link">Sign In</Link>
                 </p>
+
               </form>
             </Card>
           </div>

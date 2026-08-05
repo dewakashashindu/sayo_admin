@@ -7,16 +7,16 @@ export const revalidate = 0;
 
 /* ── internationally recognised gender options ── */
 export const GENDER_OPTIONS = [
-  { value: 'male',              label: 'Male'                  },
-  { value: 'female',            label: 'Female'                },
-  { value: 'non_binary',        label: 'Non-binary'            },
-  { value: 'genderqueer',       label: 'Genderqueer'           },
-  { value: 'genderfluid',       label: 'Gender-fluid'          },
-  { value: 'agender',           label: 'Agender'               },
-  { value: 'bigender',          label: 'Bigender'              },
-  { value: 'two_spirit',        label: 'Two-Spirit'            },
-  { value: 'prefer_not_to_say', label: 'Prefer not to say'    },
-  { value: 'other',             label: 'Other'                 },
+  { value: 'male',              label: 'Male'               },
+  { value: 'female',            label: 'Female'             },
+  { value: 'non_binary',        label: 'Non-binary'         },
+  { value: 'genderqueer',       label: 'Genderqueer'        },
+  { value: 'genderfluid',       label: 'Gender-fluid'       },
+  { value: 'agender',           label: 'Agender'            },
+  { value: 'bigender',          label: 'Bigender'           },
+  { value: 'two_spirit',        label: 'Two-Spirit'         },
+  { value: 'prefer_not_to_say', label: 'Prefer not to say' },
+  { value: 'other',             label: 'Other'              },
 ] as const;
 
 export type GenderValue = typeof GENDER_OPTIONS[number]['value'];
@@ -29,7 +29,17 @@ function errMsg(e: unknown): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    /* ── parse body ── */
+    let body: Record<string, unknown> = {};
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid request body.' },
+        { status: 400 },
+      );
+    }
+
     const { name, email, phone, password, gender } = body as {
       name?:     string;
       email?:    string;
@@ -46,7 +56,7 @@ export async function POST(req: NextRequest) {
       passwordLength: password?.length,
     });
 
-    /* ── basic validation ── */
+    /* ── field validation ── */
     if (!name?.trim()) {
       return NextResponse.json(
         { error: 'Full name is required.' },
@@ -86,8 +96,14 @@ export async function POST(req: NextRequest) {
     };
 
     console.log('[register] attempting DB writes...');
-    console.log('[register] localPrisma keys:', Object.keys(localPrisma).filter(k => !k.startsWith('_') && !k.startsWith('$')));
-    console.log('[register] cloudPrisma keys:', Object.keys(cloudPrisma).filter(k => !k.startsWith('_') && !k.startsWith('$')));
+    console.log(
+      '[register] localPrisma keys:',
+      Object.keys(localPrisma).filter(k => !k.startsWith('_') && !k.startsWith('$')),
+    );
+    console.log(
+      '[register] cloudPrisma keys:',
+      Object.keys(cloudPrisma).filter(k => !k.startsWith('_') && !k.startsWith('$')),
+    );
 
     let cloudResult: unknown = null;
     let localResult: unknown = null;
@@ -106,35 +122,48 @@ export async function POST(req: NextRequest) {
       'tbl_userdetails',
       'tbl_Userdetails',
     ];
-    const localModel = MODEL_NAMES.find(n => typeof localClient[n]?.create === 'function');
-    const cloudModel = MODEL_NAMES.find(n => typeof cloudClient[n]?.create === 'function');
+
+    const localModel = MODEL_NAMES.find(
+      n => typeof localClient[n]?.create === 'function',
+    );
+    const cloudModel = MODEL_NAMES.find(
+      n => typeof cloudClient[n]?.create === 'function',
+    );
 
     console.log('[register] localModel accessor:', localModel);
     console.log('[register] cloudModel accessor:', cloudModel);
 
     if (!localModel && !cloudModel) {
       return NextResponse.json(
-        { error: 'Tbl_UserDetails model not found. Run: npx prisma generate && restart server.' },
+        {
+          error:
+            'Tbl_UserDetails model not found. Run: npx prisma generate && restart server.',
+        },
         { status: 500 },
       );
     }
 
     const modelName = localModel ?? cloudModel!;
 
+    /* ── write to cloud ── */
     try {
       cloudResult = await cloudClient[modelName].create({ data });
+      console.log('[register] cloud write success');
     } catch (err) {
       cloudError = err;
       console.error('[register] cloud error:', errMsg(err));
     }
 
+    /* ── write to local ── */
     try {
       localResult = await localClient[modelName].create({ data });
+      console.log('[register] local write success');
     } catch (err) {
       localError = err;
       console.error('[register] local error:', errMsg(err));
     }
 
+    /* ── duplicate email check ── */
     const isDupe = (e: unknown) =>
       e instanceof Error && (e as { code?: string }).code === 'P2002';
 
@@ -145,6 +174,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    /* ── success ── */
     if (cloudResult || localResult) {
       const saved = (cloudResult ?? localResult) as {
         UserId:       number;
@@ -153,31 +183,35 @@ export async function POST(req: NextRequest) {
         Gender:       string | null;
       };
 
-      console.log('[register] success! UserId:', saved.UserId);
+      console.log('[register] success! UserId:', saved?.UserId);
 
-      return NextResponse.json(
-        {
-          success: true,
-          userId:  saved.UserId,
-          name:    saved.UserName,
-          email:   saved.EmailAddress,
-          gender:  saved.Gender,
-          source:  cloudResult ? 'cloud' : 'local',
-          ...(cloudResult && localError
-            ? { warning: 'Saved to cloud only — local mirror failed.' }
-            : {}),
-          ...(localResult && cloudError
-            ? { warning: 'Saved locally only — cloud was unreachable.' }
-            : {}),
-        },
-        { status: 201 },
-      );
+      const responseBody: Record<string, unknown> = {
+        success: true,
+        userId:  saved?.UserId       ?? null,
+        name:    saved?.UserName     ?? name.trim(),
+        email:   saved?.EmailAddress ?? email.trim().toLowerCase(),
+        gender:  saved?.Gender       ?? genderValue,
+        source:  cloudResult ? 'cloud' : 'local',
+      };
+
+      if (cloudResult && localError) {
+        responseBody.warning = 'Saved to cloud only — local mirror failed.';
+      }
+      if (localResult && cloudError) {
+        responseBody.warning = 'Saved locally only — cloud was unreachable.';
+      }
+
+      return NextResponse.json(responseBody, { status: 201 });
     }
 
+    /* ── both failed ── */
     return NextResponse.json(
       {
         error:   'Registration failed on both databases.',
-        details: { cloud: errMsg(cloudError), local: errMsg(localError) },
+        details: {
+          cloud: errMsg(cloudError),
+          local: errMsg(localError),
+        },
       },
       { status: 500 },
     );
