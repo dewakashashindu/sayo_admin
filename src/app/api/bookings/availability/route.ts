@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const date          = searchParams.get('date');
+    const date           = searchParams.get('date');
     const location       = searchParams.get('location');
     const providersParam = searchParams.get('providers'); // comma-separated names
 
@@ -32,6 +32,30 @@ export async function GET(req: NextRequest) {
       },
     });
 
+    // ── Build per-provider busy-slot map ──
+    // e.g. { "Nadeesha": ["10:00 AM", "10:30 AM"], "Priyanka": ["11:00 AM"] }
+    const providerSlots: Record<string, string[]> = {};
+
+    for (const b of bookings) {
+      let bookedProviders: { name: string }[] = [];
+      try {
+        bookedProviders = JSON.parse(b.Providers || '[]');
+      } catch {
+        continue;
+      }
+
+      for (const p of bookedProviders) {
+        if (!p?.name) continue;
+        if (!providerSlots[p.name]) {
+          providerSlots[p.name] = [];
+        }
+        if (!providerSlots[p.name].includes(b.TimeSlot)) {
+          providerSlots[p.name].push(b.TimeSlot);
+        }
+      }
+    }
+
+    // ── Aggregate bookedSlots (legacy / single-provider support) ──
     const bookedSlots = new Set<string>();
 
     for (const b of bookings) {
@@ -58,6 +82,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       bookedSlots: Array.from(bookedSlots),
+      providerSlots, // NEW: per-provider busy slots for multi-provider logic
     });
 
   } catch (error) {
