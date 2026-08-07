@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import ConflictModal, {
   ConflictModalData,
@@ -200,6 +200,21 @@ function timeToMinutes(t: string): number {
 }
 
 /* ─────────────────────────────────────────
+   CALENDAR HELPERS
+───────────────────────────────────────── */
+function getDaysInMonth(year: number, month: number) {
+  return new Date(year, month + 1, 0).getDate();
+}
+function getFirstDayOfMonth(year: number, month: number) {
+  return new Date(year, month, 1).getDay();
+}
+const MONTH_NAMES = [
+  'January','February','March','April','May','June',
+  'July','August','September','October','November','December',
+];
+const DAY_NAMES = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+/* ─────────────────────────────────────────
    GLOBAL CSS
 ───────────────────────────────────────── */
 const globalCss = `
@@ -214,6 +229,7 @@ const globalCss = `
   @keyframes slotPop  {from{opacity:0;transform:scale(0.92)}to{opacity:1;transform:scale(1)}}
   @keyframes scaleIn  {from{opacity:0;transform:scale(0.96) translateY(12px)}to{opacity:1;transform:scale(1) translateY(0)}}
   @keyframes slideDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes calPop   {from{opacity:0;transform:translateY(6px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
 
   .reveal-up  {animation:fadeInUp  0.55s cubic-bezier(0.16,1,0.3,1) both;}
   .scale-in   {animation:scaleIn   0.45s cubic-bezier(0.16,1,0.3,1) both;}
@@ -221,42 +237,27 @@ const globalCss = `
   .badge-pop  {animation:badgePop  0.25s cubic-bezier(0.34,1.56,0.64,1) both;}
   .slot-pop   {animation:slotPop   0.2s  cubic-bezier(0.16,1,0.3,1) both;}
   .slide-down {animation:slideDown 0.32s cubic-bezier(0.16,1,0.3,1) both;}
+  .cal-pop    {animation:calPop    0.22s cubic-bezier(0.16,1,0.3,1) both;}
 
-  /* ── step indicator ── */
   .step-dot {width:2.4rem;height:2.4rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.82rem;font-weight:600;flex-shrink:0;transition:all 0.35s;font-family:Inter,sans-serif;}
   .step-line{flex:1;height:2px;border-radius:2px;transition:background 0.5s;}
   .step-label{font-size:0.6rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;white-space:nowrap;font-family:Inter,sans-serif;margin-top:0.3rem;}
 
-  /* ── mode badge (small) ── */
   .mode-badge{display:inline-flex;align-items:center;gap:0.3rem;border-radius:999px;padding:0.18rem 0.6rem;font-size:0.62rem;font-weight:700;letter-spacing:0.07em;font-family:Inter,sans-serif;}
   .mode-badge-confirmed{background:rgba(184,134,11,0.18);border:1px solid rgba(184,134,11,0.45);color:#B8860B;}
   .mode-badge-walkin   {background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.4); color:#22c55e;}
 
-  /* ── MODE TOGGLE PILL ── */
-  .mode-toggle-wrap{
-    display:inline-flex;align-items:center;
-    background:rgba(255,255,255,0.05);
-    border:1.5px solid rgba(255,255,255,0.12);
-    border-radius:999px;padding:3px;gap:0;
-  }
-  .mtb{
-    cursor:pointer;border:none;outline:none;font-family:Inter,sans-serif;
-    font-size:0.73rem;font-weight:600;letter-spacing:0.05em;border-radius:999px;
-    padding:0.38rem 1rem;transition:all 0.25s;
-    display:inline-flex;align-items:center;gap:0.32rem;
-    background:transparent;color:rgba(255,255,255,0.42);white-space:nowrap;
-  }
+  .mode-toggle-wrap{display:inline-flex;align-items:center;background:rgba(255,255,255,0.05);border:1.5px solid rgba(255,255,255,0.12);border-radius:999px;padding:3px;gap:0;}
+  .mtb{cursor:pointer;border:none;outline:none;font-family:Inter,sans-serif;font-size:0.73rem;font-weight:600;letter-spacing:0.05em;border-radius:999px;padding:0.38rem 1rem;transition:all 0.25s;display:inline-flex;align-items:center;gap:0.32rem;background:transparent;color:rgba(255,255,255,0.42);white-space:nowrap;}
   .mtb:hover:not(.mtb-active){color:rgba(255,255,255,0.72);}
   .mtb-confirmed.mtb-active{background:#B8860B;color:#fff;box-shadow:0 2px 14px rgba(184,134,11,0.45);}
   .mtb-walkin.mtb-active   {background:#22c55e;color:#fff;box-shadow:0 2px 14px rgba(34,197,94,0.40);}
 
-  /* ── gender icon ── */
   .gender-inline-wrap{position:relative;display:inline-flex;align-items:center;gap:0.3rem;cursor:pointer;}
   .gender-inline-wrap select{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;appearance:none;-webkit-appearance:none;border:none;background:transparent;}
   .gender-inline-wrap select option{background:#1a1a1a;color:#fff;}
   .g-chevron{opacity:0.55;pointer-events:none;transition:opacity 0.18s;}
 
-  /* ── service / provider cards ── */
   .svc-card{cursor:pointer;border-radius:0.75rem;border:1.5px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);padding:0.8rem 1rem;display:flex;align-items:center;justify-content:space-between;gap:1rem;transition:all 0.2s;}
   .svc-card:hover{border-color:rgba(184,134,11,0.45);background:rgba(184,134,11,0.07);transform:translateY(-1px);}
   .svc-card-active{border-color:#B8860B !important;background:rgba(184,134,11,0.15) !important;}
@@ -265,7 +266,6 @@ const globalCss = `
   .prov-card-active{border-color:#B8860B !important;background:rgba(184,134,11,0.15) !important;}
   .prov-avatar{width:2.6rem;height:2.6rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:Inter,sans-serif;font-size:1.05rem;font-weight:700;color:#fff;flex-shrink:0;background:rgba(184,134,11,0.35);border:1.5px solid rgba(184,134,11,0.55);}
 
-  /* ── category tabs ── */
   .cat-tabs-wrap{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:0.5rem;padding-bottom:2px;scrollbar-width:none;}
   .cat-tabs-wrap::-webkit-scrollbar{display:none;}
   .cat-tab{cursor:pointer;outline:none;border:none;font-family:Inter,sans-serif;font-size:0.74rem;font-weight:600;letter-spacing:0.1em;border-radius:0.5rem;padding:0.42rem 0.9rem;white-space:nowrap;transition:all 0.22s;position:relative;}
@@ -274,7 +274,6 @@ const globalCss = `
   .cat-tab-inactive:hover{border-color:#B8860B;color:#fff;background:rgba(184,134,11,0.1);}
   .cat-tab-dot{position:absolute;top:-3px;right:-3px;width:0.5rem;height:0.5rem;border-radius:50%;background:#22c55e;border:1.5px solid #040405;}
 
-  /* ── time slots ── */
   .t-slot{cursor:pointer;border-radius:0.45rem;padding:0.45rem 0.5rem;font-family:Inter,sans-serif;font-size:0.74rem;font-weight:500;text-align:center;transition:all 0.18s;border:1.5px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.72);}
   .t-slot:hover{border-color:#B8860B;background:rgba(184,134,11,0.12);color:#fff;transform:translateY(-1px);}
   .t-slot-active{border-color:#B8860B !important;background:#B8860B !important;color:#fff !important;}
@@ -288,7 +287,51 @@ const globalCss = `
 
   .legend-dot{width:0.55rem;height:0.55rem;border-radius:50%;flex-shrink:0;display:inline-block;}
 
-  /* ── inputs ── */
+  /* ── DATE TRIGGER ── */
+  .date-trigger{
+    width:100%;background:rgba(255,255,255,0.06);border:1.5px solid rgba(255,255,255,0.15);
+    border-radius:0.625rem;padding:0.75rem 1rem;font-family:Inter,sans-serif;font-size:0.9rem;
+    color:#fff;outline:none;cursor:pointer;display:flex;align-items:center;
+    justify-content:space-between;gap:0.6rem;transition:border-color 0.25s,background 0.25s;
+    user-select:none;text-align:left;
+  }
+  .date-trigger:hover{border-color:rgba(184,134,11,0.5);background:rgba(184,134,11,0.06);}
+  .date-trigger-open{border-color:#B8860B !important;background:rgba(184,134,11,0.08) !important;}
+  .date-trigger-filled{border-color:rgba(184,134,11,0.38);}
+
+  /* ── INLINE CALENDAR PANEL (absolute, anchored to trigger wrapper) ── */
+  .cal-panel{
+    position:absolute;
+    z-index:500;
+    background:rgba(16,14,11,0.98);
+    border:1.5px solid rgba(184,134,11,0.4);
+    border-radius:1rem;padding:1rem 1rem 0.75rem;
+    box-shadow:0 24px 64px rgba(0,0,0,0.75),0 0 0 1px rgba(184,134,11,0.08);
+    backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
+  }
+  .cal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;}
+  .cal-nav{background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:0.375rem;width:1.85rem;height:1.85rem;display:flex;align-items:center;justify-content:center;cursor:pointer;color:rgba(255,255,255,0.6);transition:all 0.18s;padding:0;}
+  .cal-nav:hover{background:rgba(184,134,11,0.2);border-color:rgba(184,134,11,0.5);color:#B8860B;}
+  .cal-daynames{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:0.35rem;}
+  .cal-dayname{font-size:0.6rem;font-weight:700;letter-spacing:0.08em;text-align:center;color:rgba(255,255,255,0.28);padding:0.18rem 0;font-family:Inter,sans-serif;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
+  .cal-cell{
+    aspect-ratio:1;border-radius:0.375rem;display:flex;align-items:center;justify-content:center;
+    font-size:0.77rem;font-weight:500;cursor:pointer;transition:all 0.15s;
+    border:1.5px solid transparent;font-family:Inter,sans-serif;color:rgba(255,255,255,0.72);
+    background:transparent;padding:0;
+  }
+  .cal-cell:hover:not(.cal-cell-disabled):not(.cal-cell-selected){
+    background:rgba(184,134,11,0.16);border-color:rgba(184,134,11,0.42);color:#fff;
+  }
+  .cal-cell-selected{background:#B8860B !important;border-color:#B8860B !important;color:#fff !important;font-weight:700;box-shadow:0 2px 10px rgba(184,134,11,0.5);}
+  .cal-cell-today:not(.cal-cell-selected){border-color:rgba(184,134,11,0.55) !important;color:#B8860B;font-weight:600;}
+  .cal-cell-disabled{color:rgba(255,255,255,0.15) !important;cursor:not-allowed !important;background:transparent !important;border-color:transparent !important;}
+  .cal-cell-empty{pointer-events:none;cursor:default;}
+  .cal-footer{display:flex;justify-content:space-between;align-items:center;margin-top:0.65rem;padding-top:0.6rem;border-top:1px solid rgba(255,255,255,0.07);}
+  .cal-footer-btn{background:transparent;border:none;cursor:pointer;font-family:Inter,sans-serif;font-size:0.72rem;font-weight:600;padding:0.25rem 0.4rem;border-radius:0.3rem;transition:all 0.15s;}
+  .cal-footer-btn:hover{background:rgba(255,255,255,0.06);}
+
   .sayo-input{width:100%;background:rgba(255,255,255,0.06);border:1.5px solid rgba(255,255,255,0.15);border-radius:0.625rem;padding:0.75rem 1rem;font-family:Inter,sans-serif;font-size:0.9rem;color:#fff;outline:none;transition:border-color 0.25s,background 0.25s;color-scheme:dark;}
   .sayo-input::placeholder{color:rgba(255,255,255,0.3);}
   .sayo-input:focus{border-color:#B8860B;background:rgba(184,134,11,0.07);}
@@ -296,7 +339,6 @@ const globalCss = `
   .phone-plain-input:focus{border-color:#B8860B;}
   .phone-plain-input::placeholder{color:rgba(255,255,255,0.28);}
 
-  /* ── buttons ── */
   .btn-gold {cursor:pointer;outline:none;border:none;font-family:Inter,sans-serif;font-weight:600;letter-spacing:0.06em;border-radius:0.75rem;background:#B8860B;color:#fff;display:inline-flex;align-items:center;justify-content:center;gap:0.45rem;transition:transform 0.2s,box-shadow 0.2s,opacity 0.2s;}
   .btn-gold:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 24px rgba(184,134,11,0.38);}
   .btn-gold:disabled{opacity:0.42;cursor:not-allowed;}
@@ -306,7 +348,6 @@ const globalCss = `
   .btn-ghost{cursor:pointer;outline:none;background:transparent;border:1.5px solid rgba(255,255,255,0.28);border-radius:0.75rem;font-family:Inter,sans-serif;font-weight:500;color:rgba(255,255,255,0.65);transition:all 0.2s;}
   .btn-ghost:hover{border-color:#B8860B;color:#fff;transform:translateY(-2px);}
 
-  /* ── misc UI ── */
   .sum-row{display:flex;justify-content:space-between;align-items:flex-start;padding:0.52rem 0;border-bottom:1px solid rgba(255,255,255,0.07);gap:1rem;}
   .sum-row:last-child{border-bottom:none;}
   .cf-block{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09);border-radius:0.875rem;padding:0.2rem 1rem;margin-bottom:0.9rem;}
@@ -320,25 +361,12 @@ const globalCss = `
   .loc-card-active{border-color:#B8860B !important;background:rgba(184,134,11,0.14) !important;}
   .spinner-sm{width:1rem;height:1rem;border:2px solid rgba(34,197,94,0.3);border-top-color:#22c55e;border-radius:50%;display:inline-block;animation:spin 0.7s linear infinite;}
 
-  /* ── layout ── */
   .appt-header-row{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1.5rem;}
   .appt-header-left{flex:1 1 180px;min-width:160px;}
   .appt-header-right{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:1.1rem;text-align:right;}
 
-  /* ── TIME SECTION with embedded mode toggle ── */
-  .time-section-card{
-    border-radius:1rem;
-    border:1.5px solid rgba(255,255,255,0.1);
-    background:rgba(255,255,255,0.025);
-    overflow:hidden;
-    margin-top:0.25rem;
-  }
-  .time-section-header{
-    display:flex;align-items:center;justify-content:space-between;
-    flex-wrap:wrap;gap:0.75rem;
-    padding:0.85rem 1rem 0.75rem;
-    border-bottom:1px solid rgba(255,255,255,0.07);
-  }
+  .time-section-card{border-radius:1rem;border:1.5px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.025);overflow:hidden;margin-top:0.25rem;}
+  .time-section-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;padding:0.85rem 1rem 0.75rem;border-bottom:1px solid rgba(255,255,255,0.07);}
   .time-section-body{padding:1rem;}
 
   @media(max-width:600px){
@@ -356,8 +384,9 @@ const globalCss = `
 const Ico = {
   Check:        ({ s=16,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
   Right:        ({ s=15 }:{s?:number})                            => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>,
+  Left:         ({ s=14 }:{s?:number})                            => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>,
   Clock:        ({ s=12 }:{s?:number})                            => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
-  Calendar:     ({ s=13 }:{s?:number})                            => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+  Calendar:     ({ s=14,c='currentColor' }:{s?:number;c?:string})=> <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
   User:         ({ s=13 }:{s?:number})                            => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
   Scissors:     ({ s=13 }:{s?:number})                            => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>,
   Location:     ({ s=13 }:{s?:number})                            => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 1 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>,
@@ -371,6 +400,7 @@ const Ico = {
   FemaleSymbol: ({ s=22,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="9" r="6"/><line x1="12" y1="15" x2="12" y2="22"/><line x1="8.5" y1="18.5" x2="15.5" y2="18.5"/></svg>,
   GenderN:      ({ s=22,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="11" r="5"/><line x1="12" y1="16" x2="12" y2="22"/><line x1="9" y1="19" x2="15" y2="19"/><line x1="16" y1="7" x2="20" y2="3"/><polyline points="16 3 20 3 20 7"/></svg>,
   ChevDown:     ({ s=13,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>,
+  X:            ({ s=12,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
 };
 
 function GenderSymbol({ value, s=22 }:{ value: GenderValue|''; s?:number }) {
@@ -378,6 +408,225 @@ function GenderSymbol({ value, s=22 }:{ value: GenderValue|''; s?:number }) {
   if (value==='male')   return <Ico.MaleSymbol   s={s} c={c}/>;
   if (value==='female') return <Ico.FemaleSymbol s={s} c={c}/>;
   return <Ico.GenderN s={s} c={c}/>;
+}
+
+/* ─────────────────────────────────────────
+   INLINE CALENDAR  (absolute positioned — no portal, no measurement bugs)
+───────────────────────────────────────── */
+interface InlineCalendarProps {
+  value:    string;
+  minDate:  string;
+  onChange: (iso: string) => void;
+  onClose:  () => void;
+  dropUp:   boolean;
+}
+
+function InlineCalendar({ value, minDate, onChange, onClose, dropUp }: InlineCalendarProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const todayISO = new Date().toISOString().split('T')[0];
+
+  const initD = value ? new Date(value + 'T00:00') : new Date();
+  const [vYear,  setVYear]  = useState(initD.getFullYear());
+  const [vMonth, setVMonth] = useState(initD.getMonth());
+
+  /* close on outside click */
+  useEffect(() => {
+    function down(e: MouseEvent) {
+      if (!panelRef.current?.contains(e.target as Node)) onClose();
+    }
+    const t = setTimeout(() => document.addEventListener('mousedown', down), 50);
+    return () => { clearTimeout(t); document.removeEventListener('mousedown', down); };
+  }, [onClose]);
+
+  /* ESC to close */
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', k);
+    return () => document.removeEventListener('keydown', k);
+  }, [onClose]);
+
+  function prevMonth() {
+    if (vMonth === 0) { setVMonth(11); setVYear(y => y - 1); }
+    else setVMonth(m => m - 1);
+  }
+  function nextMonth() {
+    if (vMonth === 11) { setVMonth(0); setVYear(y => y + 1); }
+    else setVMonth(m => m + 1);
+  }
+  function pickDay(day: number) {
+    const iso = `${vYear}-${String(vMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    if (iso < minDate) return;
+    onChange(iso);
+    onClose();
+  }
+
+  const daysInMonth = getDaysInMonth(vYear, vMonth);
+  const firstDow    = getFirstDayOfMonth(vYear, vMonth);
+  const cells: (number|null)[] = [
+    ...Array<null>(firstDow).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  return (
+    <div
+      ref={panelRef}
+      className="cal-panel cal-pop"
+      style={{
+        left: 0,
+        right: 0,
+        [dropUp ? 'bottom' : 'top']: 'calc(100% + 8px)',
+        width: '100%',
+      }}
+      onMouseDown={e => e.stopPropagation()}
+    >
+      {/* header */}
+      <div className="cal-header">
+        <button className="cal-nav" onClick={prevMonth} type="button" aria-label="Previous month">
+          <Ico.Left s={13}/>
+        </button>
+        <span style={{ color:tokens.color.white, fontFamily:tokens.font.family, fontSize:'0.86rem', fontWeight:600 }}>
+          {MONTH_NAMES[vMonth]} {vYear}
+        </span>
+        <button className="cal-nav" onClick={nextMonth} type="button" aria-label="Next month">
+          <Ico.Right s={13}/>
+        </button>
+      </div>
+
+      {/* day names */}
+      <div className="cal-daynames">
+        {DAY_NAMES.map(d => <div key={d} className="cal-dayname">{d}</div>)}
+      </div>
+
+      {/* grid */}
+      <div className="cal-grid">
+        {cells.map((day, idx) => {
+          if (day === null) return <div key={`e${idx}`} className="cal-cell cal-cell-empty"/>;
+          const iso      = `${vYear}-${String(vMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+          const disabled = iso < minDate;
+          const selected = iso === value;
+          const isToday  = iso === todayISO;
+          let cls = 'cal-cell';
+          if (disabled) cls += ' cal-cell-disabled';
+          if (selected) cls += ' cal-cell-selected';
+          else if (isToday) cls += ' cal-cell-today';
+          return (
+            <button
+              key={day} type="button" className={cls}
+              onClick={() => pickDay(day)}
+              disabled={disabled}
+              aria-label={`${day} ${MONTH_NAMES[vMonth]} ${vYear}`}
+              aria-pressed={selected}
+            >
+              {day}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* footer */}
+      <div className="cal-footer">
+        <button className="cal-footer-btn" type="button"
+          style={{ color: tokens.color.gold }}
+          onClick={() => { onChange(todayISO); onClose(); }}
+        >
+          Today
+        </button>
+        {value && (
+          <button className="cal-footer-btn" type="button"
+            style={{ color: 'rgba(239,68,68,0.75)', display:'flex', alignItems:'center', gap:'0.2rem' }}
+            onClick={() => onChange('')}
+          >
+            <Ico.X s={11} c="rgba(239,68,68,0.75)"/> Clear
+          </button>
+        )}
+        <button className="cal-footer-btn" type="button"
+          style={{ color: tokens.color.whiteFaint }}
+          onClick={onClose}
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────
+   DATE PICKER FIELD  (relative wrapper — calendar attaches directly below/above)
+───────────────────────────────────────── */
+function DatePickerField({ value, minDate, onChange }: {
+  value: string; minDate: string;
+  onChange: (iso: string) => void;
+}) {
+  const [open,   setOpen]   = useState(false);
+  const [dropUp, setDropUp] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  function toggle() {
+    if (!open && wrapRef.current) {
+      const rect = wrapRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setDropUp(spaceBelow < 380); /* approx calendar height */
+    }
+    setOpen(o => !o);
+  }
+  function close() { setOpen(false); }
+
+  function handleChange(iso: string) {
+    onChange(iso);
+    if (iso) close(); /* auto-close after picking; stay open on clear */
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', width: '100%', marginBottom: '1.25rem' }}>
+      <button
+        type="button"
+        className={[
+          'date-trigger',
+          open           ? 'date-trigger-open'   : '',
+          value && !open ? 'date-trigger-filled' : '',
+        ].join(' ')}
+        onClick={toggle}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <span style={{ display:'flex', alignItems:'center', gap:'0.55rem' }}>
+          <Ico.Calendar s={15} c={value ? tokens.color.gold : 'rgba(255,255,255,0.3)'}/>
+          <span style={{ color: value ? tokens.color.white : 'rgba(255,255,255,0.35)', fontFamily:tokens.font.family }}>
+            {value ? formatDate(value) : 'Select a date…'}
+          </span>
+        </span>
+
+        <span style={{ display:'flex', alignItems:'center', gap:'0.35rem', flexShrink:0 }}>
+          {value && (
+            <span
+              role="button" aria-label="Clear date"
+              style={{ display:'flex', alignItems:'center', color:'rgba(255,255,255,0.35)', padding:'0.1rem' }}
+              onMouseDown={e => { e.stopPropagation(); onChange(''); close(); }}
+            >
+              <Ico.X s={12}/>
+            </span>
+          )}
+          <span style={{
+            display:'flex', color: open ? tokens.color.gold : 'rgba(255,255,255,0.35)',
+            transform: open ? 'rotate(180deg)' : 'none', transition:'transform 0.22s',
+          }}>
+            <Ico.ChevDown s={13}/>
+          </span>
+        </span>
+      </button>
+
+      {open && (
+        <InlineCalendar
+          value={value}
+          minDate={minDate}
+          onChange={handleChange}
+          onClose={close}
+          dropUp={dropUp}
+        />
+      )}
+    </div>
+  );
 }
 
 /* ─────────────────────────────────────────
@@ -416,19 +665,15 @@ function Card({ children, style, mode }:{ children:React.ReactNode; style?:React
     </div>
   );
 }
-
 function Label({ text }:{ text:string }) {
   return <p style={{ color:tokens.color.gold, fontSize:'0.67rem', fontWeight:700, letterSpacing:'0.22em', textTransform:'uppercase', marginBottom:'0.5rem', fontFamily:tokens.font.family }}>{text}</p>;
 }
-
 function FieldLabel({ text, opt }:{ text:string; opt?:boolean }) {
   return <label style={{ display:'block', color:tokens.color.whiteDim, fontSize:'0.78rem', fontWeight:500, marginBottom:'0.35rem', fontFamily:tokens.font.family }}>{text}{opt&&<span style={{ color:tokens.color.whiteFaint, marginLeft:'0.3rem' }}>(optional)</span>}</label>;
 }
-
 function CircleCheck({ active }:{ active:boolean }) {
   return <div style={{ width:'1.25rem', height:'1.25rem', borderRadius:'50%', flexShrink:0, background:active?tokens.color.gold:'rgba(255,255,255,0.08)', border:active?'none':'1.5px solid rgba(255,255,255,0.22)', display:'flex', alignItems:'center', justifyContent:'center', transition:'all 0.2s' }}>{active&&<Ico.Check s={9} c="#fff"/>}</div>;
 }
-
 function SumRow({ icon, label, value }:{ icon:React.ReactNode; label:string; value:string }) {
   return (
     <div className="sum-row">
@@ -439,7 +684,7 @@ function SumRow({ icon, label, value }:{ icon:React.ReactNode; label:string; val
 }
 
 /* ─────────────────────────────────────────
-   MODE TOGGLE PILL
+   MODE TOGGLE
 ───────────────────────────────────────── */
 function ModeToggle({ mode, onChange }:{ mode:BookingMode; onChange:(m:BookingMode)=>void }) {
   return (
@@ -506,71 +751,42 @@ function GenderPhoneCorner({ gender, onGenderChange, phone, onPhoneChange, phone
 
 /* ─────────────────────────────────────────
    TIME SECTION
-   — card with header (date info + mode toggle)
-   — body (slot grid)
-   Mode toggle is INSIDE this section, above the slots
 ───────────────────────────────────────── */
-function TimeSectionCard({
-  date, mode, onModeChange,
-  timeSlot, loadingSlots, slotsError,
-  walkinDisabledReason, classifySlot, handleSlotClick,
-  multiProvider, setTimeSlot,
-}:{
+function TimeSectionCard({ date, mode, onModeChange, timeSlot, loadingSlots, slotsError, walkinDisabledReason, classifySlot, handleSlotClick, multiProvider, setTimeSlot }:{
   date:string; mode:BookingMode; onModeChange:(m:BookingMode)=>void;
-  timeSlot:string; loadingSlots:boolean; slotsError:string;
-  walkinDisabledReason:string;
+  timeSlot:string; loadingSlots:boolean; slotsError:string; walkinDisabledReason:string;
   classifySlot:(s:string)=>SlotStatus; handleSlotClick:(s:string)=>void;
   multiProvider:boolean; setTimeSlot:(s:string)=>void;
 }) {
   return (
     <div className="time-section-card slide-down">
-
-      {/* ── header: date label LEFT, mode toggle RIGHT ── */}
       <div className="time-section-header">
         <div>
-          <p style={{ color:tokens.color.gold, fontSize:'0.67rem', fontWeight:700, letterSpacing:'0.22em', textTransform:'uppercase', fontFamily:tokens.font.family, marginBottom:'0.18rem' }}>
-            Preferred Time
-          </p>
-          <p style={{ color:tokens.color.whiteFaint, fontSize:'0.72rem', fontFamily:tokens.font.family }}>
-            {formatDate(date)}
-          </p>
+          <p style={{ color:tokens.color.gold, fontSize:'0.67rem', fontWeight:700, letterSpacing:'0.22em', textTransform:'uppercase', fontFamily:tokens.font.family, marginBottom:'0.18rem' }}>Preferred Time</p>
+          <p style={{ color:tokens.color.whiteFaint, fontSize:'0.72rem', fontFamily:tokens.font.family }}>{formatDate(date)}</p>
         </div>
-
-        {/* MODE TOGGLE embedded here */}
         <ModeToggle mode={mode} onChange={onModeChange}/>
       </div>
-
-      {/* ── body: slot grid ── */}
       <div className="time-section-body">
         {mode==='confirmed'
           ? <ConfirmedSlots timeSlot={timeSlot} setTimeSlot={setTimeSlot}/>
-          : <WalkinSlots
-              timeSlot={timeSlot}
-              loading={loadingSlots}
-              error={slotsError}
-              disabledReason={walkinDisabledReason}
-              classifySlot={classifySlot}
-              handleSlotClick={handleSlotClick}
-              multiProvider={multiProvider}
-            />
+          : <WalkinSlots timeSlot={timeSlot} loading={loadingSlots} error={slotsError} disabledReason={walkinDisabledReason} classifySlot={classifySlot} handleSlotClick={handleSlotClick} multiProvider={multiProvider}/>
         }
       </div>
     </div>
   );
 }
 
-/* ── confirmed slots (no colour logic, simple selection) ── */
 function ConfirmedSlots({ timeSlot, setTimeSlot }:{ timeSlot:string; setTimeSlot:(s:string)=>void }) {
   return (
     <div className="time-grid" style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'0.42rem' }}>
       {TIME_SLOTS.map(slot=>(
-        <button key={slot} className={`t-slot${timeSlot===slot?' t-slot-active':''}`} onClick={()=>setTimeSlot(slot)}>{slot}</button>
+        <button key={slot} type="button" className={`t-slot${timeSlot===slot?' t-slot-active':''}`} onClick={()=>setTimeSlot(slot)}>{slot}</button>
       ))}
     </div>
   );
 }
 
-/* ── walkin slots (live colour logic) ── */
 function WalkinSlots({ timeSlot, loading, error, disabledReason, classifySlot, handleSlotClick, multiProvider }:{
   timeSlot:string; loading:boolean; error:string; disabledReason:string;
   classifySlot:(s:string)=>SlotStatus; handleSlotClick:(s:string)=>void; multiProvider:boolean;
@@ -582,11 +798,9 @@ function WalkinSlots({ timeSlot, loading, error, disabledReason, classifySlot, h
       <span style={{ color:tokens.color.whiteFaint, fontSize:'0.78rem', fontFamily:tokens.font.family }}>Checking live availability…</span>
     </div>
   );
-
-  const av = TIME_SLOTS.filter(s=>classifySlot(s)==='available').length;
-  const pa = TIME_SLOTS.filter(s=>classifySlot(s)==='partial').length;
-  const bo = TIME_SLOTS.filter(s=>classifySlot(s)==='booked').length;
-
+  const av=TIME_SLOTS.filter(s=>classifySlot(s)==='available').length;
+  const pa=TIME_SLOTS.filter(s=>classifySlot(s)==='partial').length;
+  const bo=TIME_SLOTS.filter(s=>classifySlot(s)==='booked').length;
   return (
     <>
       {error&&<div className="info-box" style={{ display:'flex', gap:'0.5rem', marginBottom:'0.75rem' }}><Ico.Info s={13}/><span>{error}</span></div>}
@@ -597,10 +811,10 @@ function WalkinSlots({ timeSlot, loading, error, disabledReason, classifySlot, h
       </div>
       <div className="time-grid" style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'0.42rem' }}>
         {TIME_SLOTS.map(slot=>{
-          const st=classifySlot(slot), sel=timeSlot===slot;
+          const st=classifySlot(slot),sel=timeSlot===slot;
           if (st==='booked')  return <div key={slot} className="t-slot-booked slot-pop">{slot}</div>;
-          if (st==='partial') return <button key={slot} className="t-slot-partial slot-pop" onClick={()=>handleSlotClick(slot)} title="Partial — tap for options">{slot}</button>;
-          return <button key={slot} className={`t-slot-available slot-pop${sel?' t-slot-available-selected':''}`} onClick={()=>handleSlotClick(slot)}>{slot}</button>;
+          if (st==='partial') return <button key={slot} type="button" className="t-slot-partial slot-pop" onClick={()=>handleSlotClick(slot)}>{slot}</button>;
+          return <button key={slot} type="button" className={`t-slot-available slot-pop${sel?' t-slot-available-selected':''}`} onClick={()=>handleSlotClick(slot)}>{slot}</button>;
         })}
       </div>
       {multiProvider&&<p style={{ color:tokens.color.whiteFaint, fontSize:'0.68rem', fontFamily:tokens.font.family, marginTop:'0.55rem' }}>Yellow slots: tap for split-booking or back-to-back suggestions.</p>}
@@ -639,7 +853,7 @@ export default function BookingPage() {
   const [slotsError,    setSlotsError]    = useState('');
   const [conflictModal, setConflictModal] = useState<ConflictModalData|null>(null);
 
-  /* ── auto-fill ── */
+  /* ── auto-fill from localStorage ── */
   useEffect(()=>{
     if (typeof window==='undefined') return;
     const raw=localStorage.getItem('user');
@@ -657,16 +871,16 @@ export default function BookingPage() {
     }catch{localStorage.removeItem('user');router.replace('/login?redirect=/booking');}
   },[router]);
 
-  const today      = new Date().toISOString().split('T')[0];
-  const serviceList= ALL_SERVICES[category]??[];
+  const today       = new Date().toISOString().split('T')[0];
+  const serviceList = ALL_SERVICES[category]??[];
 
-  const allBranchProvs  = location?(PROVIDERS[location]??[]):[];
-  const selectedCats    = Array.from(new Set(services.map(s=>s.category)));
-  const catFilter       = selectedCats.length>0?selectedCats:[category];
-  const filteredProvs   = allBranchProvs.filter(p=>p.expertise.some(e=>catFilter.includes(e)));
-  const providerNamesKey= providers.map(p=>p.name).sort().join(',');
+  const allBranchProvs   = location?(PROVIDERS[location]??[]):[];
+  const selectedCats     = Array.from(new Set(services.map(s=>s.category)));
+  const catFilter        = selectedCats.length>0?selectedCats:[category];
+  const filteredProvs    = allBranchProvs.filter(p=>p.expertise.some(e=>catFilter.includes(e)));
+  const providerNamesKey = providers.map(p=>p.name).sort().join(',');
 
-  /* ── fetch availability ── */
+  /* ── fetch live availability ── */
   useEffect(()=>{
     if (mode!=='walkin'||!date||providers.length===0){setBookedSlots(new Set());setProviderSlots({});return;}
     const ctrl=new AbortController();
@@ -674,7 +888,7 @@ export default function BookingPage() {
       setLoadingSlots(true);setSlotsError('');
       try{
         const p=new URLSearchParams({date});
-        if (location)        p.set('location',location);
+        if (location)         p.set('location',location);
         if (providerNamesKey) p.set('providers',providerNamesKey);
         const res=await fetch(`/api/bookings/availability?${p}`,{signal:ctrl.signal});
         const d=await res.json();
@@ -683,14 +897,15 @@ export default function BookingPage() {
           setBookedSlots(nb);setProviderSlots(d.providerSlots||{});
           if (timeSlot&&nb.has(timeSlot)) setTimeSlot('');
         }else setSlotsError('Could not load live availability.');
-      }catch(e){if ((e as Error).name!=='AbortError') setSlotsError('Could not load live availability.');}
+      }catch(e){if((e as Error).name!=='AbortError') setSlotsError('Could not load live availability.');}
       finally{setLoadingSlots(false);}
     })();
     return ()=>ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[mode,date,location,providerNamesKey]);
 
-  const walkinDisabledReason=mode==='walkin'&&providers.length===0?'Please select a provider above to see real-time availability.':'';
+  const walkinDisabledReason = mode==='walkin'&&providers.length===0
+    ? 'Please select a provider above to see real-time availability.' : '';
 
   function classifySlot(slot:string):SlotStatus{
     if (providers.length===0) return 'available';
@@ -703,32 +918,86 @@ export default function BookingPage() {
 
   function findBackToBack(after:string):string|null{
     const am=timeToMinutes(after);
-    return TIME_SLOTS.find(s=>timeToMinutes(s)>am&&providers.every(p=>!(providerSlots[p.name]??[]).includes(s)))??null;
+    // Re-read providerSlots at call-time so we always have the freshest data
+    const snap=providerSlots;
+    return TIME_SLOTS.find(s=>timeToMinutes(s)>am&&providers.every(p=>!(snap[p.name]??[]).includes(s)))??null;
   }
 
   function handleSlotClick(slot:string){
     const st=classifySlot(slot);
     if (st==='booked') return;
     if (st==='available'){setTimeSlot(slot);return;}
+
     const sm=timeToMinutes(slot);
+
+    // Build per-provider availability detail
     const pa:ProviderAvailability[]=providers.map(p=>{
-      const busy=providerSlots[p.name]??[],isFree=!busy.includes(slot);
-      const nextFreeSlot=!isFree?TIME_SLOTS.find(s=>timeToMinutes(s)>sm&&!busy.includes(s))??null:null;
-      return{providerName:p.name,serviceName:services.find(sv=>p.expertise.includes(sv.category))?.name??'',isFree,nextFreeSlot};
+      const busy=providerSlots[p.name]??[];
+      const isFree=!busy.includes(slot);
+      const nextFreeSlot=!isFree
+        ?TIME_SLOTS.find(s=>timeToMinutes(s)>sm&&!busy.includes(s))??null
+        :null;
+      return{
+        providerName:p.name,
+        serviceName:services.find(sv=>p.expertise.includes(sv.category))?.name??'',
+        isFree,
+        nextFreeSlot,
+      };
     });
-    setConflictModal({selectedSlot:slot,backToBackSlot:findBackToBack(slot),providers:pa,gapDescription:''});
+
+    // Calculate the real gap description
+    const busyProviders=pa.filter(p=>!p.isFree);
+    const latestNext=busyProviders.reduce<string|null>((acc,p)=>{
+      if(!p.nextFreeSlot) return acc;
+      if(!acc) return p.nextFreeSlot;
+      return timeToMinutes(p.nextFreeSlot)>timeToMinutes(acc)?p.nextFreeSlot:acc;
+    },null);
+
+    let gapDescription='';
+    if(busyProviders.length>0&&latestNext){
+      const gapMins=timeToMinutes(latestNext)-timeToMinutes(slot);
+      const busyNames=busyProviders.map(p=>p.providerName).join(', ');
+      gapDescription=`${busyNames} ${busyProviders.length===1?'is':'are'} busy until ${latestNext}, causing a ${gapMins}-minute gap if you start at ${slot}.`;
+    }
+
+    // Re-verify back-to-back slot freshness at click time
+    const btb=findBackToBack(slot);
+
+    setConflictModal({selectedSlot:slot,backToBackSlot:btb,providers:pa,gapDescription});
   }
 
-  function handleBookBackToBack(slot:string){setTimeSlot(slot);setConflictModal(null);}
-  function handleBookSplit(sel:string,next:string){
-    setTimeSlot(sel);
-    setNotes(p=>{const n=`[Split Booking] Free provider(s) at ${sel}. Others join at ${next}.`;return p?`${p}\n${n}`:n;});
+  function handleBookBackToBack(slot:string){
+    // Re-verify the slot is still free before confirming
+    const stillFree=providers.every(p=>!(providerSlots[p.name]??[]).includes(slot));
+    if(!stillFree){
+      setSlotsError(`${slot} was just taken. Please pick another slot.`);
+      setConflictModal(null);
+      return;
+    }
+    setTimeSlot(slot);
     setConflictModal(null);
   }
 
-  /* mode change — keep form, reset timeslot */
+  function handleBookSplit(sel:string,next:string){
+    setTimeSlot(sel);
+    // Build a structured note so the backend/staff can clearly see the split
+    const freeAt=providers
+      .filter(p=>!(providerSlots[p.name]??[]).includes(sel))
+      .map(p=>p.name).join(', ');
+    const laterAt=providers
+      .filter(p=>(providerSlots[p.name]??[]).includes(sel))
+      .map(p=>p.name).join(', ');
+    const splitNote=`[Split Booking] ${freeAt} starts at ${sel}. ${laterAt} joins at ${next}.`;
+    setNotes(p=>p?`${p}\n${splitNote}`:splitNote);
+    setConflictModal(null);
+  }
+
   function handleModeChange(m:BookingMode){
     setMode(m);setTimeSlot('');setBookedSlots(new Set());setProviderSlots({});
+  }
+
+  function handleDateChange(iso:string){
+    setDate(iso);setTimeSlot('');
   }
 
   const canStep2   = !!gender&&!!location&&services.length>0&&providers.length>0&&!!date&&!!timeSlot&&!!phone.trim();
@@ -737,9 +1006,9 @@ export default function BookingPage() {
   const accentColor= mode==='walkin'?tokens.color.green:tokens.color.gold;
   const btnClass   = mode==='walkin'?'btn-green':'btn-gold';
 
-  const toggleService=(svc:ServiceItem)=>setServices(prev=>prev.some(s=>s.name===svc.name&&s.price===svc.price)?prev.filter(s=>!(s.name===svc.name&&s.price===svc.price)):[...prev,svc]);
-  const toggleProvider=(p:Provider)=>{setProviders(prev=>prev.some(x=>x.name===p.name)?prev.filter(x=>x.name!==p.name):[...prev,p]);setTimeSlot('');};
-  const handleLocChange=(loc:string)=>{setLocation(loc);setProviders([]);setTimeSlot('');};
+  const toggleService  = (svc:ServiceItem) => setServices(prev=>prev.some(s=>s.name===svc.name&&s.price===svc.price)?prev.filter(s=>!(s.name===svc.name&&s.price===svc.price)):[...prev,svc]);
+  const toggleProvider = (p:Provider)      => { setProviders(prev=>prev.some(x=>x.name===p.name)?prev.filter(x=>x.name!==p.name):[...prev,p]); setTimeSlot(''); };
+  const handleLocChange= (loc:string)      => { setLocation(loc); setProviders([]); setTimeSlot(''); };
 
   /* ── submit ── */
   const handleConfirm=async()=>{
@@ -761,7 +1030,9 @@ export default function BookingPage() {
     setBookedSlots(new Set());setProviderSlots({});setSlotsError('');setConflictModal(null);
   };
 
-  /* ══ SUCCESS ══ */
+  /* ══════════════════════════════════════
+     SUCCESS SCREEN
+  ══════════════════════════════════════ */
   if (confirmed){
     return(
       <>
@@ -779,10 +1050,14 @@ export default function BookingPage() {
             <p style={{ color:accentColor,fontSize:'0.68rem',fontWeight:700,letterSpacing:'0.28em',textTransform:'uppercase',marginBottom:'0.5rem' }}>Booking {mode==='walkin'?'Registered':'Confirmed'}</p>
             <h2 style={{ color:tokens.color.white,fontSize:'clamp(1.6rem,3vw,2.2rem)',fontWeight:600,marginBottom:'0.75rem',fontFamily:tokens.font.family }}>See you soon, {name.split(' ')[0]}!</h2>
             <p style={{ color:tokens.color.whiteMuted,fontSize:'0.88rem',lineHeight:1.9,marginBottom:'2rem',fontFamily:tokens.font.family }}>
-              <span style={{ color:accentColor }}>{services.map(s=>s.name).join(', ')}</span> on <span style={{ color:accentColor }}>{date?formatDate(date):''}</span> at <span style={{ color:accentColor }}>{timeSlot}</span><br/>
+              <span style={{ color:accentColor }}>{services.map(s=>s.name).join(', ')}</span> on{' '}
+              <span style={{ color:accentColor }}>{date?formatDate(date):''}</span> at{' '}
+              <span style={{ color:accentColor }}>{timeSlot}</span><br/>
               with <span style={{ color:accentColor }}>{providers.map(p=>p.name).join(' & ')}</span><br/>
               at our <span style={{ color:accentColor }}>{location}</span> branch.<br/>
-              <span style={{ color:tokens.color.whiteDim,fontSize:'0.8rem' }}>{mode==='walkin'?'Registered without confirmation — please arrive on time.':`Confirmation sent to ${email}`}</span>
+              <span style={{ color:tokens.color.whiteDim,fontSize:'0.8rem' }}>
+                {mode==='walkin'?'Registered without confirmation — please arrive on time.':`Confirmation sent to ${email}`}
+              </span>
             </p>
             <button className={btnClass} onClick={handleReset} style={{ padding:'0.85rem 2.5rem',fontSize:'0.9rem' }}>Book Another Appointment</button>
           </div>
@@ -791,7 +1066,9 @@ export default function BookingPage() {
     );
   }
 
-  /* ══ MAIN ══ */
+  /* ══════════════════════════════════════
+     MAIN FORM
+  ══════════════════════════════════════ */
   return(
     <>
       <style>{globalCss}</style>
@@ -801,14 +1078,14 @@ export default function BookingPage() {
 
         <div style={{ position:'relative',zIndex:1,padding:'clamp(1.5rem,5vw,3rem) clamp(1rem,4vw,2rem) clamp(3rem,6vw,5rem)' }}>
 
-          {/* PAGE HEADER */}
+          {/* ── PAGE HEADER ── */}
           <div className="reveal-up" style={{ textAlign:'center',marginBottom:'clamp(1.25rem,3vw,1.75rem)' }}>
             <p style={{ color:tokens.color.gold,fontSize:'0.65rem',fontWeight:700,letterSpacing:'0.3em',textTransform:'uppercase',marginBottom:'0.4rem',fontFamily:tokens.font.family }}>Online Booking</p>
             <h1 style={{ color:tokens.color.white,fontSize:'clamp(1.4rem,3vw,2rem)',fontWeight:600,marginBottom:'0.5rem',fontFamily:tokens.font.family }}>
               Reserve Your <span style={{ color:accentColor }}>Luxury</span> Moment
             </h1>
             <p style={{ color:tokens.color.whiteFaint,fontSize:'0.75rem',fontFamily:tokens.font.family }}>
-              {mode==='confirmed'?'✦ We\'ll confirm your appointment via email.':'✦ Instant registration — no email needed.'}
+              {mode==='confirmed'?"✦ We'll confirm your appointment via email.":'✦ Instant registration — no email needed.'}
             </p>
           </div>
 
@@ -816,12 +1093,14 @@ export default function BookingPage() {
 
           <div style={{ maxWidth:'680px',margin:'0 auto' }}>
 
-            {/* ═══ STEP 1 ═══ */}
+            {/* ════════════════════════════
+                STEP 1
+            ════════════════════════════ */}
             {step===1&&(
               <div className="reveal-up">
                 <Card mode={mode}>
 
-                  {/* ── HEADER ROW ── */}
+                  {/* header row */}
                   <div className="appt-header-row">
                     <div className="appt-header-left">
                       <h2 style={{ color:tokens.color.white,fontSize:'1.25rem',fontWeight:600,fontFamily:tokens.font.family,marginBottom:'0.25rem' }}>Build Your Appointment</h2>
@@ -855,7 +1134,7 @@ export default function BookingPage() {
                   <div className="cat-tabs-wrap" style={{ marginBottom:'1rem' }}>
                     {CATEGORIES.map(cat=>{
                       const has=selectedCats.includes(cat);
-                      return<button key={cat} className={`cat-tab ${category===cat?'cat-tab-active':'cat-tab-inactive'}`} onClick={()=>setCategory(cat)}>{cat}{has&&<span className="cat-tab-dot"/>}</button>;
+                      return <button key={cat} type="button" className={`cat-tab ${category===cat?'cat-tab-active':'cat-tab-inactive'}`} onClick={()=>setCategory(cat)}>{cat}{has&&<span className="cat-tab-dot"/>}</button>;
                     })}
                   </div>
 
@@ -881,7 +1160,9 @@ export default function BookingPage() {
 
                   {services.length>0&&(
                     <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',background:'rgba(184,134,11,0.1)',border:'1px solid rgba(184,134,11,0.28)',borderRadius:'0.625rem',padding:'0.6rem 1rem',marginBottom:'1rem' }}>
-                      <div style={{ display:'flex',flexWrap:'wrap',gap:'0.35rem',flex:1 }}>{services.map(s=><span key={s.name} className="chip badge-pop" style={{ fontSize:'0.64rem' }}>{s.name}</span>)}</div>
+                      <div style={{ display:'flex',flexWrap:'wrap',gap:'0.35rem',flex:1 }}>
+                        {services.map(s=><span key={s.name} className="chip badge-pop" style={{ fontSize:'0.64rem' }}>{s.name}</span>)}
+                      </div>
                       <div style={{ flexShrink:0,marginLeft:'0.75rem',textAlign:'right' }}>
                         <p style={{ color:tokens.color.gold,fontWeight:700,fontSize:'0.9rem',fontFamily:tokens.font.family }}>LKR {totalPrice.toLocaleString()}</p>
                         <p style={{ color:tokens.color.whiteFaint,fontSize:'0.68rem',fontFamily:tokens.font.family }}>{fmtMins(totalMins)}</p>
@@ -911,7 +1192,10 @@ export default function BookingPage() {
                                 <p style={{ color:tokens.color.whiteMuted,fontSize:'0.85rem',fontWeight:600,fontFamily:tokens.font.family }}>{p.name}</p>
                                 <p style={{ color:tokens.color.whiteFaint,fontSize:'0.71rem',marginTop:'0.1rem',fontFamily:tokens.font.family }}>{p.role}</p>
                                 <div style={{ display:'flex',flexWrap:'wrap',gap:'0.28rem',marginTop:'0.32rem' }}>
-                                  {p.expertise.map(e=>{const m=catFilter.includes(e);return<span key={e} style={{ fontSize:'0.6rem',fontWeight:600,letterSpacing:'0.07em',borderRadius:'999px',padding:'0.12rem 0.45rem',fontFamily:tokens.font.family,background:m?'rgba(184,134,11,0.25)':'rgba(255,255,255,0.06)',color:m?tokens.color.gold:tokens.color.whiteFaint,border:`1px solid ${m?'rgba(184,134,11,0.5)':'rgba(255,255,255,0.12)'}`}}>{e}</span>;})}
+                                  {p.expertise.map(e=>{
+                                    const m=catFilter.includes(e);
+                                    return<span key={e} style={{ fontSize:'0.6rem',fontWeight:600,letterSpacing:'0.07em',borderRadius:'999px',padding:'0.12rem 0.45rem',fontFamily:tokens.font.family,background:m?'rgba(184,134,11,0.25)':'rgba(255,255,255,0.06)',color:m?tokens.color.gold:tokens.color.whiteFaint,border:`1px solid ${m?'rgba(184,134,11,0.5)':'rgba(255,255,255,0.12)'}`}}>{e}</span>;
+                                  })}
                                 </div>
                               </div>
                               <CircleCheck active={active}/>
@@ -922,48 +1206,48 @@ export default function BookingPage() {
                     </>
                   )}
 
-                  {providers.length>0&&<div style={{ display:'flex',flexWrap:'wrap',gap:'0.4rem',marginBottom:'0.9rem' }}>{providers.map(p=><span key={p.name} className="chip badge-pop"><Ico.Check s={9} c={tokens.color.gold}/>{p.name}</span>)}</div>}
+                  {providers.length>0&&(
+                    <div style={{ display:'flex',flexWrap:'wrap',gap:'0.4rem',marginBottom:'0.9rem' }}>
+                      {providers.map(p=><span key={p.name} className="chip badge-pop"><Ico.Check s={9} c={tokens.color.gold}/>{p.name}</span>)}
+                    </div>
+                  )}
 
                   <div className="divider" style={{ margin:'0 0 1.4rem' }}/>
 
                   {/* ── DATE ── */}
                   <Label text="Preferred Date"/>
-                  <input type="date" className="sayo-input" value={date} min={today}
-                    onChange={e=>{setDate(e.target.value);setTimeSlot('');}}
-                    style={{ marginBottom:'1.25rem' }}/>
+                  <DatePickerField
+                    value={date}
+                    minDate={today}
+                    onChange={handleDateChange}
+                  />
 
-                  {/* ── TIME SECTION (appears after date, with mode toggle embedded) ── */}
+                  {/* ── TIME ── */}
                   {date&&(
                     <TimeSectionCard
-                      date={date}
-                      mode={mode}
-                      onModeChange={handleModeChange}
-                      timeSlot={timeSlot}
-                      loadingSlots={loadingSlots}
-                      slotsError={slotsError}
+                      date={date} mode={mode} onModeChange={handleModeChange}
+                      timeSlot={timeSlot} loadingSlots={loadingSlots} slotsError={slotsError}
                       walkinDisabledReason={walkinDisabledReason}
-                      classifySlot={classifySlot}
-                      handleSlotClick={handleSlotClick}
-                      multiProvider={providers.length>1}
-                      setTimeSlot={setTimeSlot}
+                      classifySlot={classifySlot} handleSlotClick={handleSlotClick}
+                      multiProvider={providers.length>1} setTimeSlot={setTimeSlot}
                     />
                   )}
 
-                  {/* ── missing fields ── */}
+                  {/* ── missing fields hint ── */}
                   {!canStep2&&(gender||location||services.length>0)&&(
                     <div style={{ background:'rgba(184,134,11,0.07)',border:'1px solid rgba(184,134,11,0.22)',borderRadius:'0.5rem',padding:'0.55rem 0.85rem',marginTop:'1rem',marginBottom:'0.85rem',fontSize:'0.71rem',color:tokens.color.whiteFaint,fontFamily:tokens.font.family,display:'flex',flexDirection:'column',gap:'0.2rem' }}>
-                      {!location              &&<span>• Select a branch</span>}
-                      {!gender                &&<span>• Select your gender</span>}
-                      {!phone.trim()          &&<span>• Enter your phone number</span>}
-                      {services.length===0    &&<span>• Choose at least one service</span>}
-                      {providers.length===0   &&<span>• Choose a provider</span>}
-                      {!date                  &&<span>• Pick a date</span>}
-                      {!timeSlot              &&<span>• Pick a time slot</span>}
+                      {!location            &&<span>• Select a branch</span>}
+                      {!gender              &&<span>• Select your gender</span>}
+                      {!phone.trim()        &&<span>• Enter your phone number</span>}
+                      {services.length===0  &&<span>• Choose at least one service</span>}
+                      {providers.length===0 &&<span>• Choose a provider</span>}
+                      {!date                &&<span>• Pick a date</span>}
+                      {!timeSlot            &&<span>• Pick a time slot</span>}
                     </div>
                   )}
 
                   <div style={{ display:'flex',justifyContent:'flex-end',marginTop:'1rem' }}>
-                    <button className={btnClass} disabled={!canStep2} onClick={()=>setStep(2)} style={{ padding:'0.85rem 2.2rem',fontSize:'0.9rem' }}>
+                    <button className={btnClass} type="button" disabled={!canStep2} onClick={()=>setStep(2)} style={{ padding:'0.85rem 2.2rem',fontSize:'0.9rem' }}>
                       Review Booking <Ico.Right/>
                     </button>
                   </div>
@@ -971,7 +1255,9 @@ export default function BookingPage() {
               </div>
             )}
 
-            {/* ═══ STEP 2 ═══ */}
+            {/* ════════════════════════════
+                STEP 2
+            ════════════════════════════ */}
             {step===2&&(
               <div className="reveal-up">
                 <Card mode={mode}>
@@ -1001,11 +1287,11 @@ export default function BookingPage() {
                   </div>
 
                   <div className="cf-block">
-                    <SumRow icon={<Ico.Scissors/>} label="Service(s)"  value={services.map(s=>s.name).join(', ')}/>
-                    <SumRow icon={<Ico.Clock/>}    label="Duration"    value={fmtMins(totalMins)}/>
-                    <SumRow icon={<Ico.User/>}     label="Provider(s)" value={providers.map(p=>`${p.name} — ${p.role}`).join(', ')}/>
-                    <SumRow icon={<Ico.Calendar/>} label="Date"        value={date?formatDate(date):''}/>
-                    <SumRow icon={<Ico.Clock/>}    label="Time"        value={timeSlot}/>
+                    <SumRow icon={<Ico.Scissors/>}  label="Service(s)"  value={services.map(s=>s.name).join(', ')}/>
+                    <SumRow icon={<Ico.Clock/>}      label="Duration"    value={fmtMins(totalMins)}/>
+                    <SumRow icon={<Ico.User/>}       label="Provider(s)" value={providers.map(p=>`${p.name} — ${p.role}`).join(', ')}/>
+                    <SumRow icon={<Ico.Calendar/>}   label="Date"        value={date?formatDate(date):''}/>
+                    <SumRow icon={<Ico.Clock/>}      label="Time"        value={timeSlot}/>
                   </div>
 
                   <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',background:tokens.color.goldBg,border:`1px solid ${tokens.color.goldBorder}`,borderRadius:'0.75rem',padding:'0.85rem 1.1rem',marginBottom:'1.25rem' }}>
@@ -1023,9 +1309,12 @@ export default function BookingPage() {
                   </p>
 
                   <div style={{ display:'flex',justifyContent:'space-between',gap:'1rem' }}>
-                    <button className="btn-ghost" onClick={()=>{setStep(1);setApiError('');}} style={{ padding:'0.75rem 1.5rem',fontSize:'0.85rem' }}>← Back</button>
-                    <button className={btnClass} disabled={loading} onClick={handleConfirm} style={{ padding:'0.8rem 2rem',fontSize:'0.87rem',minWidth:'210px' }}>
-                      {loading?<><span style={{ width:'0.85rem',height:'0.85rem',border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'#fff',borderRadius:'50%',display:'inline-block',animation:'spin 0.7s linear infinite' }}/>{mode==='walkin'?'Registering…':'Confirming…'}</>:mode==='walkin'?'Register Without Confirmation':'Confirm Booking'}
+                    <button className="btn-ghost" type="button" onClick={()=>{setStep(1);setApiError('');}} style={{ padding:'0.75rem 1.5rem',fontSize:'0.85rem' }}>← Back</button>
+                    <button className={btnClass} type="button" disabled={loading} onClick={handleConfirm} style={{ padding:'0.8rem 2rem',fontSize:'0.87rem',minWidth:'210px' }}>
+                      {loading
+                        ? <><span style={{ width:'0.85rem',height:'0.85rem',border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'#fff',borderRadius:'50%',display:'inline-block',animation:'spin 0.7s linear infinite' }}/>{mode==='walkin'?'Registering…':'Confirming…'}</>
+                        : mode==='walkin'?'Register Without Confirmation':'Confirm Booking'
+                      }
                     </button>
                   </div>
                 </Card>
@@ -1037,7 +1326,12 @@ export default function BookingPage() {
       </main>
 
       {conflictModal&&(
-        <ConflictModal data={conflictModal} onBookBackToBack={handleBookBackToBack} onBookSplit={handleBookSplit} onClose={()=>setConflictModal(null)}/>
+        <ConflictModal
+          data={conflictModal}
+          onBookBackToBack={handleBookBackToBack}
+          onBookSplit={handleBookSplit}
+          onClose={()=>setConflictModal(null)}
+        />
       )}
     </>
   );

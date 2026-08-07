@@ -2,410 +2,317 @@
 
 import React from 'react';
 
-/* ─────────────────────────────────────────
-   TYPES
-───────────────────────────────────────── */
 export interface ProviderAvailability {
-  providerName: string;
-  serviceName:  string;
-  isFree:       boolean;
-  nextFreeSlot: string | null;
+  providerName:  string;
+  serviceName:   string;
+  isFree:        boolean;
+  nextFreeSlot:  string | null;
 }
 
 export interface ConflictModalData {
-  selectedSlot:    string;
-  backToBackSlot:  string | null;
-  providers:       ProviderAvailability[];
-  gapDescription:  string;
+  selectedSlot:   string;
+  backToBackSlot: string | null;
+  providers:      ProviderAvailability[];
+  gapDescription: string;
 }
 
-interface ConflictModalProps {
-  data:             ConflictModalData;
-  onBookSplit:      (selectedSlot: string, nextFreeSlot: string) => void;
-  onBookBackToBack: (slot: string) => void;
-  onClose:          () => void;
+interface Props {
+  data:              ConflictModalData;
+  onBookBackToBack:  (slot: string) => void;
+  onBookSplit:       (selected: string, next: string) => void;
+  onClose:           () => void;
 }
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
-function timeToMinutes(timeStr: string): number {
-  const match = timeStr.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)$/i);
-  if (!match) return 0;
-  let hours = parseInt(match[1], 10);
-  const mins = parseInt(match[2], 10);
-  const period = match[3].toUpperCase();
-  if (period === 'PM' && hours !== 12) hours += 12;
-  if (period === 'AM' && hours === 12) hours = 0;
-  return hours * 60 + mins;
-}
-
-function minutesToGapLabel(gapMins: number): string {
-  if (gapMins <= 0) return '0-minute';
-  if (gapMins < 60) return `${gapMins}-minute`;
-  const h = Math.floor(gapMins / 60);
-  const m = gapMins % 60;
-  return m > 0 ? `${h}.${Math.round((m / 60) * 10)}-hour` : `${h}-hour`;
-}
-
-/* ─────────────────────────────────────────
-   STYLES
-───────────────────────────────────────── */
-const css = {
-  overlay: {
-    position:       'fixed' as const,
-    inset:          0,
-    zIndex:         200,
-    display:        'flex',
-    alignItems:     'center',
-    justifyContent: 'center',
-    padding:        '1.25rem',
-  },
-  backdrop: {
-    position:             'absolute' as const,
-    inset:                0,
-    background:           'rgba(4,4,5,0.90)',
-    backdropFilter:       'blur(8px)',
-    WebkitBackdropFilter: 'blur(8px)',
-  },
-  dialog: {
-    position:     'relative' as const,
-    zIndex:       1,
-    width:        '100%',
-    maxWidth:     '520px',
-    background:   'rgba(20,18,15,0.97)',
-    border:       '1px solid rgba(255,255,255,0.10)',
-    borderRadius: '1.25rem',
-    padding:      'clamp(1.25rem,4vw,1.85rem)',
-    fontFamily:   'Inter, sans-serif',
-    boxShadow:    '0 32px 80px rgba(0,0,0,0.6)',
-    maxHeight:    '92vh',
-    overflowY:    'auto' as const,
-  },
-  header: {
-    display:        'flex',
-    alignItems:     'flex-start',
-    justifyContent: 'space-between',
-    gap:            '0.75rem',
-    marginBottom:   '0.75rem',
-  },
-  badge: {
-    display:       'inline-flex',
-    alignItems:    'center',
-    gap:           '0.35rem',
-    background:    'rgba(245,158,11,0.15)',
-    border:        '1px solid rgba(245,158,11,0.45)',
-    borderRadius:  '999px',
-    padding:       '0.22rem 0.75rem',
-    fontSize:      '0.68rem',
-    fontWeight:    700,
-    letterSpacing: '0.08em',
-    color:         '#f59e0b',
-    marginBottom:  '0.6rem',
-  },
-  title: {
-    color:       '#ffffff',
-    fontSize:    'clamp(1rem,2.5vw,1.2rem)',
-    fontWeight:  600,
-    lineHeight:  1.3,
-    marginBottom:'0.4rem',
-  },
-  bodyText: {
-    color:       'rgba(255,255,255,0.60)',
-    fontSize:    '0.80rem',
-    lineHeight:  1.7,
-    marginBottom:'1.25rem',
-  },
-  optionCard: (highlight: boolean): React.CSSProperties => ({
-    borderRadius: '0.875rem',
-    border:       highlight
-      ? '1.5px solid rgba(34,197,94,0.50)'
-      : '1.5px solid rgba(255,255,255,0.12)',
-    background:   highlight
-      ? 'rgba(34,197,94,0.07)'
-      : 'rgba(255,255,255,0.03)',
-    padding:      '1rem 1.1rem',
-    marginBottom: '0.75rem',
-  }),
-  optionLabel: (highlight: boolean): React.CSSProperties => ({
-    display:       'flex',
-    alignItems:    'center',
-    gap:           '0.4rem',
-    fontSize:      '0.65rem',
-    fontWeight:    700,
-    letterSpacing: '0.14em',
-    textTransform: 'uppercase',
-    color:         highlight ? '#22c55e' : 'rgba(255,255,255,0.45)',
-    marginBottom:  '0.35rem',
-  }),
-  optionTitle: {
-    color:        '#ffffff',
-    fontSize:     '0.92rem',
-    fontWeight:   600,
-    marginBottom: '0.3rem',
-  },
-  optionSubtitle: {
-    color:        'rgba(255,255,255,0.55)',
-    fontSize:     '0.76rem',
-    lineHeight:   1.6,
-    marginBottom: '0.85rem',
-  },
-  providerRow: {
-    display:      'flex',
-    alignItems:   'center',
-    gap:          '0.5rem',
-    padding:      '0.4rem 0',
-    borderBottom: '1px solid rgba(255,255,255,0.06)',
-    fontSize:     '0.78rem',
-    color:        'rgba(255,255,255,0.75)',
-  },
-  btnPrimary: {
-    width:          '100%',
-    padding:        '0.78rem 1rem',
-    background:     '#22c55e',
-    border:         'none',
-    borderRadius:   '0.75rem',
-    color:          '#ffffff',
-    fontSize:       '0.85rem',
-    fontWeight:     600,
-    fontFamily:     'Inter, sans-serif',
-    cursor:         'pointer',
-    display:        'flex',
-    alignItems:     'center',
-    justifyContent: 'center',
-    gap:            '0.4rem',
-    transition:     'transform 0.18s, box-shadow 0.18s',
-    letterSpacing:  '0.03em',
-  },
-  btnSecondary: {
-    width:          '100%',
-    padding:        '0.75rem 1rem',
-    background:     'rgba(245,158,11,0.12)',
-    border:         '1.5px solid rgba(245,158,11,0.40)',
-    borderRadius:   '0.75rem',
-    color:          '#f59e0b',
-    fontSize:       '0.83rem',
-    fontWeight:     600,
-    fontFamily:     'Inter, sans-serif',
-    cursor:         'pointer',
-    display:        'flex',
-    alignItems:     'center',
-    justifyContent: 'center',
-    gap:            '0.4rem',
-    transition:     'transform 0.18s, background 0.18s',
-    letterSpacing:  '0.03em',
-  },
-  btnClose: {
-    width:        '100%',
-    padding:      '0.7rem 1rem',
-    background:   'transparent',
-    border:       '1.5px solid rgba(255,255,255,0.15)',
-    borderRadius: '0.75rem',
-    color:        'rgba(255,255,255,0.50)',
-    fontSize:     '0.80rem',
-    fontWeight:   500,
-    fontFamily:   'Inter, sans-serif',
-    cursor:       'pointer',
-    marginTop:    '0.6rem',
-    transition:   'border-color 0.18s, color 0.18s',
-  },
-  closeX: {
-    background:     'rgba(255,255,255,0.06)',
-    border:         '1px solid rgba(255,255,255,0.12)',
-    borderRadius:   '50%',
-    width:          '1.9rem',
-    height:         '1.9rem',
-    display:        'flex',
-    alignItems:     'center',
-    justifyContent: 'center',
-    cursor:         'pointer',
-    color:          'rgba(255,255,255,0.50)',
-    fontSize:       '1rem',
-    flexShrink:     0,
-    lineHeight:     1,
-  },
+/* ── tiny design tokens (self-contained so the modal has no external deps) ── */
+const C = {
+  gold:        '#B8860B',
+  goldBorder:  'rgba(184,134,11,0.4)',
+  goldBg:      'rgba(184,134,11,0.14)',
+  white:       '#ffffff',
+  whiteMuted:  'rgba(255,255,255,0.80)',
+  whiteDim:    'rgba(255,255,255,0.70)',
+  whiteFaint:  'rgba(255,255,255,0.35)',
+  green:       '#22c55e',
+  greenBg:     'rgba(34,197,94,0.14)',
+  greenBorder: 'rgba(34,197,94,0.4)',
+  amber:       '#f59e0b',
+  amberBg:     'rgba(245,158,11,0.13)',
+  amberBorder: 'rgba(245,158,11,0.55)',
+  red:         '#ef4444',
+  redFaint:    'rgba(239,68,68,0.75)',
+  cardBg:      'rgba(20,18,15,0.97)',
+  overlayBg:   'rgba(0,0,0,0.72)',
+  border:      'rgba(255,255,255,0.10)',
+  font:        'Inter, sans-serif',
 };
 
-/* ─────────────────────────────────────────
-   COMPONENT
-───────────────────────────────────────── */
-export default function ConflictModal({
-  data,
-  onBookSplit,
-  onBookBackToBack,
-  onClose,
-}: ConflictModalProps) {
-  const { selectedSlot, backToBackSlot, providers } = data;
+const inlineStyles = `
+  @keyframes modalIn {
+    from { opacity:0; transform:translateY(28px) scale(0.96); }
+    to   { opacity:1; transform:translateY(0)    scale(1);    }
+  }
+  .cm-modal { animation: modalIn 0.32s cubic-bezier(0.16,1,0.3,1) both; }
+`;
 
-  const freeProviders = providers.filter(p => p.isFree);
+export default function ConflictModal({ data, onBookBackToBack, onBookSplit, onClose }: Props) {
+  const { selectedSlot, backToBackSlot, providers, gapDescription } = data;
+
+  // Providers who are free / busy at selectedSlot
+  const freeProviders = providers.filter(p =>  p.isFree);
   const busyProviders = providers.filter(p => !p.isFree);
 
-  const latestNextFree = busyProviders.reduce<string | null>((latest, p) => {
-    if (!p.nextFreeSlot) return latest;
-    if (!latest) return p.nextFreeSlot;
-    return timeToMinutes(p.nextFreeSlot) > timeToMinutes(latest)
-      ? p.nextFreeSlot
-      : latest;
+  // Latest "next free" slot among busy providers → split target
+  const splitNextSlot = busyProviders.reduce<string | null>((acc, p) => {
+    if (!p.nextFreeSlot) return acc;
+    if (!acc) return p.nextFreeSlot;
+    return toMin(p.nextFreeSlot) > toMin(acc) ? p.nextFreeSlot : acc;
   }, null);
 
-  const gapMins = latestNextFree
-    ? timeToMinutes(latestNextFree) - timeToMinutes(selectedSlot)
-    : 0;
-
-  const gapLabel = minutesToGapLabel(gapMins);
-
-  const busyNames = busyProviders.map(p => p.providerName).join(' & ');
-  const conflictSentence =
-    busyProviders.length === 1 && latestNextFree
-      ? `${busyNames} is busy until ${latestNextFree}, causing a ${gapLabel} gap if you start at ${selectedSlot}.`
-      : busyProviders.length > 1 && latestNextFree
-      ? `${busyNames} are busy, with the last becoming free at ${latestNextFree} — a ${gapLabel} gap from ${selectedSlot}.`
-      : `Some providers are not available at ${selectedSlot}.`;
-
-  const splitNextSlot = latestNextFree;
+  const canSplit = freeProviders.length > 0 && splitNextSlot !== null;
+  const canBtB   = !!backToBackSlot;
 
   return (
-    <div style={css.overlay} role="dialog" aria-modal="true" aria-labelledby="conflict-modal-title">
-      <div style={css.backdrop} onClick={onClose} />
+    <>
+      <style>{inlineStyles}</style>
 
-      <div style={css.dialog} className="scale-in">
-
-        <div style={css.header}>
-          <div>
-            <div style={css.badge}>
-              <span style={{
-                width:'0.45rem', height:'0.45rem', borderRadius:'50%',
-                background:'#f59e0b', display:'inline-block',
-              }} />
-              Partial Availability
-            </div>
-            <h2 id="conflict-modal-title" style={css.title}>
-              Partial Availability at{' '}
-              <span style={{ color:'#f59e0b' }}>{selectedSlot}</span>
-            </h2>
-          </div>
-          <button style={css.closeX} onClick={onClose} aria-label="Close">✕</button>
-        </div>
-
-        <p style={css.bodyText}>{conflictSentence}</p>
-
-        {/* OPTION B — Back-to-Back (Primary / Recommended) */}
-        {backToBackSlot && (
-          <div style={css.optionCard(true)}>
-            <div style={css.optionLabel(true)}>
-              <span style={{
-                width:'1.1rem', height:'1.1rem', borderRadius:'50%',
-                background:'rgba(34,197,94,0.2)', border:'1px solid rgba(34,197,94,0.5)',
-                display:'inline-flex', alignItems:'center', justifyContent:'center',
-                fontSize:'0.6rem', color:'#22c55e', fontWeight:700,
-              }}>B</span>
-              Recommended
-            </div>
-            <p style={css.optionTitle}>Option B: Continuous / Back-to-Back Visit</p>
-            <p style={css.optionSubtitle}>
-              Do all services in one go with no waiting time starting at{' '}
-              <strong style={{ color:'#22c55e' }}>{backToBackSlot}</strong>.
-              All {providers.length} providers will be free and ready.
-            </p>
-            <button
-              style={css.btnPrimary}
-              onMouseEnter={e => {
-                (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-2px)';
-                (e.currentTarget as HTMLButtonElement).style.boxShadow = '0 8px 24px rgba(34,197,94,0.35)';
-              }}
-              onMouseLeave={e => {
-                (e.currentTarget as HTMLButtonElement).style.transform = 'none';
-                (e.currentTarget as HTMLButtonElement).style.boxShadow = 'none';
-              }}
-              onClick={() => onBookBackToBack(backToBackSlot)}
-            >
-              ✓ Book All at {backToBackSlot} (Recommended)
-            </button>
-          </div>
-        )}
-
-        {/* OPTION A — Split Booking (Secondary) */}
-        {splitNextSlot && (
-          <div style={css.optionCard(false)}>
-            <div style={css.optionLabel(false)}>
-              <span style={{
-                width:'1.1rem', height:'1.1rem', borderRadius:'50%',
-                background:'rgba(245,158,11,0.15)', border:'1px solid rgba(245,158,11,0.4)',
-                display:'inline-flex', alignItems:'center', justifyContent:'center',
-                fontSize:'0.6rem', color:'#f59e0b', fontWeight:700,
-              }}>A</span>
-              Split Option
-            </div>
-            <p style={css.optionTitle}>Option A: Split Booking (With Gap)</p>
-            <p style={css.optionSubtitle}>
-              Start your first service at{' '}
-              <strong style={{ color:'#f59e0b' }}>{selectedSlot}</strong>{' '}
-              and continue when {busyNames} is free — with a{' '}
-              <strong style={{ color:'#f59e0b' }}>{gapLabel} gap</strong>.
-            </p>
-
-            <div style={{ marginBottom:'0.85rem' }}>
-              {freeProviders.map(p => (
-                <div key={p.providerName} style={css.providerRow}>
-                  <span>✅</span>
-                  <span>
-                    <strong style={{ color:'rgba(255,255,255,0.90)' }}>{p.providerName}</strong>
-                    {p.serviceName && (
-                      <span style={{ color:'rgba(255,255,255,0.45)' }}> ({p.serviceName})</span>
-                    )}
-                    <span style={{ color:'rgba(255,255,255,0.45)' }}>: Available at </span>
-                    <strong style={{ color:'#22c55e' }}>{selectedSlot}</strong>
-                  </span>
-                </div>
-              ))}
-              {busyProviders.map(p => (
-                <div key={p.providerName} style={{ ...css.providerRow, borderBottom:'none' }}>
-                  <span>☕</span>
-                  <span>
-                    <strong style={{ color:'rgba(255,255,255,0.90)' }}>{p.providerName}</strong>
-                    {p.serviceName && (
-                      <span style={{ color:'rgba(255,255,255,0.45)' }}> ({p.serviceName})</span>
-                    )}
-                    <span style={{ color:'rgba(255,255,255,0.45)' }}>: Next free at </span>
-                    <strong style={{ color:'#f59e0b' }}>{p.nextFreeSlot ?? '—'}</strong>
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            <button
-              style={css.btnSecondary}
-              onMouseEnter={e => {
-                (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-2px)';
-                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(245,158,11,0.20)';
-              }}
-              onMouseLeave={e => {
-                (e.currentTarget as HTMLButtonElement).style.transform = 'none';
-                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(245,158,11,0.12)';
-              }}
-              onClick={() => onBookSplit(selectedSlot, splitNextSlot)}
-            >
-              Book as Split Visit ({selectedSlot} & {splitNextSlot})
-            </button>
-          </div>
-        )}
-
-        <button
-          style={css.btnClose}
-          onMouseEnter={e => {
-            (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.35)';
-            (e.currentTarget as HTMLButtonElement).style.color = 'rgba(255,255,255,0.75)';
+      {/* ── Overlay ── */}
+      <div
+        onClick={onClose}
+        style={{
+          position:'fixed', inset:0, zIndex:999,
+          background: C.overlayBg,
+          backdropFilter:'blur(4px)',
+          WebkitBackdropFilter:'blur(4px)',
+          display:'flex', alignItems:'center', justifyContent:'center',
+          padding:'1rem',
+        }}
+      >
+        {/* ── Modal card ── */}
+        <div
+          className="cm-modal"
+          onClick={e => e.stopPropagation()}
+          style={{
+            background: C.cardBg,
+            border: `1px solid ${C.border}`,
+            borderRadius:'1.25rem',
+            padding:'1.5rem',
+            width:'100%',
+            maxWidth:'480px',
+            maxHeight:'90vh',
+            overflowY:'auto',
+            fontFamily: C.font,
+            boxShadow:'0 24px 80px rgba(0,0,0,0.6)',
+            position:'relative',
           }}
-          onMouseLeave={e => {
-            (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.15)';
-            (e.currentTarget as HTMLButtonElement).style.color = 'rgba(255,255,255,0.50)';
-          }}
-          onClick={onClose}
         >
-          ← Choose a different date or time
-        </button>
+          {/* close button */}
+          <button
+            onClick={onClose}
+            style={{
+              position:'absolute', top:'1rem', right:'1rem',
+              background:'rgba(255,255,255,0.08)', border:'none',
+              borderRadius:'50%', width:'2rem', height:'2rem',
+              color: C.whiteDim, cursor:'pointer', fontSize:'1rem',
+              display:'flex', alignItems:'center', justifyContent:'center',
+            }}
+            aria-label="Close"
+          >✕</button>
 
+          {/* ── Header ── */}
+          <div style={{ marginBottom:'1.1rem' }}>
+            <span style={{
+              display:'inline-flex', alignItems:'center', gap:'0.35rem',
+              background: C.amberBg, border:`1px solid ${C.amberBorder}`,
+              borderRadius:'999px', padding:'0.18rem 0.7rem',
+              fontSize:'0.63rem', fontWeight:700, letterSpacing:'0.08em',
+              color: C.amber, marginBottom:'0.6rem',
+            }}>
+              ● Partial Availability
+            </span>
+
+            <h2 style={{ color: C.white, fontSize:'1.2rem', fontWeight:700, marginBottom:'0.35rem' }}>
+              Partial Availability at{' '}
+              <span style={{ color: C.amber }}>{selectedSlot}</span>
+            </h2>
+
+            {gapDescription && (
+              <p style={{ color: C.whiteDim, fontSize:'0.8rem', lineHeight:1.6 }}>
+                {gapDescription}
+              </p>
+            )}
+          </div>
+
+          {/* ════════════════════════════════════════
+              OPTION A  —  Split Booking  (shown first)
+          ════════════════════════════════════════ */}
+          <div style={{
+            border: `1.5px solid ${C.goldBorder}`,
+            borderRadius:'0.875rem',
+            padding:'1rem',
+            marginBottom:'0.85rem',
+            background: C.goldBg,
+          }}>
+            <div style={{ display:'flex', alignItems:'center', gap:'0.4rem', marginBottom:'0.5rem' }}>
+              <span style={badgeStyle(C.gold)}>A</span>
+              <span style={{ fontSize:'0.62rem', fontWeight:700, letterSpacing:'0.1em', color: C.gold }}>
+                SPLIT OPTION
+              </span>
+            </div>
+
+            <p style={{ color: C.white, fontWeight:600, fontSize:'0.92rem', marginBottom:'0.3rem' }}>
+              Option A: Split Booking (With Gap)
+            </p>
+
+            {canSplit ? (
+              <>
+                <p style={{ color: C.whiteDim, fontSize:'0.79rem', lineHeight:1.6, marginBottom:'0.75rem' }}>
+                  Start your first service at{' '}
+                  <strong style={{ color: C.amber }}>{selectedSlot}</strong> and continue when{' '}
+                  {busyProviders.map(p => p.providerName).join(' & ')} {busyProviders.length === 1 ? 'is' : 'are'} free
+                  {' '}— with a{' '}
+                  <strong style={{ color: C.amber }}>
+                    {toMin(splitNextSlot!) - toMin(selectedSlot)}-minute gap.
+                  </strong>
+                </p>
+
+                {/* per-provider rows */}
+                <div style={{ display:'flex', flexDirection:'column', gap:'0.35rem', marginBottom:'0.85rem' }}>
+                  {providers.map(p => (
+                    <div key={p.providerName} style={{
+                      display:'flex', alignItems:'center', gap:'0.5rem',
+                      fontSize:'0.79rem', color: C.whiteMuted,
+                    }}>
+                      {p.isFree
+                        ? <span style={{ color: C.green, fontSize:'0.85rem' }}>✔</span>
+                        : <span style={{ fontSize:'0.85rem' }}>⏳</span>
+                      }
+                      <span>
+                        <strong style={{ color: C.white }}>{p.providerName}</strong>
+                        {p.serviceName ? ` (${p.serviceName})` : ''}
+                        {': '}
+                        {p.isFree
+                          ? <span style={{ color: C.green }}>Available at {selectedSlot}</span>
+                          : <span style={{ color: C.amber }}>Next free at {p.nextFreeSlot}</span>
+                        }
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => onBookSplit(selectedSlot, splitNextSlot!)}
+                  style={outlineBtn(C.gold)}
+                >
+                  Book as Split Visit ({selectedSlot} &amp; {splitNextSlot})
+                </button>
+              </>
+            ) : (
+              <p style={{ color: C.whiteFaint, fontSize:'0.78rem' }}>
+                No split option available — both providers are busy at this slot.
+              </p>
+            )}
+          </div>
+
+          {/* ════════════════════════════════════════
+              OPTION B  —  Back-to-Back  (shown second)
+          ════════════════════════════════════════ */}
+          <div style={{
+            border: `1.5px solid ${C.greenBorder}`,
+            borderRadius:'0.875rem',
+            padding:'1rem',
+            marginBottom:'0.85rem',
+            background: C.greenBg,
+          }}>
+            <div style={{ display:'flex', alignItems:'center', gap:'0.4rem', marginBottom:'0.5rem' }}>
+              <span style={badgeStyle(C.green)}>B</span>
+              <span style={{ fontSize:'0.62rem', fontWeight:700, letterSpacing:'0.1em', color: C.green }}>
+                RECOMMENDED
+              </span>
+            </div>
+
+            <p style={{ color: C.white, fontWeight:600, fontSize:'0.92rem', marginBottom:'0.3rem' }}>
+              Option B: Continuous / Back-to-Back Visit
+            </p>
+
+            {canBtB ? (
+              <>
+                <p style={{ color: C.whiteDim, fontSize:'0.79rem', lineHeight:1.6, marginBottom:'0.85rem' }}>
+                  Do all services in one go with no waiting time starting at{' '}
+                  <strong style={{ color: C.green }}>{backToBackSlot}</strong>.
+                  All {providers.length} providers will be free and ready.
+                </p>
+
+                <button
+                  onClick={() => onBookBackToBack(backToBackSlot!)}
+                  style={solidBtn(C.green)}
+                >
+                  ✓ Book All at {backToBackSlot} (Recommended)
+                </button>
+              </>
+            ) : (
+              <p style={{ color: C.whiteFaint, fontSize:'0.78rem' }}>
+                No back-to-back slot available for all providers today.
+              </p>
+            )}
+          </div>
+
+          {/* ── Footer ── */}
+          <button
+            onClick={onClose}
+            style={{
+              width:'100%', padding:'0.7rem',
+              background:'rgba(255,255,255,0.05)',
+              border:`1px solid ${C.border}`,
+              borderRadius:'0.625rem', color: C.whiteFaint,
+              fontSize:'0.8rem', cursor:'pointer', fontFamily: C.font,
+            }}
+          >
+            ← Choose a different date or time
+          </button>
+        </div>
       </div>
-    </div>
+    </>
   );
+}
+
+/* ── helpers ── */
+function toMin(t: string): number {
+  const m = t.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)$/i);
+  if (!m) return 0;
+  let h = parseInt(m[1], 10);
+  const mn = parseInt(m[2], 10), p = m[3].toUpperCase();
+  if (p === 'PM' && h !== 12) h += 12;
+  if (p === 'AM' && h === 12) h = 0;
+  return h * 60 + mn;
+}
+
+function badgeStyle(color: string): React.CSSProperties {
+  return {
+    width:'1.4rem', height:'1.4rem', borderRadius:'50%',
+    background: color, color:'#fff',
+    display:'flex', alignItems:'center', justifyContent:'center',
+    fontSize:'0.72rem', fontWeight:700, flexShrink:0,
+  };
+}
+
+function solidBtn(color: string): React.CSSProperties {
+  return {
+    width:'100%', padding:'0.78rem',
+    background: color, border:'none',
+    borderRadius:'0.625rem', color:'#fff',
+    fontWeight:700, fontSize:'0.87rem',
+    cursor:'pointer', fontFamily:'Inter, sans-serif',
+    boxShadow:`0 4px 20px ${color}55`,
+  };
+}
+
+function outlineBtn(color: string): React.CSSProperties {
+  return {
+    width:'100%', padding:'0.78rem',
+    background:'transparent',
+    border:`1.5px solid ${color}`,
+    borderRadius:'0.625rem', color,
+    fontWeight:700, fontSize:'0.87rem',
+    cursor:'pointer', fontFamily:'Inter, sans-serif',
+  };
 }
