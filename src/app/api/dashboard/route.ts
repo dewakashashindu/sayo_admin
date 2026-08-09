@@ -15,11 +15,11 @@ export async function GET(req: NextRequest) {
     const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
 
     /* ── Stats ── */
-    const [totalToday, totalPending, totalConfirmed, totalWalkin] = await Promise.all([
-      prisma.tbl_Bookings.count({ where: { BookingDate: date, Status: { not: 'cancelled' } } }),
-      prisma.tbl_Bookings.count({ where: { BookingDate: date, Status: 'pending' } }),
-      prisma.tbl_Bookings.count({ where: { BookingDate: date, Status: 'confirmed' } }),
-      prisma.tbl_Bookings.count({ where: { BookingDate: date, BookingMode: 'walkin' } }),
+      const [totalToday, totalPending, totalConfirmed, totalWalkin] = await Promise.all([
+        prisma.tbl_Bookings.count({ where: { BookingDate: date, Status: { not: 'cancelled' } } }),
+        prisma.tbl_Bookings.count({ where: { BookingDate: date, Status: 'pending' } }),
+        prisma.tbl_Bookings.count({ where: { BookingDate: date, Status: 'confirmed' } }),
+        prisma.tbl_Bookings.count({ where: { BookingDate: date, BookingMode: 'without_confirmation' } }),
     ]);
 
     /* ── Bookings for schedule grid ── */

@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
-import { localPrisma, cloudPrisma } from '@/lib/prisma';
+import { prisma } from '@/lib/prisma';
 export const dynamic   = 'force-dynamic';
 export const revalidate = 0;
 
@@ -199,32 +199,24 @@ export async function GET(req: NextRequest) {
   try {
 
     if (section === 'nav') {
-      const data =
-        (await cloudPrisma.navConfig.findUnique({ where: { id: 1 } })) ??
-        (await localPrisma.navConfig.findUnique({ where: { id: 1 } }));
+      const data = await prisma.navConfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(NAV_DEFAULTS);
       return NextResponse.json({ ...data, nav_items: Array.isArray(data.nav_items) ? data.nav_items : NAV_DEFAULTS.nav_items });
     }
 
     if (section === 'home') {
-      const data =
-        (await cloudPrisma.homeConfig.findUnique({ where: { id: 1 } })) ??
-        (await localPrisma.homeConfig.findUnique({ where: { id: 1 } }));
+      const data = await prisma.homeConfig.findUnique({ where: { id: 1 } });
       return NextResponse.json(data ?? HOME_DEFAULTS);
     }
 
     if (section === 'footer') {
-      const data =
-        (await cloudPrisma.footerConfig.findUnique({ where: { id: 1 } })) ??
-        (await localPrisma.footerConfig.findUnique({ where: { id: 1 } }));
+      const data = await prisma.footerConfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(FOOTER_DEFAULTS);
       return NextResponse.json({ ...data, locations: Array.isArray(data.locations) ? data.locations : FOOTER_DEFAULTS.locations, quick_links: Array.isArray(data.quick_links) ? data.quick_links : FOOTER_DEFAULTS.quick_links });
     }
 
     if (section === 'about') {
-      const data =
-        (await cloudPrisma.aboutConfig.findUnique({ where: { id: 1 } })) ??
-        (await localPrisma.aboutConfig.findUnique({ where: { id: 1 } }));
+      const data = await prisma.aboutConfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(ABOUT_DEFAULTS);
 
       const rawStaff = Array.isArray(data.staff) && (data.staff as unknown[]).length > 0
@@ -244,9 +236,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (section === 'services') {
-      const data =
-        (await cloudPrisma.servicesConfig.findUnique({ where: { id: 1 } })) ??
-        (await localPrisma.servicesConfig.findUnique({ where: { id: 1 } }));
+      const data = await prisma.servicesConfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(SERVICES_DEFAULTS);
       const rawCats = Array.isArray(data.categories) && (data.categories as unknown[]).length > 0 ? data.categories : SERVICES_DEFAULTS.categories;
       const fixedCats = (rawCats as { key: string; label: string; image?: string }[]).map(cat => {
@@ -257,19 +247,15 @@ export async function GET(req: NextRequest) {
     }
 
     if (section === 'contact') {
-      const data =
-        (await cloudPrisma.contactConfig.findUnique({ where: { id: 1 } })) ??
-        (await localPrisma.contactConfig.findUnique({ where: { id: 1 } }));
+      const data = await prisma.contactConfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(CONTACT_DEFAULTS);
       return NextResponse.json({ ...data, stats: Array.isArray(data.stats) && (data.stats as unknown[]).length > 0 ? data.stats : CONTACT_DEFAULTS.stats, branches: Array.isArray(data.branches) && (data.branches as unknown[]).length > 0 ? data.branches : CONTACT_DEFAULTS.branches });
     }
 
     if (section === 'gallery') {
-      const localOk = typeof localPrisma.galleryConfig === 'object';
-      const cloudOk = typeof cloudPrisma.galleryConfig === 'object';
+      const cloudOk = typeof prisma.galleryConfig === 'object';
       let data: { [k: string]: unknown } | null = null;
-      if (cloudOk) data = (await cloudPrisma.galleryConfig.findUnique({ where: { id: 1 } })) ?? data;
-      if (!data && localOk) data = await localPrisma.galleryConfig.findUnique({ where: { id: 1 } });
+      if (cloudOk) data = (await prisma.galleryConfig.findUnique({ where: { id: 1 } })) ?? data;
       if (!data) return NextResponse.json(GALLERY_DEFAULTS);
       return NextResponse.json({ ...data, hero_eyebrow: data.hero_eyebrow ?? GALLERY_DEFAULTS.hero_eyebrow, hero_title: data.hero_title ?? GALLERY_DEFAULTS.hero_title, hero_subtitle: data.hero_subtitle ?? GALLERY_DEFAULTS.hero_subtitle, section_title: data.section_title ?? GALLERY_DEFAULTS.section_title, section_subtitle: data.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle, items: Array.isArray(data.items) && (data.items as unknown[]).length > 0 ? data.items : GALLERY_DEFAULTS.items });
     }
@@ -292,34 +278,23 @@ export async function GET(req: NextRequest) {
 
       let rows: unknown[] = [];
       let total = 0;
-      let source: 'cloud' | 'local' = 'cloud';
+      [rows, total] = await Promise.all([
+        prisma.tbl_Feedback.findMany({ where, orderBy: { submittedAt: 'desc' }, skip, take: limit }),
+        prisma.tbl_Feedback.count({ where }),
+      ]);
 
-      try {
-        [rows, total] = await Promise.all([
-          cloudPrisma.tbl_Feedback.findMany({ where, orderBy: { submittedAt: 'desc' }, skip, take: limit }),
-          cloudPrisma.tbl_Feedback.count({ where }),
-        ]);
-      } catch (err) {
-        console.warn('[feedback GET] cloud failed, falling back to local:', getErrorMessage(err));
-        source = 'local';
-        [rows, total] = await Promise.all([
-          localPrisma.tbl_Feedback.findMany({ where, orderBy: { submittedAt: 'desc' }, skip, take: limit }),
-          localPrisma.tbl_Feedback.count({ where }),
-        ]);
-      }
-
-      return NextResponse.json({ data: rows, total, page, limit, totalPages: Math.ceil(total / limit), source });
+      return NextResponse.json({ data: rows, total, page, limit, totalPages: Math.ceil(total / limit), source: 'cloud' });
     }
 
     /* ── all sections fallback ── */
     const [nav, home, footer, about, services, contact, gallery] = await Promise.all([
-      cloudPrisma.navConfig.findUnique({      where: { id: 1 } }).catch(() => localPrisma.navConfig.findUnique({      where: { id: 1 } })),
-      cloudPrisma.homeConfig.findUnique({     where: { id: 1 } }).catch(() => localPrisma.homeConfig.findUnique({     where: { id: 1 } })),
-      cloudPrisma.footerConfig.findUnique({   where: { id: 1 } }).catch(() => localPrisma.footerConfig.findUnique({   where: { id: 1 } })),
-      cloudPrisma.aboutConfig.findUnique({    where: { id: 1 } }).catch(() => localPrisma.aboutConfig.findUnique({    where: { id: 1 } })),
-      cloudPrisma.servicesConfig.findUnique({ where: { id: 1 } }).catch(() => localPrisma.servicesConfig.findUnique({ where: { id: 1 } })),
-      cloudPrisma.contactConfig.findUnique({  where: { id: 1 } }).catch(() => localPrisma.contactConfig.findUnique({  where: { id: 1 } })),
-      cloudPrisma.galleryConfig?.findUnique?.({ where: { id: 1 } })?.catch(() => localPrisma.galleryConfig?.findUnique?.({ where: { id: 1 } })),
+      prisma.navConfig.findUnique({      where: { id: 1 } }),
+      prisma.homeConfig.findUnique({     where: { id: 1 } }),
+      prisma.footerConfig.findUnique({   where: { id: 1 } }),
+      prisma.aboutConfig.findUnique({    where: { id: 1 } }),
+      prisma.servicesConfig.findUnique({ where: { id: 1 } }),
+      prisma.contactConfig.findUnique({  where: { id: 1 } }),
+      prisma.galleryConfig?.findUnique?.({ where: { id: 1 } }),
     ]);
 
     return NextResponse.json({
@@ -353,8 +328,8 @@ export async function POST(req: NextRequest) {
         update: { logo_text: body.logo_text ?? NAV_DEFAULTS.logo_text, contact_btn_text: body.contact_btn_text ?? NAV_DEFAULTS.contact_btn_text, contact_btn_link: body.contact_btn_link ?? NAV_DEFAULTS.contact_btn_link, nav_items: body.nav_items ?? NAV_DEFAULTS.nav_items, updated_by: 'admin' },
         create: { id: 1, logo_text: body.logo_text ?? NAV_DEFAULTS.logo_text, contact_btn_text: body.contact_btn_text ?? NAV_DEFAULTS.contact_btn_text, contact_btn_link: body.contact_btn_link ?? NAV_DEFAULTS.contact_btn_link, nav_items: body.nav_items ?? NAV_DEFAULTS.nav_items, updated_by: 'admin' },
       };
-      const results = await Promise.allSettled([ localPrisma.navConfig.upsert(payload), cloudPrisma.navConfig.upsert(payload) ]);
-      return NextResponse.json(getFulfilledResult(results) ?? { success: true });
+      const result = await prisma.navConfig.upsert(payload);
+      return NextResponse.json(result ?? { success: true });
     }
 
     if (section === 'home') {
@@ -363,8 +338,8 @@ export async function POST(req: NextRequest) {
         update: { hero_eyebrow: body.hero_eyebrow ?? HOME_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? HOME_DEFAULTS.hero_heading, hero_body: body.hero_body ?? HOME_DEFAULTS.hero_body, hero_cta_text: body.hero_cta_text ?? HOME_DEFAULTS.hero_cta_text, hero_cta_link: body.hero_cta_link ?? HOME_DEFAULTS.hero_cta_link, updated_by: 'admin' },
         create: { id: 1, hero_eyebrow: body.hero_eyebrow ?? HOME_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? HOME_DEFAULTS.hero_heading, hero_body: body.hero_body ?? HOME_DEFAULTS.hero_body, hero_cta_text: body.hero_cta_text ?? HOME_DEFAULTS.hero_cta_text, hero_cta_link: body.hero_cta_link ?? HOME_DEFAULTS.hero_cta_link, updated_by: 'admin' },
       };
-      const results = await Promise.allSettled([ localPrisma.homeConfig.upsert(payload), cloudPrisma.homeConfig.upsert(payload) ]);
-      return NextResponse.json(getFulfilledResult(results) ?? { success: true });
+      const result = await prisma.homeConfig.upsert(payload);
+      return NextResponse.json(result ?? { success: true });
     }
 
     if (section === 'footer') {
@@ -373,8 +348,8 @@ export async function POST(req: NextRequest) {
         update: { brand_name: body.brand_name ?? FOOTER_DEFAULTS.brand_name, brand_tagline: body.brand_tagline ?? FOOTER_DEFAULTS.brand_tagline, contact_phone: body.contact_phone ?? FOOTER_DEFAULTS.contact_phone, contact_email: body.contact_email ?? FOOTER_DEFAULTS.contact_email, contact_address: body.contact_address ?? FOOTER_DEFAULTS.contact_address, copyright_text: body.copyright_text ?? FOOTER_DEFAULTS.copyright_text, locations: body.locations ?? FOOTER_DEFAULTS.locations, quick_links: body.quick_links ?? FOOTER_DEFAULTS.quick_links, social_whatsapp: body.social_whatsapp ?? '', social_facebook: body.social_facebook ?? '', social_instagram: body.social_instagram ?? '', updated_by: 'admin' },
         create: { id: 1, brand_name: body.brand_name ?? FOOTER_DEFAULTS.brand_name, brand_tagline: body.brand_tagline ?? FOOTER_DEFAULTS.brand_tagline, contact_phone: body.contact_phone ?? FOOTER_DEFAULTS.contact_phone, contact_email: body.contact_email ?? FOOTER_DEFAULTS.contact_email, contact_address: body.contact_address ?? FOOTER_DEFAULTS.contact_address, copyright_text: body.copyright_text ?? FOOTER_DEFAULTS.copyright_text, locations: body.locations ?? FOOTER_DEFAULTS.locations, quick_links: body.quick_links ?? FOOTER_DEFAULTS.quick_links, social_whatsapp: body.social_whatsapp ?? '', social_facebook: body.social_facebook ?? '', social_instagram: body.social_instagram ?? '', updated_by: 'admin' },
       };
-      const results = await Promise.allSettled([ localPrisma.footerConfig.upsert(payload), cloudPrisma.footerConfig.upsert(payload) ]);
-      return NextResponse.json(getFulfilledResult(results) ?? { success: true });
+      const result = await prisma.footerConfig.upsert(payload);
+      return NextResponse.json(result ?? { success: true });
     }
 
     if (section === 'about') {
@@ -383,8 +358,8 @@ export async function POST(req: NextRequest) {
         update: { hero_eyebrow: body.hero_eyebrow ?? ABOUT_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? ABOUT_DEFAULTS.hero_heading, hero_body: body.hero_body ?? ABOUT_DEFAULTS.hero_body, team_section_title: body.team_section_title ?? ABOUT_DEFAULTS.team_section_title, staff: body.staff ?? ABOUT_DEFAULTS.staff, gallery_section_title: body.gallery_section_title ?? ABOUT_DEFAULTS.gallery_section_title, gallery_description: body.gallery_description ?? ABOUT_DEFAULTS.gallery_description, gallery_images: body.gallery_images ?? ABOUT_DEFAULTS.gallery_images, review_section_title: body.review_section_title ?? ABOUT_DEFAULTS.review_section_title, reviews: body.reviews ?? ABOUT_DEFAULTS.reviews, updated_by: 'admin' },
         create: { id: 1, hero_eyebrow: body.hero_eyebrow ?? ABOUT_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? ABOUT_DEFAULTS.hero_heading, hero_body: body.hero_body ?? ABOUT_DEFAULTS.hero_body, team_section_title: body.team_section_title ?? ABOUT_DEFAULTS.team_section_title, staff: body.staff ?? ABOUT_DEFAULTS.staff, gallery_section_title: body.gallery_section_title ?? ABOUT_DEFAULTS.gallery_section_title, gallery_description: body.gallery_description ?? ABOUT_DEFAULTS.gallery_description, gallery_images: body.gallery_images ?? ABOUT_DEFAULTS.gallery_images, review_section_title: body.review_section_title ?? ABOUT_DEFAULTS.review_section_title, reviews: body.reviews ?? ABOUT_DEFAULTS.reviews, updated_by: 'admin' },
       };
-      const results = await Promise.allSettled([ localPrisma.aboutConfig.upsert(payload), cloudPrisma.aboutConfig.upsert(payload) ]);
-      return NextResponse.json(getFulfilledResult(results) ?? { success: true });
+      const result = await prisma.aboutConfig.upsert(payload);
+      return NextResponse.json(result ?? { success: true });
     }
 
     if (section === 'services') {
@@ -393,8 +368,8 @@ export async function POST(req: NextRequest) {
         update: { hero_heading: body.hero_heading ?? SERVICES_DEFAULTS.hero_heading, hero_subtitle: body.hero_subtitle ?? SERVICES_DEFAULTS.hero_subtitle, categories: body.categories ?? SERVICES_DEFAULTS.categories, price_list: body.price_list ?? SERVICES_DEFAULTS.price_list, updated_by: 'admin' },
         create: { id: 1, hero_heading: body.hero_heading ?? SERVICES_DEFAULTS.hero_heading, hero_subtitle: body.hero_subtitle ?? SERVICES_DEFAULTS.hero_subtitle, categories: body.categories ?? SERVICES_DEFAULTS.categories, price_list: body.price_list ?? SERVICES_DEFAULTS.price_list, updated_by: 'admin' },
       };
-      const results = await Promise.allSettled([ localPrisma.servicesConfig.upsert(payload), cloudPrisma.servicesConfig.upsert(payload) ]);
-      return NextResponse.json(getFulfilledResult(results) ?? { success: true });
+      const result = await prisma.servicesConfig.upsert(payload);
+      return NextResponse.json(result ?? { success: true });
     }
 
     if (section === 'contact') {
@@ -403,14 +378,13 @@ export async function POST(req: NextRequest) {
         update: { hero_eyebrow: body.hero_eyebrow ?? CONTACT_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? CONTACT_DEFAULTS.hero_heading, hero_subtitle: body.hero_subtitle ?? CONTACT_DEFAULTS.hero_subtitle, cta_primary_text: body.cta_primary_text ?? CONTACT_DEFAULTS.cta_primary_text, cta_secondary_text: body.cta_secondary_text ?? CONTACT_DEFAULTS.cta_secondary_text, phone_number: body.phone_number ?? CONTACT_DEFAULTS.phone_number, email_address: body.email_address ?? CONTACT_DEFAULTS.email_address, stats: body.stats ?? CONTACT_DEFAULTS.stats, map_embed_src: body.map_embed_src ?? CONTACT_DEFAULTS.map_embed_src, map_address: body.map_address ?? CONTACT_DEFAULTS.map_address, map_open_href: body.map_open_href ?? CONTACT_DEFAULTS.map_open_href, social_instagram: body.social_instagram ?? '', social_facebook: body.social_facebook ?? '', social_whatsapp: body.social_whatsapp ?? '', branches: body.branches ?? CONTACT_DEFAULTS.branches, updated_by: 'admin' },
         create: { id: 1, hero_eyebrow: body.hero_eyebrow ?? CONTACT_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? CONTACT_DEFAULTS.hero_heading, hero_subtitle: body.hero_subtitle ?? CONTACT_DEFAULTS.hero_subtitle, cta_primary_text: body.cta_primary_text ?? CONTACT_DEFAULTS.cta_primary_text, cta_secondary_text: body.cta_secondary_text ?? CONTACT_DEFAULTS.cta_secondary_text, phone_number: body.phone_number ?? CONTACT_DEFAULTS.phone_number, email_address: body.email_address ?? CONTACT_DEFAULTS.email_address, stats: body.stats ?? CONTACT_DEFAULTS.stats, map_embed_src: body.map_embed_src ?? CONTACT_DEFAULTS.map_embed_src, map_address: body.map_address ?? CONTACT_DEFAULTS.map_address, map_open_href: body.map_open_href ?? CONTACT_DEFAULTS.map_open_href, social_instagram: body.social_instagram ?? '', social_facebook: body.social_facebook ?? '', social_whatsapp: body.social_whatsapp ?? '', branches: body.branches ?? CONTACT_DEFAULTS.branches, updated_by: 'admin' },
       };
-      const results = await Promise.allSettled([ localPrisma.contactConfig.upsert(payload), cloudPrisma.contactConfig.upsert(payload) ]);
-      return NextResponse.json(getFulfilledResult(results) ?? { success: true });
+      const result = await prisma.contactConfig.upsert(payload);
+      return NextResponse.json(result ?? { success: true });
     }
 
     if (section === 'gallery') {
-      const localOk = typeof localPrisma.galleryConfig === 'object';
-      const cloudOk = typeof cloudPrisma.galleryConfig === 'object';
-      if (!localOk && !cloudOk) {
+      const cloudOk = typeof prisma.galleryConfig === 'object';
+      if (!cloudOk) {
         return NextResponse.json({ error: 'GalleryConfig model not found in Prisma. Run: npx prisma generate && npx prisma db push' }, { status: 500 });
       }
       const payload = {
@@ -418,11 +392,8 @@ export async function POST(req: NextRequest) {
         update: { hero_eyebrow: body.hero_eyebrow ?? GALLERY_DEFAULTS.hero_eyebrow, hero_title: body.hero_title ?? GALLERY_DEFAULTS.hero_title, hero_subtitle: body.hero_subtitle ?? GALLERY_DEFAULTS.hero_subtitle, section_title: body.section_title ?? GALLERY_DEFAULTS.section_title, section_subtitle: body.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle, items: Array.isArray(body.items) ? body.items : GALLERY_DEFAULTS.items, updated_by: 'admin' },
         create: { id: 1, hero_eyebrow: body.hero_eyebrow ?? GALLERY_DEFAULTS.hero_eyebrow, hero_title: body.hero_title ?? GALLERY_DEFAULTS.hero_title, hero_subtitle: body.hero_subtitle ?? GALLERY_DEFAULTS.hero_subtitle, section_title: body.section_title ?? GALLERY_DEFAULTS.section_title, section_subtitle: body.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle, items: Array.isArray(body.items) ? body.items : GALLERY_DEFAULTS.items, updated_by: 'admin' },
       };
-      const calls: Promise<unknown>[] = [];
-      if (localOk) calls.push(localPrisma.galleryConfig.upsert(payload));
-      if (cloudOk) calls.push(cloudPrisma.galleryConfig.upsert(payload));
-      const results = await Promise.allSettled(calls);
-      return NextResponse.json(getFulfilledResult(results) ?? { success: true });
+      const result = await prisma.galleryConfig.upsert(payload);
+      return NextResponse.json(result ?? { success: true });
     }
 
     return NextResponse.json({ error: 'Invalid section' }, { status: 400 });
@@ -449,25 +420,12 @@ export async function PATCH(req: NextRequest) {
     const body        = await req.json();
     const isPublished = Boolean(body.isPublished);
 
-    let cloudResult: unknown = null;
-    let localResult: unknown = null;
-    let cloudError:  unknown = null;
-    let localError:  unknown = null;
-
-    try { cloudResult = await cloudPrisma.tbl_Feedback.update({ where: { id }, data: { isPublished } }); } catch (err) { cloudError = err; }
-    try { localResult = await localPrisma.tbl_Feedback.update({ where: { id }, data: { isPublished } }); } catch (err) { localError = err; }
-
-    if (cloudResult) {
-      if (localError) console.warn(`[feedback PATCH] cloud OK, local mirror failed id=${id}:`, getErrorMessage(localError));
-      return NextResponse.json({ success: true, id, isPublished, source: 'cloud', localSynced: !!localResult });
+    try {
+      await prisma.tbl_Feedback.update({ where: { id }, data: { isPublished } });
+      return NextResponse.json({ success: true, id, isPublished, source: 'cloud' });
+    } catch (err) {
+      return NextResponse.json({ error: 'Update failed.', details: { cloud: getErrorMessage(err) } }, { status: 500 });
     }
-
-    if (localResult) {
-      console.warn(`[feedback PATCH] cloud failed, fallback to local id=${id}:`, getErrorMessage(cloudError));
-      return NextResponse.json({ success: true, id, isPublished, source: 'local', cloudSynced: false, warning: 'Saved locally only — cloud was unreachable.' });
-    }
-
-    return NextResponse.json({ error: 'Update failed on both databases.', details: { cloud: getErrorMessage(cloudError), local: getErrorMessage(localError) } }, { status: 500 });
 
   } catch (err) {
     console.error('[site-data PATCH]', err);
@@ -488,25 +446,12 @@ export async function DELETE(req: NextRequest) {
   const id = parseInt(idParam, 10);
 
   try {
-    let cloudResult: unknown = null;
-    let localResult: unknown = null;
-    let cloudError:  unknown = null;
-    let localError:  unknown = null;
-
-    try { cloudResult = await cloudPrisma.tbl_Feedback.delete({ where: { id } }); } catch (err) { cloudError = err; }
-    try { localResult = await localPrisma.tbl_Feedback.delete({ where: { id } }); } catch (err) { localError = err; }
-
-    if (cloudResult) {
-      if (localError) console.warn(`[feedback DELETE] cloud OK, local mirror failed id=${id}:`, getErrorMessage(localError));
-      return NextResponse.json({ success: true, id, source: 'cloud', localSynced: !!localResult });
+    try {
+      await prisma.tbl_Feedback.delete({ where: { id } });
+      return NextResponse.json({ success: true, id, source: 'cloud' });
+    } catch (err) {
+      return NextResponse.json({ error: 'Delete failed.', details: { cloud: getErrorMessage(err) } }, { status: 500 });
     }
-
-    if (localResult) {
-      console.warn(`[feedback DELETE] cloud failed, fallback to local id=${id}:`, getErrorMessage(cloudError));
-      return NextResponse.json({ success: true, id, source: 'local', cloudSynced: false, warning: 'Deleted locally only — cloud was unreachable.' });
-    }
-
-    return NextResponse.json({ error: 'Delete failed on both databases.', details: { cloud: getErrorMessage(cloudError), local: getErrorMessage(localError) } }, { status: 500 });
 
   } catch (err) {
     console.error('[site-data DELETE]', err);

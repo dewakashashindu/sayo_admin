@@ -6,6 +6,12 @@ import ConflictModal, {
   ConflictModalData,
   ProviderAvailability,
 } from '@/components/ConflictModal';
+import { evaluateSlot } from '@/lib/slotEvaluator';
+import type { SlotResult } from '@/lib/slotEvaluator';
+import {
+  t, svc as svcName, role as roleName, cat as catName, loc as locName,
+  monthNames, dayNames, formatDateL, durStr, fmtDur, type Lang,
+} from '@/i18n/translations';
 
 /* ─────────────────────────────────────────
    STORED USER TYPE
@@ -42,17 +48,17 @@ const tokens = {
     amberBg:     'rgba(245,158,11,0.13)',
     amberBorder: 'rgba(245,158,11,0.55)',
   },
-  font: { family: 'Inter, sans-serif' },
+  font: { family: 'Inter, "Noto Sans Sinhala", "Noto Sans Tamil", sans-serif' },
   radius: { card: '1.25rem', input: '0.625rem' },
 } as const;
 
 /* ─────────────────────────────────────────
    TYPES
 ───────────────────────────────────────── */
-type BookingMode = 'confirmed' | 'walkin';
+type BookingMode = 'confirmed' | 'without_confirmation';
 type Step        = 1 | 2;
 type GenderValue = 'male' | 'female' | 'prefer_not_to_say' | 'other';
-type SlotStatus  = 'available' | 'partial' | 'booked';
+type SlotStatus  = 'available' | 'partial' | 'booked'; // kept for CSS class mapping
 
 export const GENDER_OPTIONS: { value: GenderValue; label: string }[] = [
   { value: 'male',              label: 'Male'               },
@@ -65,7 +71,7 @@ interface ServiceItem { name: string; price: string; duration: string; category:
 interface Provider    { name: string; role: string; avatar: string; expertise: string[]; }
 
 /* ─────────────────────────────────────────
-   DATA
+   DATA  (names stay in English — translated at display time)
 ───────────────────────────────────────── */
 const CATEGORIES = ['WAX', 'HAIR', 'SKIN', 'NAIL', 'BODY', 'BRIDAL'];
 
@@ -175,22 +181,19 @@ const TIME_SLOTS = [
 /* ─────────────────────────────────────────
    HELPERS
 ───────────────────────────────────────── */
-function formatDate(iso: string) {
-  return new Date(iso + 'T00:00').toLocaleDateString('en-GB', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  });
+function formatDate(iso: string, lang: Lang = 'en') {
+  // Uses our own month/weekday names — toLocaleDateString('si-LK') would
+  // show lunar month names ("නිකිණි") instead of familiar ones ("අගෝස්තු").
+  return formatDateL(lang, iso);
 }
 function parseMins(d: string)  { return parseInt(d, 10) || 0; }
-function fmtMins(m: number) {
-  if (m <= 0) return '—';
-  return m >= 60 ? `${Math.floor(m/60)}h${m%60>0?` ${m%60}min`:''}` : `${m} min`;
-}
 function parseLKR(p: string)   { return parseInt(p.replace(/\D/g,''),10)||0; }
-function genderLabel(val: GenderValue|''): string {
+/** English lookup — used ONLY for the API payload (backend expects English) */
+function genderLabelEn(val: GenderValue|''): string {
   return GENDER_OPTIONS.find(g=>g.value===val)?.label ?? '—';
 }
-function timeToMinutes(t: string): number {
-  const m = t.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)$/i);
+function timeToMinutes(tStr: string): number {
+  const m = tStr.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)$/i);
   if (!m) return 0;
   let h = parseInt(m[1],10);
   const mn = parseInt(m[2],10), p = m[3].toUpperCase();
@@ -208,19 +211,16 @@ function getDaysInMonth(year: number, month: number) {
 function getFirstDayOfMonth(year: number, month: number) {
   return new Date(year, month, 1).getDay();
 }
-const MONTH_NAMES = [
-  'January','February','March','April','May','June',
-  'July','August','September','October','November','December',
-];
-const DAY_NAMES = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
 /* ─────────────────────────────────────────
    GLOBAL CSS
+   NOTE: Noto Sans Sinhala + Noto Sans Tamil added — Inter has no si/ta glyphs.
 ───────────────────────────────────────── */
 const globalCss = `
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+Sinhala:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
   html,body{background:#040405;}
+  html{--app-font:'Inter','Noto Sans Sinhala','Noto Sans Tamil',sans-serif;}
 
   @keyframes fadeInUp {from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
   @keyframes checkPop {0%{transform:scale(0) rotate(-20deg);opacity:0}70%{transform:scale(1.2) rotate(5deg)}100%{transform:scale(1) rotate(0);opacity:1}}
@@ -239,19 +239,24 @@ const globalCss = `
   .slide-down {animation:slideDown 0.32s cubic-bezier(0.16,1,0.3,1) both;}
   .cal-pop    {animation:calPop    0.22s cubic-bezier(0.16,1,0.3,1) both;}
 
-  .step-dot {width:2.4rem;height:2.4rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.82rem;font-weight:600;flex-shrink:0;transition:all 0.35s;font-family:Inter,sans-serif;}
+  .step-dot {width:2.4rem;height:2.4rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.82rem;font-weight:600;flex-shrink:0;transition:all 0.35s;font-family:var(--app-font);}
   .step-line{flex:1;height:2px;border-radius:2px;transition:background 0.5s;}
-  .step-label{font-size:0.6rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;white-space:nowrap;font-family:Inter,sans-serif;margin-top:0.3rem;}
+  .step-label{font-size:0.6rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;white-space:nowrap;font-family:var(--app-font);margin-top:0.3rem;}
 
-  .mode-badge{display:inline-flex;align-items:center;gap:0.3rem;border-radius:999px;padding:0.18rem 0.6rem;font-size:0.62rem;font-weight:700;letter-spacing:0.07em;font-family:Inter,sans-serif;}
+  .mode-badge{display:inline-flex;align-items:center;gap:0.3rem;border-radius:999px;padding:0.18rem 0.6rem;font-size:0.62rem;font-weight:700;letter-spacing:0.07em;font-family:var(--app-font);}
   .mode-badge-confirmed{background:rgba(184,134,11,0.18);border:1px solid rgba(184,134,11,0.45);color:#B8860B;}
   .mode-badge-walkin   {background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.4); color:#22c55e;}
 
   .mode-toggle-wrap{display:inline-flex;align-items:center;background:rgba(255,255,255,0.05);border:1.5px solid rgba(255,255,255,0.12);border-radius:999px;padding:3px;gap:0;}
-  .mtb{cursor:pointer;border:none;outline:none;font-family:Inter,sans-serif;font-size:0.73rem;font-weight:600;letter-spacing:0.05em;border-radius:999px;padding:0.38rem 1rem;transition:all 0.25s;display:inline-flex;align-items:center;gap:0.32rem;background:transparent;color:rgba(255,255,255,0.42);white-space:nowrap;}
+  .mtb{cursor:pointer;border:none;outline:none;font-family:var(--app-font);font-size:0.73rem;font-weight:600;letter-spacing:0.05em;border-radius:999px;padding:0.38rem 1rem;transition:all 0.25s;display:inline-flex;align-items:center;gap:0.32rem;background:transparent;color:rgba(255,255,255,0.42);white-space:nowrap;}
   .mtb:hover:not(.mtb-active){color:rgba(255,255,255,0.72);}
   .mtb-confirmed.mtb-active{background:#B8860B;color:#fff;box-shadow:0 2px 14px rgba(184,134,11,0.45);}
   .mtb-walkin.mtb-active   {background:#22c55e;color:#fff;box-shadow:0 2px 14px rgba(34,197,94,0.40);}
+
+  .lang-switch-wrap{display:inline-flex;align-items:center;background:rgba(255,255,255,0.05);border:1.5px solid rgba(255,255,255,0.12);border-radius:999px;padding:3px;gap:0;}
+  .lsb{cursor:pointer;border:none;outline:none;font-family:var(--app-font);font-size:0.73rem;font-weight:600;letter-spacing:0.04em;border-radius:999px;padding:0.38rem 0.85rem;transition:all 0.25s;display:inline-flex;align-items:center;gap:0.3rem;background:transparent;color:rgba(255,255,255,0.42);white-space:nowrap;}
+  .lsb:hover:not(.lsb-active){color:rgba(255,255,255,0.72);}
+  .lsb-active{background:#B8860B;color:#fff;box-shadow:0 2px 14px rgba(184,134,11,0.45);}
 
   .gender-inline-wrap{position:relative;display:inline-flex;align-items:center;gap:0.3rem;cursor:pointer;}
   .gender-inline-wrap select{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;appearance:none;-webkit-appearance:none;border:none;background:transparent;}
@@ -264,24 +269,24 @@ const globalCss = `
   .prov-card{cursor:pointer;border-radius:0.75rem;border:1.5px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);padding:0.8rem 1rem;display:flex;align-items:center;gap:0.85rem;transition:all 0.2s;}
   .prov-card:hover{border-color:rgba(184,134,11,0.45);background:rgba(184,134,11,0.07);transform:translateY(-1px);}
   .prov-card-active{border-color:#B8860B !important;background:rgba(184,134,11,0.15) !important;}
-  .prov-avatar{width:2.6rem;height:2.6rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:Inter,sans-serif;font-size:1.05rem;font-weight:700;color:#fff;flex-shrink:0;background:rgba(184,134,11,0.35);border:1.5px solid rgba(184,134,11,0.55);}
+  .prov-avatar{width:2.6rem;height:2.6rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--app-font);font-size:0.85rem;font-weight:700;color:#fff;flex-shrink:0;background:rgba(184,134,11,0.35);border:1.5px solid rgba(184,134,11,0.55);}
 
   .cat-tabs-wrap{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:0.5rem;padding-bottom:2px;scrollbar-width:none;}
   .cat-tabs-wrap::-webkit-scrollbar{display:none;}
-  .cat-tab{cursor:pointer;outline:none;border:none;font-family:Inter,sans-serif;font-size:0.74rem;font-weight:600;letter-spacing:0.1em;border-radius:0.5rem;padding:0.42rem 0.9rem;white-space:nowrap;transition:all 0.22s;position:relative;}
+  .cat-tab{cursor:pointer;outline:none;border:none;font-family:var(--app-font);font-size:0.74rem;font-weight:600;letter-spacing:0.1em;border-radius:0.5rem;padding:0.42rem 0.9rem;white-space:nowrap;transition:all 0.22s;position:relative;}
   .cat-tab-active  {background:#B8860B;color:#fff;box-shadow:0 4px 16px rgba(184,134,11,0.38);}
   .cat-tab-inactive{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.65);border:1.5px solid rgba(255,255,255,0.18);}
   .cat-tab-inactive:hover{border-color:#B8860B;color:#fff;background:rgba(184,134,11,0.1);}
   .cat-tab-dot{position:absolute;top:-3px;right:-3px;width:0.5rem;height:0.5rem;border-radius:50%;background:#22c55e;border:1.5px solid #040405;}
 
-  .t-slot{cursor:pointer;border-radius:0.45rem;padding:0.45rem 0.5rem;font-family:Inter,sans-serif;font-size:0.74rem;font-weight:500;text-align:center;transition:all 0.18s;border:1.5px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.72);}
+  .t-slot{cursor:pointer;border-radius:0.45rem;padding:0.45rem 0.5rem;font-family:var(--app-font);font-size:0.74rem;font-weight:500;text-align:center;transition:all 0.18s;border:1.5px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.72);}
   .t-slot:hover{border-color:#B8860B;background:rgba(184,134,11,0.12);color:#fff;transform:translateY(-1px);}
   .t-slot-active{border-color:#B8860B !important;background:#B8860B !important;color:#fff !important;}
-  .t-slot-available{cursor:pointer;border-radius:0.45rem;padding:0.45rem 0.5rem;font-family:Inter,sans-serif;font-size:0.74rem;font-weight:600;text-align:center;transition:all 0.18s;border:1.5px solid rgba(34,197,94,0.45);background:rgba(34,197,94,0.1);color:#22c55e;}
+  .t-slot-available{cursor:pointer;border-radius:0.45rem;padding:0.45rem 0.5rem;font-family:var(--app-font);font-size:0.74rem;font-weight:600;text-align:center;transition:all 0.18s;border:1.5px solid rgba(34,197,94,0.45);background:rgba(34,197,94,0.1);color:#22c55e;}
   .t-slot-available:hover{background:rgba(34,197,94,0.22);transform:translateY(-1px);}
   .t-slot-available-selected{border-color:#22c55e !important;background:#22c55e !important;color:#fff !important;}
-  .t-slot-booked{border-radius:0.45rem;padding:0.45rem 0.5rem;font-family:Inter,sans-serif;font-size:0.74rem;font-weight:500;text-align:center;border:1.5px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:rgba(239,68,68,0.55);text-decoration:line-through;cursor:not-allowed;opacity:0.7;}
-  .t-slot-partial{cursor:pointer;border-radius:0.45rem;padding:0.45rem 0.5rem;font-family:Inter,sans-serif;font-size:0.74rem;font-weight:600;text-align:center;transition:all 0.18s;border:1.5px solid rgba(245,158,11,0.55);background:rgba(245,158,11,0.13);color:#f59e0b;position:relative;}
+  .t-slot-booked{border-radius:0.45rem;padding:0.45rem 0.5rem;font-family:var(--app-font);font-size:0.74rem;font-weight:500;text-align:center;border:1.5px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08);color:rgba(239,68,68,0.55);text-decoration:line-through;cursor:not-allowed;opacity:0.7;}
+  .t-slot-partial{cursor:pointer;border-radius:0.45rem;padding:0.45rem 0.5rem;font-family:var(--app-font);font-size:0.74rem;font-weight:600;text-align:center;transition:all 0.18s;border:1.5px solid rgba(245,158,11,0.55);background:rgba(245,158,11,0.13);color:#f59e0b;position:relative;}
   .t-slot-partial:hover{background:rgba(245,158,11,0.24);border-color:rgba(245,158,11,0.80);transform:translateY(-1px);box-shadow:0 4px 14px rgba(245,158,11,0.22);}
   .t-slot-partial::after{content:'';position:absolute;top:-3px;right:-3px;width:0.45rem;height:0.45rem;border-radius:50%;background:#f59e0b;border:1.5px solid #040405;}
 
@@ -290,7 +295,7 @@ const globalCss = `
   /* ── DATE TRIGGER ── */
   .date-trigger{
     width:100%;background:rgba(255,255,255,0.06);border:1.5px solid rgba(255,255,255,0.15);
-    border-radius:0.625rem;padding:0.75rem 1rem;font-family:Inter,sans-serif;font-size:0.9rem;
+    border-radius:0.625rem;padding:0.75rem 1rem;font-family:var(--app-font);font-size:0.9rem;
     color:#fff;outline:none;cursor:pointer;display:flex;align-items:center;
     justify-content:space-between;gap:0.6rem;transition:border-color 0.25s,background 0.25s;
     user-select:none;text-align:left;
@@ -299,7 +304,7 @@ const globalCss = `
   .date-trigger-open{border-color:#B8860B !important;background:rgba(184,134,11,0.08) !important;}
   .date-trigger-filled{border-color:rgba(184,134,11,0.38);}
 
-  /* ── INLINE CALENDAR PANEL (absolute, anchored to trigger wrapper) ── */
+  /* ── INLINE CALENDAR PANEL ── */
   .cal-panel{
     position:absolute;
     z-index:500;
@@ -313,12 +318,12 @@ const globalCss = `
   .cal-nav{background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:0.375rem;width:1.85rem;height:1.85rem;display:flex;align-items:center;justify-content:center;cursor:pointer;color:rgba(255,255,255,0.6);transition:all 0.18s;padding:0;}
   .cal-nav:hover{background:rgba(184,134,11,0.2);border-color:rgba(184,134,11,0.5);color:#B8860B;}
   .cal-daynames{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:0.35rem;}
-  .cal-dayname{font-size:0.6rem;font-weight:700;letter-spacing:0.08em;text-align:center;color:rgba(255,255,255,0.28);padding:0.18rem 0;font-family:Inter,sans-serif;}
+  .cal-dayname{font-size:0.6rem;font-weight:700;letter-spacing:0.08em;text-align:center;color:rgba(255,255,255,0.28);padding:0.18rem 0;font-family:var(--app-font);}
   .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
   .cal-cell{
     aspect-ratio:1;border-radius:0.375rem;display:flex;align-items:center;justify-content:center;
     font-size:0.77rem;font-weight:500;cursor:pointer;transition:all 0.15s;
-    border:1.5px solid transparent;font-family:Inter,sans-serif;color:rgba(255,255,255,0.72);
+    border:1.5px solid transparent;font-family:var(--app-font);color:rgba(255,255,255,0.72);
     background:transparent;padding:0;
   }
   .cal-cell:hover:not(.cal-cell-disabled):not(.cal-cell-selected){
@@ -329,32 +334,32 @@ const globalCss = `
   .cal-cell-disabled{color:rgba(255,255,255,0.15) !important;cursor:not-allowed !important;background:transparent !important;border-color:transparent !important;}
   .cal-cell-empty{pointer-events:none;cursor:default;}
   .cal-footer{display:flex;justify-content:space-between;align-items:center;margin-top:0.65rem;padding-top:0.6rem;border-top:1px solid rgba(255,255,255,0.07);}
-  .cal-footer-btn{background:transparent;border:none;cursor:pointer;font-family:Inter,sans-serif;font-size:0.72rem;font-weight:600;padding:0.25rem 0.4rem;border-radius:0.3rem;transition:all 0.15s;}
+  .cal-footer-btn{background:transparent;border:none;cursor:pointer;font-family:var(--app-font);font-size:0.72rem;font-weight:600;padding:0.25rem 0.4rem;border-radius:0.3rem;transition:all 0.15s;}
   .cal-footer-btn:hover{background:rgba(255,255,255,0.06);}
 
-  .sayo-input{width:100%;background:rgba(255,255,255,0.06);border:1.5px solid rgba(255,255,255,0.15);border-radius:0.625rem;padding:0.75rem 1rem;font-family:Inter,sans-serif;font-size:0.9rem;color:#fff;outline:none;transition:border-color 0.25s,background 0.25s;color-scheme:dark;}
+  .sayo-input{width:100%;background:rgba(255,255,255,0.06);border:1.5px solid rgba(255,255,255,0.15);border-radius:0.625rem;padding:0.75rem 1rem;font-family:var(--app-font);font-size:0.9rem;color:#fff;outline:none;transition:border-color 0.25s,background 0.25s;color-scheme:dark;}
   .sayo-input::placeholder{color:rgba(255,255,255,0.3);}
   .sayo-input:focus{border-color:#B8860B;background:rgba(184,134,11,0.07);}
-  .phone-plain-input{background:transparent;border:none;border-bottom:1.5px solid rgba(255,255,255,0.18);padding:0.3rem 0.1rem;font-family:Inter,sans-serif;font-size:0.95rem;font-weight:600;color:#fff;outline:none;width:100%;text-align:right;transition:border-color 0.22s;color-scheme:dark;}
+  .phone-plain-input{background:transparent;border:none;border-bottom:1.5px solid rgba(255,255,255,0.18);padding:0.3rem 0.1rem;font-family:var(--app-font);font-size:0.95rem;font-weight:600;color:#fff;outline:none;width:100%;text-align:right;transition:border-color 0.22s;color-scheme:dark;}
   .phone-plain-input:focus{border-color:#B8860B;}
   .phone-plain-input::placeholder{color:rgba(255,255,255,0.28);}
 
-  .btn-gold {cursor:pointer;outline:none;border:none;font-family:Inter,sans-serif;font-weight:600;letter-spacing:0.06em;border-radius:0.75rem;background:#B8860B;color:#fff;display:inline-flex;align-items:center;justify-content:center;gap:0.45rem;transition:transform 0.2s,box-shadow 0.2s,opacity 0.2s;}
+  .btn-gold {cursor:pointer;outline:none;border:none;font-family:var(--app-font);font-weight:600;letter-spacing:0.06em;border-radius:0.75rem;background:#B8860B;color:#fff;display:inline-flex;align-items:center;justify-content:center;gap:0.45rem;transition:transform 0.2s,box-shadow 0.2s,opacity 0.2s;}
   .btn-gold:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 24px rgba(184,134,11,0.38);}
   .btn-gold:disabled{opacity:0.42;cursor:not-allowed;}
-  .btn-green{cursor:pointer;outline:none;border:none;font-family:Inter,sans-serif;font-weight:600;letter-spacing:0.06em;border-radius:0.75rem;background:#22c55e;color:#fff;display:inline-flex;align-items:center;justify-content:center;gap:0.45rem;transition:transform 0.2s,box-shadow 0.2s,opacity 0.2s;}
+  .btn-green{cursor:pointer;outline:none;border:none;font-family:var(--app-font);font-weight:600;letter-spacing:0.06em;border-radius:0.75rem;background:#22c55e;color:#fff;display:inline-flex;align-items:center;justify-content:center;gap:0.45rem;transition:transform 0.2s,box-shadow 0.2s,opacity 0.2s;}
   .btn-green:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 24px rgba(34,197,94,0.35);}
   .btn-green:disabled{opacity:0.42;cursor:not-allowed;}
-  .btn-ghost{cursor:pointer;outline:none;background:transparent;border:1.5px solid rgba(255,255,255,0.28);border-radius:0.75rem;font-family:Inter,sans-serif;font-weight:500;color:rgba(255,255,255,0.65);transition:all 0.2s;}
+  .btn-ghost{cursor:pointer;outline:none;background:transparent;border:1.5px solid rgba(255,255,255,0.28);border-radius:0.75rem;font-family:var(--app-font);font-weight:500;color:rgba(255,255,255,0.65);transition:all 0.2s;}
   .btn-ghost:hover{border-color:#B8860B;color:#fff;transform:translateY(-2px);}
 
   .sum-row{display:flex;justify-content:space-between;align-items:flex-start;padding:0.52rem 0;border-bottom:1px solid rgba(255,255,255,0.07);gap:1rem;}
   .sum-row:last-child{border-bottom:none;}
   .cf-block{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09);border-radius:0.875rem;padding:0.2rem 1rem;margin-bottom:0.9rem;}
-  .chip{display:inline-flex;align-items:center;gap:0.28rem;background:rgba(184,134,11,0.18);border:1px solid rgba(184,134,11,0.4);border-radius:999px;padding:0.2rem 0.6rem;font-size:0.69rem;font-weight:600;color:#B8860B;font-family:Inter,sans-serif;white-space:nowrap;}
-  .info-box      {background:rgba(184,134,11,0.09);border:1px solid rgba(184,134,11,0.28);border-radius:0.625rem;padding:0.65rem 0.9rem;font-size:0.75rem;color:rgba(255,255,255,0.65);font-family:Inter,sans-serif;line-height:1.55;}
-  .info-box-green{background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.3); border-radius:0.625rem;padding:0.65rem 0.9rem;font-size:0.75rem;color:rgba(255,255,255,0.65);font-family:Inter,sans-serif;line-height:1.55;}
-  .api-error{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);border-radius:0.625rem;padding:0.7rem 1rem;font-size:0.78rem;color:#ef4444;font-family:Inter,sans-serif;line-height:1.55;margin-bottom:1rem;}
+  .chip{display:inline-flex;align-items:center;gap:0.28rem;background:rgba(184,134,11,0.18);border:1px solid rgba(184,134,11,0.4);border-radius:999px;padding:0.2rem 0.6rem;font-size:0.69rem;font-weight:600;color:#B8860B;font-family:var(--app-font);white-space:nowrap;}
+  .info-box      {background:rgba(184,134,11,0.09);border:1px solid rgba(184,134,11,0.28);border-radius:0.625rem;padding:0.65rem 0.9rem;font-size:0.75rem;color:rgba(255,255,255,0.65);font-family:var(--app-font);line-height:1.55;}
+  .info-box-green{background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.3); border-radius:0.625rem;padding:0.65rem 0.9rem;font-size:0.75rem;color:rgba(255,255,255,0.65);font-family:var(--app-font);line-height:1.55;}
+  .api-error{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);border-radius:0.625rem;padding:0.7rem 1rem;font-size:0.78rem;color:#ef4444;font-family:var(--app-font);line-height:1.55;margin-bottom:1rem;}
   .divider{height:1px;background:rgba(255,255,255,0.09);margin:1.2rem 0;}
   .loc-card{cursor:pointer;border-radius:0.875rem;border:1.5px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);padding:0.9rem 1.1rem;display:flex;align-items:center;justify-content:space-between;gap:0.75rem;transition:all 0.22s;flex:1;min-width:0;}
   .loc-card:hover{border-color:rgba(184,134,11,0.5);background:rgba(184,134,11,0.08);transform:translateY(-1px);}
@@ -411,7 +416,7 @@ function GenderSymbol({ value, s=22 }:{ value: GenderValue|''; s?:number }) {
 }
 
 /* ─────────────────────────────────────────
-   INLINE CALENDAR  (absolute positioned — no portal, no measurement bugs)
+   INLINE CALENDAR  (absolute positioned)
 ───────────────────────────────────────── */
 interface InlineCalendarProps {
   value:    string;
@@ -419,9 +424,10 @@ interface InlineCalendarProps {
   onChange: (iso: string) => void;
   onClose:  () => void;
   dropUp:   boolean;
+  lang:     Lang;
 }
 
-function InlineCalendar({ value, minDate, onChange, onClose, dropUp }: InlineCalendarProps) {
+function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang }: InlineCalendarProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const todayISO = new Date().toISOString().split('T')[0];
 
@@ -434,8 +440,8 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp }: InlineCal
     function down(e: MouseEvent) {
       if (!panelRef.current?.contains(e.target as Node)) onClose();
     }
-    const t = setTimeout(() => document.addEventListener('mousedown', down), 50);
-    return () => { clearTimeout(t); document.removeEventListener('mousedown', down); };
+    const tmo = setTimeout(() => document.addEventListener('mousedown', down), 50);
+    return () => { clearTimeout(tmo); document.removeEventListener('mousedown', down); };
   }, [onClose]);
 
   /* ESC to close */
@@ -482,20 +488,20 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp }: InlineCal
     >
       {/* header */}
       <div className="cal-header">
-        <button className="cal-nav" onClick={prevMonth} type="button" aria-label="Previous month">
+        <button className="cal-nav" onClick={prevMonth} type="button" aria-label={t(lang,'cal.prevMonth')}>
           <Ico.Left s={13}/>
         </button>
         <span style={{ color:tokens.color.white, fontFamily:tokens.font.family, fontSize:'0.86rem', fontWeight:600 }}>
-          {MONTH_NAMES[vMonth]} {vYear}
+          {monthNames(lang)[vMonth]} {vYear}
         </span>
-        <button className="cal-nav" onClick={nextMonth} type="button" aria-label="Next month">
+        <button className="cal-nav" onClick={nextMonth} type="button" aria-label={t(lang,'cal.nextMonth')}>
           <Ico.Right s={13}/>
         </button>
       </div>
 
       {/* day names */}
       <div className="cal-daynames">
-        {DAY_NAMES.map(d => <div key={d} className="cal-dayname">{d}</div>)}
+        {dayNames(lang).map(d => <div key={d} className="cal-dayname">{d}</div>)}
       </div>
 
       {/* grid */}
@@ -515,7 +521,7 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp }: InlineCal
               key={day} type="button" className={cls}
               onClick={() => pickDay(day)}
               disabled={disabled}
-              aria-label={`${day} ${MONTH_NAMES[vMonth]} ${vYear}`}
+              aria-label={`${day} ${monthNames(lang)[vMonth]} ${vYear}`}
               aria-pressed={selected}
             >
               {day}
@@ -530,21 +536,21 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp }: InlineCal
           style={{ color: tokens.color.gold }}
           onClick={() => { onChange(todayISO); onClose(); }}
         >
-          Today
+          {t(lang,'cal.today')}
         </button>
         {value && (
           <button className="cal-footer-btn" type="button"
             style={{ color: 'rgba(239,68,68,0.75)', display:'flex', alignItems:'center', gap:'0.2rem' }}
             onClick={() => onChange('')}
           >
-            <Ico.X s={11} c="rgba(239,68,68,0.75)"/> Clear
+            <Ico.X s={11} c="rgba(239,68,68,0.75)"/> {t(lang,'cal.clear')}
           </button>
         )}
         <button className="cal-footer-btn" type="button"
           style={{ color: tokens.color.whiteFaint }}
           onClick={onClose}
         >
-          Close
+          {t(lang,'cal.close')}
         </button>
       </div>
     </div>
@@ -552,11 +558,12 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp }: InlineCal
 }
 
 /* ─────────────────────────────────────────
-   DATE PICKER FIELD  (relative wrapper — calendar attaches directly below/above)
+   DATE PICKER FIELD
 ───────────────────────────────────────── */
-function DatePickerField({ value, minDate, onChange }: {
+function DatePickerField({ value, minDate, onChange, lang }: {
   value: string; minDate: string;
   onChange: (iso: string) => void;
+  lang: Lang;
 }) {
   const [open,   setOpen]   = useState(false);
   const [dropUp, setDropUp] = useState(false);
@@ -574,7 +581,7 @@ function DatePickerField({ value, minDate, onChange }: {
 
   function handleChange(iso: string) {
     onChange(iso);
-    if (iso) close(); /* auto-close after picking; stay open on clear */
+    if (iso) close();
   }
 
   return (
@@ -593,14 +600,14 @@ function DatePickerField({ value, minDate, onChange }: {
         <span style={{ display:'flex', alignItems:'center', gap:'0.55rem' }}>
           <Ico.Calendar s={15} c={value ? tokens.color.gold : 'rgba(255,255,255,0.3)'}/>
           <span style={{ color: value ? tokens.color.white : 'rgba(255,255,255,0.35)', fontFamily:tokens.font.family }}>
-            {value ? formatDate(value) : 'Select a date…'}
+            {value ? formatDate(value, lang) : t(lang,'cal.selectDate')}
           </span>
         </span>
 
         <span style={{ display:'flex', alignItems:'center', gap:'0.35rem', flexShrink:0 }}>
           {value && (
             <span
-              role="button" aria-label="Clear date"
+              role="button" aria-label={t(lang,'cal.clearDate')}
               style={{ display:'flex', alignItems:'center', color:'rgba(255,255,255,0.35)', padding:'0.1rem' }}
               onMouseDown={e => { e.stopPropagation(); onChange(''); close(); }}
             >
@@ -623,6 +630,7 @@ function DatePickerField({ value, minDate, onChange }: {
           onChange={handleChange}
           onClose={close}
           dropUp={dropUp}
+          lang={lang}
         />
       )}
     </div>
@@ -632,9 +640,9 @@ function DatePickerField({ value, minDate, onChange }: {
 /* ─────────────────────────────────────────
    STEP INDICATOR
 ───────────────────────────────────────── */
-function StepIndicator({ current, mode }:{ current:1|2; mode:BookingMode }) {
-  const ac = mode==='walkin' ? tokens.color.green : tokens.color.gold;
-  const steps = [{ n:1, label:'Your Appointment' },{ n:2, label:'Review & Confirm' }];
+function StepIndicator({ current, mode, lang }:{ current:1|2; mode:BookingMode; lang:Lang }) {
+  const ac = mode==='without_confirmation' ? tokens.color.green : tokens.color.gold;
+  const steps = [{ n:1, label:t(lang,'steps.one') },{ n:2, label:t(lang,'steps.two') }];
   return (
     <div style={{ display:'flex', alignItems:'center', maxWidth:'400px', margin:'0 auto clamp(1.75rem,4vw,2.5rem)' }}>
       {steps.map((s,i) => {
@@ -642,7 +650,7 @@ function StepIndicator({ current, mode }:{ current:1|2; mode:BookingMode }) {
         return (
           <div key={s.n} style={{ display:'flex', alignItems:'center', flex:i<steps.length-1?1:undefined }}>
             <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:'0.3rem' }}>
-              <div className="step-dot" style={{ background:done?ac:active?`rgba(${mode==='walkin'?'34,197,94':'184,134,11'},0.18)`:'rgba(255,255,255,0.06)', border:active?`2px solid ${ac}`:done?'none':'2px solid rgba(255,255,255,0.18)', color:done||active?'#fff':tokens.color.whiteFaint }}>
+              <div className="step-dot" style={{ background:done?ac:active?`rgba(${mode==='without_confirmation'?'34,197,94':'184,134,11'},0.18)`:'rgba(255,255,255,0.06)', border:active?`2px solid ${ac}`:done?'none':'2px solid rgba(255,255,255,0.18)', color:done||active?'#fff':tokens.color.whiteFaint }}>
                 {done?<Ico.Check s={14} c="#fff"/>:s.n}
               </div>
               <span className="step-label" style={{ color:active?ac:done?tokens.color.whiteDim:tokens.color.whiteFaint }}>{s.label}</span>
@@ -660,7 +668,7 @@ function StepIndicator({ current, mode }:{ current:1|2; mode:BookingMode }) {
 ───────────────────────────────────────── */
 function Card({ children, style, mode }:{ children:React.ReactNode; style?:React.CSSProperties; mode?:BookingMode }) {
   return (
-    <div style={{ background:tokens.color.cardBg, border:`1px solid ${mode==='walkin'?'rgba(34,197,94,0.2)':mode==='confirmed'?'rgba(184,134,11,0.22)':tokens.color.whiteBorder}`, borderRadius:tokens.radius.card, padding:'clamp(1.25rem,3vw,1.85rem)', backdropFilter:'blur(18px)', WebkitBackdropFilter:'blur(18px)', ...style }}>
+    <div style={{ background:tokens.color.cardBg, border:`1px solid ${mode==='without_confirmation'?'rgba(34,197,94,0.2)':mode==='confirmed'?'rgba(184,134,11,0.22)':tokens.color.whiteBorder}`, borderRadius:tokens.radius.card, padding:'clamp(1.25rem,3vw,1.85rem)', backdropFilter:'blur(18px)', WebkitBackdropFilter:'blur(18px)', ...style }}>
       {children}
     </div>
   );
@@ -668,8 +676,8 @@ function Card({ children, style, mode }:{ children:React.ReactNode; style?:React
 function Label({ text }:{ text:string }) {
   return <p style={{ color:tokens.color.gold, fontSize:'0.67rem', fontWeight:700, letterSpacing:'0.22em', textTransform:'uppercase', marginBottom:'0.5rem', fontFamily:tokens.font.family }}>{text}</p>;
 }
-function FieldLabel({ text, opt }:{ text:string; opt?:boolean }) {
-  return <label style={{ display:'block', color:tokens.color.whiteDim, fontSize:'0.78rem', fontWeight:500, marginBottom:'0.35rem', fontFamily:tokens.font.family }}>{text}{opt&&<span style={{ color:tokens.color.whiteFaint, marginLeft:'0.3rem' }}>(optional)</span>}</label>;
+function FieldLabel({ text, opt, lang = 'en' }:{ text:string; opt?:boolean; lang?:Lang }) {
+  return <label style={{ display:'block', color:tokens.color.whiteDim, fontSize:'0.78rem', fontWeight:500, marginBottom:'0.35rem', fontFamily:tokens.font.family }}>{text}{opt&&<span style={{ color:tokens.color.whiteFaint, marginLeft:'0.3rem' }}>{t(lang,'s2.optional')}</span>}</label>;
 }
 function CircleCheck({ active }:{ active:boolean }) {
   return <div style={{ width:'1.25rem', height:'1.25rem', borderRadius:'50%', flexShrink:0, background:active?tokens.color.gold:'rgba(255,255,255,0.08)', border:active?'none':'1.5px solid rgba(255,255,255,0.22)', display:'flex', alignItems:'center', justifyContent:'center', transition:'all 0.2s' }}>{active&&<Ico.Check s={9} c="#fff"/>}</div>;
@@ -684,16 +692,43 @@ function SumRow({ icon, label, value }:{ icon:React.ReactNode; label:string; val
 }
 
 /* ─────────────────────────────────────────
+   LANGUAGE SWITCHER  (EN | සිං | த)
+───────────────────────────────────────── */
+const LANG_OPTIONS: { code: Lang; label: string }[] = [
+  { code: 'en', label: 'EN' },
+  { code: 'si', label: 'සිං' },
+  { code: 'ta', label: 'த' },
+];
+
+function LangSwitcher({ lang, onChange }:{ lang:Lang; onChange:(l:Lang)=>void }) {
+  return (
+    <div className="lang-switch-wrap" role="group" aria-label="Language">
+      {LANG_OPTIONS.map(l => (
+        <button
+          key={l.code}
+          type="button"
+          className={`lsb${lang===l.code?' lsb-active':''}`}
+          aria-pressed={lang===l.code}
+          onClick={()=>onChange(l.code)}
+        >
+          {l.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────
    MODE TOGGLE
 ───────────────────────────────────────── */
-function ModeToggle({ mode, onChange }:{ mode:BookingMode; onChange:(m:BookingMode)=>void }) {
+function ModeToggle({ mode, onChange, lang }:{ mode:BookingMode; onChange:(m:BookingMode)=>void; lang:Lang }) {
   return (
     <div className="mode-toggle-wrap">
       <button className={`mtb mtb-confirmed${mode==='confirmed'?' mtb-active':''}`} onClick={()=>onChange('confirmed')}>
-        <Ico.CalCheck s={12}/> With Confirmation
+        <Ico.CalCheck s={12}/> {t(lang,'mode.with')}
       </button>
-      <button className={`mtb mtb-walkin${mode==='walkin'?' mtb-active':''}`} onClick={()=>onChange('walkin')}>
-        <Ico.Walk s={12}/> Without Confirmation
+      <button className={`mtb mtb-walkin${mode==='without_confirmation'?' mtb-active':''}`} onClick={()=>onChange('without_confirmation')}>
+        <Ico.Walk s={12}/> {t(lang,'mode.without')}
       </button>
     </div>
   );
@@ -702,14 +737,14 @@ function ModeToggle({ mode, onChange }:{ mode:BookingMode; onChange:(m:BookingMo
 /* ─────────────────────────────────────────
    GENDER INLINE
 ───────────────────────────────────────── */
-function GenderInline({ value, onChange }:{ value:GenderValue|''; onChange:(v:GenderValue)=>void }) {
+function GenderInline({ value, onChange, lang }:{ value:GenderValue|''; onChange:(v:GenderValue)=>void; lang:Lang }) {
   return (
-    <div className="gender-inline-wrap" title={value?genderLabel(value):'Select gender'}>
+    <div className="gender-inline-wrap" title={value ? t(lang, `gender.${value}`) : t(lang,'gp.selectGenderTitle')}>
       <GenderSymbol value={value} s={24}/>
       <span className="g-chevron"><Ico.ChevDown s={12} c={tokens.color.gold}/></span>
-      <select value={value} onChange={e=>onChange(e.target.value as GenderValue)} aria-label="Select gender">
-        <option value="" disabled>Select gender…</option>
-        {GENDER_OPTIONS.map(g=><option key={g.value} value={g.value}>{g.label}</option>)}
+      <select value={value} onChange={e=>onChange(e.target.value as GenderValue)} aria-label={t(lang,'gp.selectGenderTitle')}>
+        <option value="" disabled>{t(lang,'gp.selectGender')}</option>
+        {GENDER_OPTIONS.map(g=><option key={g.value} value={g.value}>{t(lang, `gender.${g.value}`)}</option>)}
       </select>
     </div>
   );
@@ -718,12 +753,12 @@ function GenderInline({ value, onChange }:{ value:GenderValue|''; onChange:(v:Ge
 /* ─────────────────────────────────────────
    PHONE INLINE
 ───────────────────────────────────────── */
-function PhoneInline({ phone, autoFilled, onChange }:{ phone:string; autoFilled:boolean; onChange:(v:string)=>void }) {
+function PhoneInline({ phone, autoFilled, onChange, lang }:{ phone:string; autoFilled:boolean; onChange:(v:string)=>void; lang:Lang }) {
   if (autoFilled) return <p style={{ color:tokens.color.white, fontFamily:tokens.font.family, fontSize:'0.95rem', fontWeight:700, margin:0 }}>{phone}</p>;
   return (
     <div style={{ width:'100%' }}>
       <input type="tel" className="phone-plain-input" placeholder="07X XXX XXXX" value={phone} onChange={e=>onChange(e.target.value)}/>
-      {!phone.trim()&&<p style={{ color:'rgba(239,68,68,0.75)', fontSize:'0.68rem', fontFamily:tokens.font.family, marginTop:'0.25rem', textAlign:'right' }}>⚠ Required</p>}
+      {!phone.trim()&&<p style={{ color:'rgba(239,68,68,0.75)', fontSize:'0.68rem', fontFamily:tokens.font.family, marginTop:'0.25rem', textAlign:'right' }}>⚠ {t(lang,'gp.required')}</p>}
     </div>
   );
 }
@@ -731,19 +766,19 @@ function PhoneInline({ phone, autoFilled, onChange }:{ phone:string; autoFilled:
 /* ─────────────────────────────────────────
    GENDER + PHONE CORNER
 ───────────────────────────────────────── */
-function GenderPhoneCorner({ gender, onGenderChange, phone, onPhoneChange, phoneAutoFilled }:{
+function GenderPhoneCorner({ gender, onGenderChange, phone, onPhoneChange, phoneAutoFilled, lang }:{
   gender:GenderValue|''; onGenderChange:(v:GenderValue)=>void;
-  phone:string; onPhoneChange:(v:string)=>void; phoneAutoFilled:boolean;
+  phone:string; onPhoneChange:(v:string)=>void; phoneAutoFilled:boolean; lang:Lang;
 }) {
   return (
     <div className="appt-header-right">
       <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'0.35rem' }}>
-        <Label text="Gender"/>
-        <GenderInline value={gender} onChange={onGenderChange}/>
+        <Label text={t(lang,'gp.gender')}/>
+        <GenderInline value={gender} onChange={onGenderChange} lang={lang}/>
       </div>
       <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'0.35rem', width:'100%' }}>
-        <Label text="Contact Number"/>
-        <PhoneInline phone={phone} autoFilled={phoneAutoFilled} onChange={onPhoneChange}/>
+        <Label text={t(lang,'gp.contact')}/>
+        <PhoneInline phone={phone} autoFilled={phoneAutoFilled} onChange={onPhoneChange} lang={lang}/>
       </div>
     </div>
   );
@@ -752,25 +787,25 @@ function GenderPhoneCorner({ gender, onGenderChange, phone, onPhoneChange, phone
 /* ─────────────────────────────────────────
    TIME SECTION
 ───────────────────────────────────────── */
-function TimeSectionCard({ date, mode, onModeChange, timeSlot, loadingSlots, slotsError, walkinDisabledReason, classifySlot, handleSlotClick, multiProvider, setTimeSlot }:{
+function TimeSectionCard({ date, mode, onModeChange, timeSlot, loadingSlots, slotsError, walkinDisabledReason, classifySlot, handleSlotClick, multiProvider, setTimeSlot, lang }:{
   date:string; mode:BookingMode; onModeChange:(m:BookingMode)=>void;
   timeSlot:string; loadingSlots:boolean; slotsError:string; walkinDisabledReason:string;
-  classifySlot:(s:string)=>SlotStatus; handleSlotClick:(s:string)=>void;
-  multiProvider:boolean; setTimeSlot:(s:string)=>void;
+  classifySlot:(s:string)=>SlotResult; handleSlotClick:(s:string)=>void;
+  multiProvider:boolean; setTimeSlot:(s:string)=>void; lang:Lang;
 }) {
   return (
     <div className="time-section-card slide-down">
       <div className="time-section-header">
         <div>
-          <p style={{ color:tokens.color.gold, fontSize:'0.67rem', fontWeight:700, letterSpacing:'0.22em', textTransform:'uppercase', fontFamily:tokens.font.family, marginBottom:'0.18rem' }}>Preferred Time</p>
-          <p style={{ color:tokens.color.whiteFaint, fontSize:'0.72rem', fontFamily:tokens.font.family }}>{formatDate(date)}</p>
+          <p style={{ color:tokens.color.gold, fontSize:'0.67rem', fontWeight:700, letterSpacing:'0.22em', textTransform:'uppercase', fontFamily:tokens.font.family, marginBottom:'0.18rem' }}>{t(lang,'time.preferredTime')}</p>
+          <p style={{ color:tokens.color.whiteFaint, fontSize:'0.72rem', fontFamily:tokens.font.family }}>{formatDate(date, lang)}</p>
         </div>
-        <ModeToggle mode={mode} onChange={onModeChange}/>
+        <ModeToggle mode={mode} onChange={onModeChange} lang={lang}/>
       </div>
       <div className="time-section-body">
         {mode==='confirmed'
           ? <ConfirmedSlots timeSlot={timeSlot} setTimeSlot={setTimeSlot}/>
-          : <WalkinSlots timeSlot={timeSlot} loading={loadingSlots} error={slotsError} disabledReason={walkinDisabledReason} classifySlot={classifySlot} handleSlotClick={handleSlotClick} multiProvider={multiProvider}/>
+          : <WalkinSlots timeSlot={timeSlot} loading={loadingSlots} error={slotsError} disabledReason={walkinDisabledReason} classifySlot={classifySlot} handleSlotClick={handleSlotClick} multiProvider={multiProvider} lang={lang}/>
         }
       </div>
     </div>
@@ -787,37 +822,52 @@ function ConfirmedSlots({ timeSlot, setTimeSlot }:{ timeSlot:string; setTimeSlot
   );
 }
 
-function WalkinSlots({ timeSlot, loading, error, disabledReason, classifySlot, handleSlotClick, multiProvider }:{
+function WalkinSlots({ timeSlot, loading, error, disabledReason, classifySlot, handleSlotClick, multiProvider, lang }:{
   timeSlot:string; loading:boolean; error:string; disabledReason:string;
-  classifySlot:(s:string)=>SlotStatus; handleSlotClick:(s:string)=>void; multiProvider:boolean;
+  classifySlot:(s:string)=>SlotResult; handleSlotClick:(s:string)=>void; multiProvider:boolean; lang:Lang;
 }) {
   if (disabledReason) return <div className="info-box" style={{ display:'flex', gap:'0.5rem' }}><Ico.Info s={13}/><span>{disabledReason}</span></div>;
   if (loading) return (
     <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:'0.6rem', padding:'1.5rem 0' }}>
       <span className="spinner-sm"/>
-      <span style={{ color:tokens.color.whiteFaint, fontSize:'0.78rem', fontFamily:tokens.font.family }}>Checking live availability…</span>
+      <span style={{ color:tokens.color.whiteFaint, fontSize:'0.78rem', fontFamily:tokens.font.family }}>{t(lang,'time.checking')}</span>
     </div>
   );
-  const av=TIME_SLOTS.filter(s=>classifySlot(s)==='available').length;
-  const pa=TIME_SLOTS.filter(s=>classifySlot(s)==='partial').length;
-  const bo=TIME_SLOTS.filter(s=>classifySlot(s)==='booked').length;
+  const av=TIME_SLOTS.filter(s=>classifySlot(s).status==='available').length;
+  const pa=TIME_SLOTS.filter(s=>classifySlot(s).status==='partial').length;
+  const bo=TIME_SLOTS.filter(s=>classifySlot(s).status==='booked').length;
   return (
     <>
       {error&&<div className="info-box" style={{ display:'flex', gap:'0.5rem', marginBottom:'0.75rem' }}><Ico.Info s={13}/><span>{error}</span></div>}
       <div style={{ display:'flex', alignItems:'center', gap:'1rem', marginBottom:'0.65rem', flexWrap:'wrap' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:'0.35rem' }}><span className="legend-dot" style={{ background:tokens.color.green }}/><span style={{ color:tokens.color.whiteFaint, fontSize:'0.71rem', fontFamily:tokens.font.family }}>Available ({av})</span></div>
-        {multiProvider&&pa>0&&<div style={{ display:'flex', alignItems:'center', gap:'0.35rem' }}><span className="legend-dot" style={{ background:tokens.color.amber }}/><span style={{ color:tokens.color.whiteFaint, fontSize:'0.71rem', fontFamily:tokens.font.family }}>Partial ({pa})</span></div>}
-        <div style={{ display:'flex', alignItems:'center', gap:'0.35rem' }}><span className="legend-dot" style={{ background:tokens.color.red }}/><span style={{ color:tokens.color.whiteFaint, fontSize:'0.71rem', fontFamily:tokens.font.family }}>{multiProvider?'Fully Booked':'Booked'} ({bo})</span></div>
+        <div style={{ display:'flex', alignItems:'center', gap:'0.35rem' }}><span className="legend-dot" style={{ background:tokens.color.green }}/><span style={{ color:tokens.color.whiteFaint, fontSize:'0.71rem', fontFamily:tokens.font.family }}>{t(lang,'time.available')} ({av})</span></div>
+        {multiProvider&&pa>0&&<div style={{ display:'flex', alignItems:'center', gap:'0.35rem' }}><span className="legend-dot" style={{ background:tokens.color.amber }}/><span style={{ color:tokens.color.whiteFaint, fontSize:'0.71rem', fontFamily:tokens.font.family }}>{t(lang,'time.partial')} ({pa})</span></div>}
+        <div style={{ display:'flex', alignItems:'center', gap:'0.35rem' }}><span className="legend-dot" style={{ background:tokens.color.red }}/><span style={{ color:tokens.color.whiteFaint, fontSize:'0.71rem', fontFamily:tokens.font.family }}>{multiProvider?t(lang,'time.fullyBooked'):t(lang,'time.booked')} ({bo})</span></div>
       </div>
       <div className="time-grid" style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'0.42rem' }}>
         {TIME_SLOTS.map(slot=>{
-          const st=classifySlot(slot),sel=timeSlot===slot;
+          const result=classifySlot(slot);
+          const st=result.status;
+          const sel=timeSlot===slot;
+          const hasSwap=st==='partial'&&result.isSequenceSwapped;
           if (st==='booked')  return <div key={slot} className="t-slot-booked slot-pop">{slot}</div>;
-          if (st==='partial') return <button key={slot} type="button" className="t-slot-partial slot-pop" onClick={()=>handleSlotClick(slot)}>{slot}</button>;
+          if (st==='partial') return (
+            <button key={slot} type="button"
+              className="t-slot-partial slot-pop"
+              onClick={()=>handleSlotClick(slot)}
+              title={t(lang, hasSwap ? 'time.swapTip' : 'time.partialTip')}
+            >
+              {slot}
+              {hasSwap&&<span style={{ position:'absolute',top:'-4px',right:'-4px',fontSize:'0.55rem',background:'#a855f7',borderRadius:'999px',padding:'0.06rem 0.28rem',color:'#fff',fontWeight:700,letterSpacing:'0.04em',border:'1.5px solid #040405' }}>↕</span>}
+            </button>
+          );
           return <button key={slot} type="button" className={`t-slot-available slot-pop${sel?' t-slot-available-selected':''}`} onClick={()=>handleSlotClick(slot)}>{slot}</button>;
         })}
       </div>
-      {multiProvider&&<p style={{ color:tokens.color.whiteFaint, fontSize:'0.68rem', fontFamily:tokens.font.family, marginTop:'0.55rem' }}>Yellow slots: tap for split-booking or back-to-back suggestions.</p>}
+      {multiProvider&&<p style={{ color:tokens.color.whiteFaint, fontSize:'0.68rem', fontFamily:tokens.font.family, marginTop:'0.55rem' }}>
+        {t(lang,'time.yellowHint')}{' '}
+        <span style={{ color:'#a855f7' }}>↕</span> {t(lang,'time.swapEquals')}
+      </p>}
     </>
   );
 }
@@ -828,6 +878,7 @@ function WalkinSlots({ timeSlot, loading, error, disabledReason, classifySlot, h
 export default function BookingPage() {
   const router = useRouter();
 
+  const [lang,      setLangState] = useState<Lang>('en');
   const [mode,      setMode]      = useState<BookingMode>('confirmed');
   const [step,      setStep]      = useState<Step>(1);
   const [gender,    setGender]    = useState<GenderValue|''>('');
@@ -852,6 +903,17 @@ export default function BookingPage() {
   const [loadingSlots,  setLoadingSlots]  = useState(false);
   const [slotsError,    setSlotsError]    = useState('');
   const [conflictModal, setConflictModal] = useState<ConflictModalData|null>(null);
+
+  /* ── language: restore + persist ── */
+  useEffect(()=>{
+    if (typeof window==='undefined') return;
+    const saved = window.localStorage.getItem('lang');
+    if (saved==='en'||saved==='si'||saved==='ta') setLangState(saved);
+  },[]);
+  const setLang = (l:Lang) => {
+    setLangState(l);
+    if (typeof window!=='undefined') window.localStorage.setItem('lang', l);
+  };
 
   /* ── auto-fill from localStorage ── */
   useEffect(()=>{
@@ -882,7 +944,7 @@ export default function BookingPage() {
 
   /* ── fetch live availability ── */
   useEffect(()=>{
-    if (mode!=='walkin'||!date||providers.length===0){setBookedSlots(new Set());setProviderSlots({});return;}
+    if (mode!=='without_confirmation'||!date||providers.length===0){setBookedSlots(new Set());setProviderSlots({});return;}
     const ctrl=new AbortController();
     (async()=>{
       setLoadingSlots(true);setSlotsError('');
@@ -896,41 +958,36 @@ export default function BookingPage() {
           const nb=new Set<string>(d.bookedSlots||[]);
           setBookedSlots(nb);setProviderSlots(d.providerSlots||{});
           if (timeSlot&&nb.has(timeSlot)) setTimeSlot('');
-        }else setSlotsError('Could not load live availability.');
-      }catch(e){if((e as Error).name!=='AbortError') setSlotsError('Could not load live availability.');}
+        }else setSlotsError(t(lang,'time.loadError'));
+      }catch(e){if((e as Error).name!=='AbortError') setSlotsError(t(lang,'time.loadError'));}
       finally{setLoadingSlots(false);}
     })();
     return ()=>ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[mode,date,location,providerNamesKey]);
 
-  const walkinDisabledReason = mode==='walkin'&&providers.length===0
-    ? 'Please select a provider above to see real-time availability.' : '';
+  const walkinDisabledReason = mode==='without_confirmation'&&providers.length===0
+    ? t(lang,'time.needProvider') : '';
 
-  function classifySlot(slot:string):SlotStatus{
-    if (providers.length===0) return 'available';
-    if (providers.length===1) return bookedSlots.has(slot)?'booked':'available';
-    const busy=providers.filter(p=>(providerSlots[p.name]??[]).includes(slot)).length;
-    if (busy===0) return 'available';
-    if (busy===providers.length) return 'booked';
-    return 'partial';
+  function classifySlot(slot:string):SlotResult{
+    if (providers.length===0) return { status:'available', isSequenceSwapped:false };
+    return evaluateSlot(slot, providers, services, providerSlots, bookedSlots);
   }
 
   function findBackToBack(after:string):string|null{
     const am=timeToMinutes(after);
-    // Re-read providerSlots at call-time so we always have the freshest data
     const snap=providerSlots;
     return TIME_SLOTS.find(s=>timeToMinutes(s)>am&&providers.every(p=>!(snap[p.name]??[]).includes(s)))??null;
   }
 
   function handleSlotClick(slot:string){
-    const st=classifySlot(slot);
-    if (st==='booked') return;
-    if (st==='available'){setTimeSlot(slot);return;}
+    const result=classifySlot(slot);
+    if (result.status==='booked') return;
+    if (result.status==='available'){setTimeSlot(slot);return;}
 
     const sm=timeToMinutes(slot);
 
-    // Build per-provider availability detail
+    // Build legacy per-provider availability rows (still used in modal header)
     const pa:ProviderAvailability[]=providers.map(p=>{
       const busy=providerSlots[p.name]??[];
       const isFree=!busy.includes(slot);
@@ -945,7 +1002,7 @@ export default function BookingPage() {
       };
     });
 
-    // Calculate the real gap description
+    // Build gap description (translated; "is/are" only used by English)
     const busyProviders=pa.filter(p=>!p.isFree);
     const latestNext=busyProviders.reduce<string|null>((acc,p)=>{
       if(!p.nextFreeSlot) return acc;
@@ -957,30 +1014,39 @@ export default function BookingPage() {
     if(busyProviders.length>0&&latestNext){
       const gapMins=timeToMinutes(latestNext)-timeToMinutes(slot);
       const busyNames=busyProviders.map(p=>p.providerName).join(', ');
-      gapDescription=`${busyNames} ${busyProviders.length===1?'is':'are'} busy until ${latestNext}, causing a ${gapMins}-minute gap if you start at ${slot}.`;
+      gapDescription=t(lang,'cm.gapDesc',{
+        names: busyNames,
+        isAre: busyProviders.length===1?'is':'are',
+        until: latestNext, mins: gapMins, slot,
+      });
     }
 
-    // Re-verify back-to-back slot freshness at click time
-    const btb=findBackToBack(slot);
+    const btb=result.recommendedOriginalTime??findBackToBack(slot);
 
-    setConflictModal({selectedSlot:slot,backToBackSlot:btb,providers:pa,gapDescription});
+    setConflictModal({
+      selectedSlot:slot,
+      backToBackSlot:btb,
+      providers:pa,
+      gapDescription,
+      slotResult:result,
+      serviceNames:services.map(s=>s.name), // English — modal translates for display
+    });
   }
 
-  function handleBookBackToBack(slot:string){
-    // Re-verify the slot is still free before confirming
-    const stillFree=providers.every(p=>!(providerSlots[p.name]??[]).includes(slot));
-    if(!stillFree){
-      setSlotsError(`${slot} was just taken. Please pick another slot.`);
-      setConflictModal(null);
-      return;
-    }
-    setTimeSlot(slot);
+ function handleBookBackToBack(slot: string) {
+  const result = evaluateSlot(slot, providers, services, providerSlots, bookedSlots);
+  if (result.status !== 'available') {
+    setSlotsError(t(lang,'err.slotTaken',{slot}));
     setConflictModal(null);
+    return;
   }
+  setTimeSlot(slot);
+  setConflictModal(null);
+}
 
   function handleBookSplit(sel:string,next:string){
     setTimeSlot(sel);
-    // Build a structured note so the backend/staff can clearly see the split
+    // NOTE: staff note intentionally stays English (backend/staff readability)
     const freeAt=providers
       .filter(p=>!(providerSlots[p.name]??[]).includes(sel))
       .map(p=>p.name).join(', ');
@@ -992,6 +1058,19 @@ export default function BookingPage() {
     setConflictModal(null);
   }
 
+  function handleBookSwapped(slot:string){
+    // NOTE: staff note intentionally stays English (backend/staff readability)
+    const sd=conflictModal?.slotResult?.swappedDetails;
+    const swapNote=sd?.orderedServices && sd.orderedServices.length>0
+      ?`[Sequence Swap] Services run in this order at ${slot}: ${sd.orderedServices.join(' → ')}`
+      :services.length===2
+        ?`[Sequence Swap] Services run in reverse order at ${slot}: ${services[1].name} → ${services[0].name}`
+        :`[Sequence Swap] Services reordered at ${slot}`;
+    setNotes(prev=>prev?`${prev}\n${swapNote}`:swapNote);
+    setTimeSlot(slot);
+    setConflictModal(null);
+  }
+
   function handleModeChange(m:BookingMode){
     setMode(m);setTimeSlot('');setBookedSlots(new Set());setProviderSlots({});
   }
@@ -1000,26 +1079,26 @@ export default function BookingPage() {
     setDate(iso);setTimeSlot('');
   }
 
-  const canStep2   = !!gender&&!!location&&services.length>0&&providers.length>0&&!!date&&!!timeSlot&&!!phone.trim();
+  const canStep2   = !!gender&&!!location&&services.length>0&&providers.length>0&&providers.length===services.length&&!!date&&!!timeSlot&&!!phone.trim();
   const totalMins  = services.reduce((a,s)=>a+parseMins(s.duration),0);
   const totalPrice = services.reduce((a,s)=>a+parseLKR(s.price),0);
-  const accentColor= mode==='walkin'?tokens.color.green:tokens.color.gold;
-  const btnClass   = mode==='walkin'?'btn-green':'btn-gold';
+  const accentColor= mode==='without_confirmation'?tokens.color.green:tokens.color.gold;
+  const btnClass   = mode==='without_confirmation'?'btn-green':'btn-gold';
 
   const toggleService  = (svc:ServiceItem) => setServices(prev=>prev.some(s=>s.name===svc.name&&s.price===svc.price)?prev.filter(s=>!(s.name===svc.name&&s.price===svc.price)):[...prev,svc]);
   const toggleProvider = (p:Provider)      => { setProviders(prev=>prev.some(x=>x.name===p.name)?prev.filter(x=>x.name!==p.name):[...prev,p]); setTimeSlot(''); };
-  const handleLocChange= (loc:string)      => { setLocation(loc); setProviders([]); setTimeSlot(''); };
+  const handleLocChange= (locSel:string)   => { setLocation(locSel); setProviders([]); setTimeSlot(''); };
 
   /* ── submit ── */
   const handleConfirm=async()=>{
     setLoading(true);setApiError('');
     try{
-      const payload={name:name.trim(),email:email.trim().toLowerCase(),phone:phone.trim(),gender:genderLabel(gender as GenderValue),location,mode,services:services.map(s=>({name:s.name,price:s.price,duration:s.duration,category:s.category})),categories:selectedCats,totalDuration:totalMins,totalPrice,providers:providers.map(p=>({name:p.name,role:p.role})),date,timeSlot,notes:notes.trim()||null};
+      const payload={name:name.trim(),email:email.trim().toLowerCase(),phone:phone.trim(),gender:genderLabelEn(gender as GenderValue),location,mode,services:services.map(s=>({name:s.name,price:s.price,duration:s.duration,category:s.category})),categories:selectedCats,totalDuration:totalMins,totalPrice,providers:providers.map(p=>({name:p.name,role:p.role})),date,timeSlot,notes:notes.trim()||null};
       const res=await fetch('/api/bookings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       const d=await res.json();
-      if (!res.ok||!d.success){setApiError(d.message||'Something went wrong.');setLoading(false);return;}
+      if (!res.ok||!d.success){setApiError(d.message||t(lang,'err.generic'));setLoading(false);return;}
       setBookingId(d.bookingId);setConfirmed(true);
-    }catch{setApiError('Network error — please check your connection.');}
+    }catch{setApiError(t(lang,'err.network'));}
     finally{setLoading(false);}
   };
 
@@ -1040,26 +1119,29 @@ export default function BookingPage() {
         <main style={{ minHeight:'100vh',fontFamily:tokens.font.family,backgroundImage:'url(/booking.jpg)',backgroundSize:'cover',backgroundPosition:'center',display:'flex',alignItems:'center',justifyContent:'center',padding:'2rem',position:'relative' }}>
           <div style={{ position:'absolute',inset:0,background:'rgba(4,4,5,0.84)' }}/>
           <div className="reveal-up" style={{ position:'relative',zIndex:1,maxWidth:'520px',width:'100%',textAlign:'center' }}>
-            <div className="check-pop" style={{ width:'5rem',height:'5rem',borderRadius:'50%',background:mode==='walkin'?'rgba(34,197,94,0.15)':'rgba(184,134,11,0.15)',border:`2px solid ${accentColor}`,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 1.5rem' }}>
+            <div className="check-pop" style={{ width:'5rem',height:'5rem',borderRadius:'50%',background:mode==='without_confirmation'?'rgba(34,197,94,0.15)':'rgba(184,134,11,0.15)',border:`2px solid ${accentColor}`,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 1.5rem' }}>
               <Ico.Check s={32} c={accentColor}/>
             </div>
-            <span className={`mode-badge ${mode==='walkin'?'mode-badge-walkin':'mode-badge-confirmed'}`} style={{ margin:'0 auto 0.75rem',display:'inline-flex' }}>
-              {mode==='walkin'?<><Ico.Walk s={11}/> Without Confirmation</>:<><Ico.CalCheck s={11}/> Confirmed</>}
-            </span>
-            {bookingId&&<p style={{ color:tokens.color.whiteFaint,fontSize:'0.72rem',fontFamily:tokens.font.family,marginBottom:'0.4rem',letterSpacing:'0.1em' }}>Booking ID: <strong style={{ color:accentColor }}>#{bookingId}</strong></p>}
-            <p style={{ color:accentColor,fontSize:'0.68rem',fontWeight:700,letterSpacing:'0.28em',textTransform:'uppercase',marginBottom:'0.5rem' }}>Booking {mode==='walkin'?'Registered':'Confirmed'}</p>
-            <h2 style={{ color:tokens.color.white,fontSize:'clamp(1.6rem,3vw,2.2rem)',fontWeight:600,marginBottom:'0.75rem',fontFamily:tokens.font.family }}>See you soon, {name.split(' ')[0]}!</h2>
+            <div style={{ display:'flex', justifyContent:'center', gap:'0.6rem', alignItems:'center', marginBottom:'0.75rem', flexWrap:'wrap' }}>
+              <span className={`mode-badge ${mode==='without_confirmation'?'mode-badge-walkin':'mode-badge-confirmed'}`}>
+                {mode==='without_confirmation'?<><Ico.Walk s={11}/> {t(lang,'mode.without')}</>:<><Ico.CalCheck s={11}/> {t(lang,'mode.confirmedBadge')}</>}
+              </span>
+              <LangSwitcher lang={lang} onChange={setLang}/>
+            </div>
+            {bookingId&&<p style={{ color:tokens.color.whiteFaint,fontSize:'0.72rem',fontFamily:tokens.font.family,marginBottom:'0.4rem',letterSpacing:'0.1em' }}>{t(lang,'ok.bookingId')}: <strong style={{ color:accentColor }}>#{bookingId}</strong></p>}
+            <p style={{ color:accentColor,fontSize:'0.68rem',fontWeight:700,letterSpacing:'0.28em',textTransform:'uppercase',marginBottom:'0.5rem' }}>{t(lang,'ok.bookingWord')} {t(lang, mode==='without_confirmation'?'ok.registeredWord':'ok.confirmedWord')}</p>
+            <h2 style={{ color:tokens.color.white,fontSize:'clamp(1.6rem,3vw,2.2rem)',fontWeight:600,marginBottom:'0.75rem',fontFamily:tokens.font.family }}>{t(lang,'ok.seeYouSoon',{name:name.split(' ')[0]})}</h2>
             <p style={{ color:tokens.color.whiteMuted,fontSize:'0.88rem',lineHeight:1.9,marginBottom:'2rem',fontFamily:tokens.font.family }}>
-              <span style={{ color:accentColor }}>{services.map(s=>s.name).join(', ')}</span> on{' '}
-              <span style={{ color:accentColor }}>{date?formatDate(date):''}</span> at{' '}
-              <span style={{ color:accentColor }}>{timeSlot}</span><br/>
-              with <span style={{ color:accentColor }}>{providers.map(p=>p.name).join(' & ')}</span><br/>
-              at our <span style={{ color:accentColor }}>{location}</span> branch.<br/>
+              <span style={{ color:accentColor }}>{services.map(s=>svcName(lang,s.name)).join(', ')}</span>{' '}
+              {t(lang,'ok.onDate',{date: date?formatDate(date,lang):''})}{' '}
+              {t(lang,'ok.atTime',{time: timeSlot})}<br/>
+              {t(lang,'ok.withProvs',{provs: providers.map(p=>p.name).join(' & ')})}<br/>
+              {t(lang,'ok.atOurBranch',{loc: locName(lang,location)})}<br/>
               <span style={{ color:tokens.color.whiteDim,fontSize:'0.8rem' }}>
-                {mode==='walkin'?'Registered without confirmation — please arrive on time.':`Confirmation sent to ${email}`}
+                {mode==='without_confirmation'?t(lang,'ok.walkinNote'):t(lang,'ok.confirmationSentTo',{email})}
               </span>
             </p>
-            <button className={btnClass} onClick={handleReset} style={{ padding:'0.85rem 2.5rem',fontSize:'0.9rem' }}>Book Another Appointment</button>
+            <button className={btnClass} onClick={handleReset} style={{ padding:'0.85rem 2.5rem',fontSize:'0.9rem' }}>{t(lang,'ok.bookAnother')}</button>
           </div>
         </main>
       </>
@@ -1080,16 +1162,19 @@ export default function BookingPage() {
 
           {/* ── PAGE HEADER ── */}
           <div className="reveal-up" style={{ textAlign:'center',marginBottom:'clamp(1.25rem,3vw,1.75rem)' }}>
-            <p style={{ color:tokens.color.gold,fontSize:'0.65rem',fontWeight:700,letterSpacing:'0.3em',textTransform:'uppercase',marginBottom:'0.4rem',fontFamily:tokens.font.family }}>Online Booking</p>
+            <div style={{ display:'flex', justifyContent:'center', marginBottom:'0.85rem' }}>
+              <LangSwitcher lang={lang} onChange={setLang}/>
+            </div>
+            <p style={{ color:tokens.color.gold,fontSize:'0.65rem',fontWeight:700,letterSpacing:'0.3em',textTransform:'uppercase',marginBottom:'0.4rem',fontFamily:tokens.font.family }}>{t(lang,'header.onlineBooking')}</p>
             <h1 style={{ color:tokens.color.white,fontSize:'clamp(1.4rem,3vw,2rem)',fontWeight:600,marginBottom:'0.5rem',fontFamily:tokens.font.family }}>
-              Reserve Your <span style={{ color:accentColor }}>Luxury</span> Moment
+              {t(lang,'header.title1')} <span style={{ color:accentColor }}>{t(lang,'header.title2')}</span> {t(lang,'header.title3')}
             </h1>
             <p style={{ color:tokens.color.whiteFaint,fontSize:'0.75rem',fontFamily:tokens.font.family }}>
-              {mode==='confirmed'?"✦ We'll confirm your appointment via email.":'✦ Instant registration — no email needed.'}
+              {t(lang, mode==='confirmed' ? 'header.confirmEmailNote' : 'header.instantNote')}
             </p>
           </div>
 
-          <StepIndicator current={step} mode={mode}/>
+          <StepIndicator current={step} mode={mode} lang={lang}/>
 
           <div style={{ maxWidth:'680px',margin:'0 auto' }}>
 
@@ -1103,26 +1188,26 @@ export default function BookingPage() {
                   {/* header row */}
                   <div className="appt-header-row">
                     <div className="appt-header-left">
-                      <h2 style={{ color:tokens.color.white,fontSize:'1.25rem',fontWeight:600,fontFamily:tokens.font.family,marginBottom:'0.25rem' }}>Build Your Appointment</h2>
-                      <p style={{ color:tokens.color.whiteFaint,fontSize:'0.78rem',fontFamily:tokens.font.family,lineHeight:1.55 }}>Choose your branch, services, provider, date and time.</p>
+                      <h2 style={{ color:tokens.color.white,fontSize:'1.25rem',fontWeight:600,fontFamily:tokens.font.family,marginBottom:'0.25rem' }}>{t(lang,'s1.buildYourAppointment')}</h2>
+                      <p style={{ color:tokens.color.whiteFaint,fontSize:'0.78rem',fontFamily:tokens.font.family,lineHeight:1.55 }}>{t(lang,'s1.intro')}</p>
                     </div>
-                    <GenderPhoneCorner gender={gender} onGenderChange={setGender} phone={phone} onPhoneChange={setPhone} phoneAutoFilled={phoneAutoFilled}/>
+                    <GenderPhoneCorner gender={gender} onGenderChange={setGender} phone={phone} onPhoneChange={setPhone} phoneAutoFilled={phoneAutoFilled} lang={lang}/>
                   </div>
 
                   <div className="divider" style={{ margin:'0 0 1.4rem' }}/>
 
                   {/* ── LOCATION ── */}
-                  <Label text="Branch / Location"/>
+                  <Label text={t(lang,'s1.branchLocation')}/>
                   <div className="loc-cards-wrap" style={{ display:'flex',gap:'0.65rem',marginBottom:'1.4rem',flexWrap:'wrap' }}>
-                    {LOCATIONS.map(loc=>(
-                      <div key={loc} className={`loc-card${location===loc?' loc-card-active':''}`} onClick={()=>handleLocChange(loc)} role="button" aria-pressed={location===loc}>
+                    {LOCATIONS.map(locSel=>(
+                      <div key={locSel} className={`loc-card${location===locSel?' loc-card-active':''}`} onClick={()=>handleLocChange(locSel)} role="button" aria-pressed={location===locSel}>
                         <div style={{ display:'flex',alignItems:'center',gap:'0.5rem' }}>
-                          <div style={{ width:'2rem',height:'2rem',borderRadius:'50%',flexShrink:0,background:location===loc?'rgba(184,134,11,0.2)':'rgba(255,255,255,0.06)',border:`1px solid ${location===loc?'rgba(184,134,11,0.55)':'rgba(255,255,255,0.12)'}`,display:'flex',alignItems:'center',justifyContent:'center' }}>
-                            <Ico.MapPin s={13} c={location===loc?tokens.color.gold:tokens.color.whiteFaint}/>
+                          <div style={{ width:'2rem',height:'2rem',borderRadius:'50%',flexShrink:0,background:location===locSel?'rgba(184,134,11,0.2)':'rgba(255,255,255,0.06)',border:`1px solid ${location===locSel?'rgba(184,134,11,0.55)':'rgba(255,255,255,0.12)'}`,display:'flex',alignItems:'center',justifyContent:'center' }}>
+                            <Ico.MapPin s={13} c={location===locSel?tokens.color.gold:tokens.color.whiteFaint}/>
                           </div>
-                          <span style={{ color:location===loc?tokens.color.gold:tokens.color.whiteMuted,fontSize:'0.85rem',fontWeight:600,fontFamily:tokens.font.family }}>{loc}</span>
+                          <span style={{ color:location===locSel?tokens.color.gold:tokens.color.whiteMuted,fontSize:'0.85rem',fontWeight:600,fontFamily:tokens.font.family }}>{locName(lang,locSel)}</span>
                         </div>
-                        <CircleCheck active={location===loc}/>
+                        <CircleCheck active={location===locSel}/>
                       </div>
                     ))}
                   </div>
@@ -1130,24 +1215,24 @@ export default function BookingPage() {
                   <div className="divider" style={{ margin:'0 0 1.4rem' }}/>
 
                   {/* ── SERVICES ── */}
-                  <Label text="Category"/>
+                  <Label text={t(lang,'s1.category')}/>
                   <div className="cat-tabs-wrap" style={{ marginBottom:'1rem' }}>
-                    {CATEGORIES.map(cat=>{
-                      const has=selectedCats.includes(cat);
-                      return <button key={cat} type="button" className={`cat-tab ${category===cat?'cat-tab-active':'cat-tab-inactive'}`} onClick={()=>setCategory(cat)}>{cat}{has&&<span className="cat-tab-dot"/>}</button>;
+                    {CATEGORIES.map(catSel=>{
+                      const has=selectedCats.includes(catSel);
+                      return <button key={catSel} type="button" className={`cat-tab ${category===catSel?'cat-tab-active':'cat-tab-inactive'}`} onClick={()=>setCategory(catSel)}>{catName(lang,catSel)}{has&&<span className="cat-tab-dot"/>}</button>;
                     })}
                   </div>
 
-                  <Label text="Choose Services"/>
-                  <p style={{ color:tokens.color.whiteFaint,fontSize:'0.72rem',marginBottom:'0.65rem',fontFamily:tokens.font.family }}>Tap to select. You can pick multiple across categories.</p>
+                  <Label text={t(lang,'s1.chooseServices')}/>
+                  <p style={{ color:tokens.color.whiteFaint,fontSize:'0.72rem',marginBottom:'0.65rem',fontFamily:tokens.font.family }}>{t(lang,'s1.tapToSelect')}</p>
                   <div style={{ display:'flex',flexDirection:'column',gap:'0.45rem',marginBottom:'0.9rem' }}>
                     {serviceList.map(s=>{
                       const active=services.some(x=>x.name===s.name&&x.price===s.price);
                       return(
                         <div key={`${category}-${s.name}`} className={`svc-card${active?' svc-card-active':''}`} onClick={()=>toggleService(s)} role="button" aria-pressed={active}>
                           <div>
-                            <p style={{ color:tokens.color.whiteMuted,fontSize:'0.85rem',fontWeight:500,fontFamily:tokens.font.family }}>{s.name}</p>
-                            <p style={{ color:tokens.color.whiteFaint,fontSize:'0.71rem',marginTop:'0.12rem',display:'flex',alignItems:'center',gap:'0.25rem',fontFamily:tokens.font.family }}><Ico.Clock s={11}/>{s.duration}</p>
+                            <p style={{ color:tokens.color.whiteMuted,fontSize:'0.85rem',fontWeight:500,fontFamily:tokens.font.family }}>{svcName(lang,s.name)}</p>
+                            <p style={{ color:tokens.color.whiteFaint,fontSize:'0.71rem',marginTop:'0.12rem',display:'flex',alignItems:'center',gap:'0.25rem',fontFamily:tokens.font.family }}><Ico.Clock s={11}/>{durStr(lang,s.duration)}</p>
                           </div>
                           <div style={{ display:'flex',alignItems:'center',gap:'0.5rem',flexShrink:0 }}>
                             <span style={{ color:tokens.color.gold,fontSize:'0.85rem',fontWeight:700,fontFamily:tokens.font.family }}>{s.price}</span>
@@ -1161,11 +1246,11 @@ export default function BookingPage() {
                   {services.length>0&&(
                     <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',background:'rgba(184,134,11,0.1)',border:'1px solid rgba(184,134,11,0.28)',borderRadius:'0.625rem',padding:'0.6rem 1rem',marginBottom:'1rem' }}>
                       <div style={{ display:'flex',flexWrap:'wrap',gap:'0.35rem',flex:1 }}>
-                        {services.map(s=><span key={s.name} className="chip badge-pop" style={{ fontSize:'0.64rem' }}>{s.name}</span>)}
+                        {services.map(s=><span key={s.name} className="chip badge-pop" style={{ fontSize:'0.64rem' }}>{svcName(lang,s.name)}</span>)}
                       </div>
                       <div style={{ flexShrink:0,marginLeft:'0.75rem',textAlign:'right' }}>
                         <p style={{ color:tokens.color.gold,fontWeight:700,fontSize:'0.9rem',fontFamily:tokens.font.family }}>LKR {totalPrice.toLocaleString()}</p>
-                        <p style={{ color:tokens.color.whiteFaint,fontSize:'0.68rem',fontFamily:tokens.font.family }}>{fmtMins(totalMins)}</p>
+                        <p style={{ color:tokens.color.whiteFaint,fontSize:'0.68rem',fontFamily:tokens.font.family }}>{fmtDur(lang,totalMins)}</p>
                       </div>
                     </div>
                   )}
@@ -1173,15 +1258,19 @@ export default function BookingPage() {
                   <div className="divider" style={{ margin:'0 0 1.4rem' }}/>
 
                   {/* ── PROVIDERS ── */}
-                  <Label text="Service Provider"/>
+                  <Label text={t(lang,'s1.serviceProvider')}/>
                   {!location?(
-                    <div className="info-box" style={{ marginBottom:'1.2rem',display:'flex',gap:'0.5rem' }}><Ico.Info s={13}/><span>Please select a branch above to see available providers.</span></div>
+                    <div className="info-box" style={{ marginBottom:'1.2rem',display:'flex',gap:'0.5rem' }}><Ico.Info s={13}/><span>{t(lang,'s1.selectBranchFirst')}</span></div>
                   ):filteredProvs.length===0?(
-                    <p style={{ color:tokens.color.whiteFaint,fontSize:'0.8rem',marginBottom:'1.25rem',fontFamily:tokens.font.family }}>No providers for <strong style={{ color:tokens.color.gold }}>{catFilter.join(', ')}</strong> at {location}.</p>
+                    <p style={{ color:tokens.color.whiteFaint,fontSize:'0.8rem',marginBottom:'1.25rem',fontFamily:tokens.font.family }}>
+                      {t(lang,'s1.noProvidersFor',{cats:catFilter.map(c=>catName(lang,c)).join(', '),loc:locName(lang,location)})}
+                    </p>
                   ):(
                     <>
-                      <p style={{ color:tokens.color.whiteFaint,fontSize:'0.72rem',marginBottom:'0.65rem',fontFamily:tokens.font.family }}>Showing specialists for <strong style={{ color:tokens.color.gold }}>{catFilter.join(', ')}</strong> at <strong style={{ color:tokens.color.gold }}>{location}</strong></p>
-                      {providers.length>1&&<div className="info-box" style={{ marginBottom:'0.8rem',display:'flex',gap:'0.5rem' }}><Ico.Info s={13}/><span>You&apos;ve selected <strong style={{ color:tokens.color.gold }}>{providers.length} providers</strong>. Time slots show <strong style={{ color:tokens.color.amber }}>partial availability</strong> when only some are free.</span></div>}
+                      <p style={{ color:tokens.color.whiteFaint,fontSize:'0.72rem',marginBottom:'0.65rem',fontFamily:tokens.font.family }}>
+                        {t(lang,'s1.showingSpecialistsFor',{cats:catFilter.map(c=>catName(lang,c)).join(', '),loc:locName(lang,location)})}
+                      </p>
+                      {providers.length>1&&<div className="info-box" style={{ marginBottom:'0.8rem',display:'flex',gap:'0.5rem' }}><Ico.Info s={13}/><span>{t(lang,'s1.multiProviderInfo',{n:providers.length})}</span></div>}
                       <div style={{ display:'flex',flexDirection:'column',gap:'0.45rem',marginBottom:'0.9rem' }}>
                         {filteredProvs.map(p=>{
                           const active=providers.some(x=>x.name===p.name);
@@ -1190,11 +1279,11 @@ export default function BookingPage() {
                               <div className="prov-avatar">{p.avatar}</div>
                               <div style={{ flex:1 }}>
                                 <p style={{ color:tokens.color.whiteMuted,fontSize:'0.85rem',fontWeight:600,fontFamily:tokens.font.family }}>{p.name}</p>
-                                <p style={{ color:tokens.color.whiteFaint,fontSize:'0.71rem',marginTop:'0.1rem',fontFamily:tokens.font.family }}>{p.role}</p>
+                                <p style={{ color:tokens.color.whiteFaint,fontSize:'0.71rem',marginTop:'0.1rem',fontFamily:tokens.font.family }}>{roleName(lang,p.role)}</p>
                                 <div style={{ display:'flex',flexWrap:'wrap',gap:'0.28rem',marginTop:'0.32rem' }}>
                                   {p.expertise.map(e=>{
                                     const m=catFilter.includes(e);
-                                    return<span key={e} style={{ fontSize:'0.6rem',fontWeight:600,letterSpacing:'0.07em',borderRadius:'999px',padding:'0.12rem 0.45rem',fontFamily:tokens.font.family,background:m?'rgba(184,134,11,0.25)':'rgba(255,255,255,0.06)',color:m?tokens.color.gold:tokens.color.whiteFaint,border:`1px solid ${m?'rgba(184,134,11,0.5)':'rgba(255,255,255,0.12)'}`}}>{e}</span>;
+                                    return<span key={e} style={{ fontSize:'0.6rem',fontWeight:600,letterSpacing:'0.07em',borderRadius:'999px',padding:'0.12rem 0.45rem',fontFamily:tokens.font.family,background:m?'rgba(184,134,11,0.25)':'rgba(255,255,255,0.06)',color:m?tokens.color.gold:tokens.color.whiteFaint,border:`1px solid ${m?'rgba(184,134,11,0.5)':'rgba(255,255,255,0.12)'}`}}>{catName(lang,e)}</span>;
                                   })}
                                 </div>
                               </div>
@@ -1215,11 +1304,12 @@ export default function BookingPage() {
                   <div className="divider" style={{ margin:'0 0 1.4rem' }}/>
 
                   {/* ── DATE ── */}
-                  <Label text="Preferred Date"/>
+                  <Label text={t(lang,'s1.preferredDate')}/>
                   <DatePickerField
                     value={date}
                     minDate={today}
                     onChange={handleDateChange}
+                    lang={lang}
                   />
 
                   {/* ── TIME ── */}
@@ -1230,25 +1320,27 @@ export default function BookingPage() {
                       walkinDisabledReason={walkinDisabledReason}
                       classifySlot={classifySlot} handleSlotClick={handleSlotClick}
                       multiProvider={providers.length>1} setTimeSlot={setTimeSlot}
+                      lang={lang}
                     />
                   )}
 
                   {/* ── missing fields hint ── */}
                   {!canStep2&&(gender||location||services.length>0)&&(
                     <div style={{ background:'rgba(184,134,11,0.07)',border:'1px solid rgba(184,134,11,0.22)',borderRadius:'0.5rem',padding:'0.55rem 0.85rem',marginTop:'1rem',marginBottom:'0.85rem',fontSize:'0.71rem',color:tokens.color.whiteFaint,fontFamily:tokens.font.family,display:'flex',flexDirection:'column',gap:'0.2rem' }}>
-                      {!location            &&<span>• Select a branch</span>}
-                      {!gender              &&<span>• Select your gender</span>}
-                      {!phone.trim()        &&<span>• Enter your phone number</span>}
-                      {services.length===0  &&<span>• Choose at least one service</span>}
-                      {providers.length===0 &&<span>• Choose a provider</span>}
-                      {!date                &&<span>• Pick a date</span>}
-                      {!timeSlot            &&<span>• Pick a time slot</span>}
+                      {!location            &&<span>• {t(lang,'s1.missingBranch')}</span>}
+                      {!gender              &&<span>• {t(lang,'s1.missingGender')}</span>}
+                      {!phone.trim()        &&<span>• {t(lang,'s1.missingPhone')}</span>}
+                      {services.length===0  &&<span>• {t(lang,'s1.missingServices')}</span>}
+                      {providers.length===0 &&<span>• {t(lang,'s1.missingProvider')}</span>}
+                      {providers.length>0&&services.length>0&&providers.length!==services.length&&<span>• {t(lang,'s1.missingMatch',{p:providers.length,s:services.length})}</span>}
+                      {!date                &&<span>• {t(lang,'s1.missingDate')}</span>}
+                      {!timeSlot            &&<span>• {t(lang,'s1.missingTime')}</span>}
                     </div>
                   )}
 
                   <div style={{ display:'flex',justifyContent:'flex-end',marginTop:'1rem' }}>
                     <button className={btnClass} type="button" disabled={!canStep2} onClick={()=>setStep(2)} style={{ padding:'0.85rem 2.2rem',fontSize:'0.9rem' }}>
-                      Review Booking <Ico.Right/>
+                      {t(lang,'s1.reviewBooking')} <Ico.Right/>
                     </button>
                   </div>
                 </Card>
@@ -1262,58 +1354,58 @@ export default function BookingPage() {
               <div className="reveal-up">
                 <Card mode={mode}>
                   <div style={{ marginBottom:'1.25rem' }}>
-                    <span className={`mode-badge ${mode==='walkin'?'mode-badge-walkin':'mode-badge-confirmed'}`}>
-                      {mode==='walkin'?<><Ico.Walk s={11}/> Without Confirmation</>:<><Ico.CalCheck s={11}/> With Confirmation</>}
+                    <span className={`mode-badge ${mode==='without_confirmation'?'mode-badge-walkin':'mode-badge-confirmed'}`}>
+                      {mode==='without_confirmation'?<><Ico.Walk s={11}/> {t(lang,'mode.without')}</>:<><Ico.CalCheck s={11}/> {t(lang,'mode.with')}</>}
                     </span>
-                    <h2 style={{ color:tokens.color.white,fontSize:'1.25rem',fontWeight:600,fontFamily:tokens.font.family,marginBottom:'0.2rem' }}>Review Your Booking</h2>
-                    <p style={{ color:tokens.color.whiteFaint,fontSize:'0.78rem',fontFamily:tokens.font.family }}>Confirm everything looks right before we lock it in.</p>
+                    <h2 style={{ color:tokens.color.white,fontSize:'1.25rem',fontWeight:600,fontFamily:tokens.font.family,marginBottom:'0.2rem' }}>{t(lang,'s2.reviewYourBooking')}</h2>
+                    <p style={{ color:tokens.color.whiteFaint,fontSize:'0.78rem',fontFamily:tokens.font.family }}>{t(lang,'s2.confirmLooksRight')}</p>
                   </div>
 
-                  {mode==='walkin'&&(
+                  {mode==='without_confirmation'&&(
                     <div className="info-box-green" style={{ marginBottom:'1rem',display:'flex',gap:'0.5rem',alignItems:'flex-start' }}>
                       <Ico.Info s={13}/>
-                      <span style={{ fontSize:'0.75rem',color:tokens.color.whiteDim,fontFamily:tokens.font.family }}>Registering <strong style={{ color:tokens.color.green }}>without confirmation</strong>. No email sent. Please arrive at least 5 minutes early.</span>
+                      <span style={{ fontSize:'0.75rem',color:tokens.color.whiteDim,fontFamily:tokens.font.family }}>{t(lang,'s2.walkinBox')}</span>
                     </div>
                   )}
 
                   {apiError&&<div className="api-error">⚠ {apiError}</div>}
 
                   <div className="cf-block">
-                    <SumRow icon={<Ico.User/>}     label="Name"   value={name}/>
-                    <SumRow icon={<Ico.Phone/>}    label="Phone"  value={phone}/>
-                    <SumRow icon={<Ico.Mail/>}     label="Email"  value={email}/>
-                    <SumRow icon={<GenderSymbol value={gender} s={13}/>} label="Gender" value={genderLabel(gender as GenderValue)}/>
-                    <SumRow icon={<Ico.Location/>} label="Branch" value={location}/>
+                    <SumRow icon={<Ico.User/>}     label={t(lang,'sum.name')}   value={name}/>
+                    <SumRow icon={<Ico.Phone/>}    label={t(lang,'sum.phone')}  value={phone}/>
+                    <SumRow icon={<Ico.Mail/>}     label={t(lang,'sum.email')}  value={email}/>
+                    <SumRow icon={<GenderSymbol value={gender} s={13}/>} label={t(lang,'sum.gender')} value={gender?t(lang,`gender.${gender}`):'—'}/>
+                    <SumRow icon={<Ico.Location/>} label={t(lang,'sum.branch')} value={locName(lang,location)}/>
                   </div>
 
                   <div className="cf-block">
-                    <SumRow icon={<Ico.Scissors/>}  label="Service(s)"  value={services.map(s=>s.name).join(', ')}/>
-                    <SumRow icon={<Ico.Clock/>}      label="Duration"    value={fmtMins(totalMins)}/>
-                    <SumRow icon={<Ico.User/>}       label="Provider(s)" value={providers.map(p=>`${p.name} — ${p.role}`).join(', ')}/>
-                    <SumRow icon={<Ico.Calendar/>}   label="Date"        value={date?formatDate(date):''}/>
-                    <SumRow icon={<Ico.Clock/>}      label="Time"        value={timeSlot}/>
+                    <SumRow icon={<Ico.Scissors/>}  label={t(lang,'sum.services')}  value={services.map(s=>svcName(lang,s.name)).join(', ')}/>
+                    <SumRow icon={<Ico.Clock/>}      label={t(lang,'sum.duration')}   value={fmtDur(lang,totalMins)}/>
+                    <SumRow icon={<Ico.User/>}       label={t(lang,'sum.providers')}  value={providers.map(p=>`${p.name} — ${roleName(lang,p.role)}`).join(', ')}/>
+                    <SumRow icon={<Ico.Calendar/>}   label={t(lang,'sum.date')}       value={date?formatDate(date,lang):''}/>
+                    <SumRow icon={<Ico.Clock/>}      label={t(lang,'sum.time')}       value={timeSlot}/>
                   </div>
 
                   <div style={{ display:'flex',justifyContent:'space-between',alignItems:'center',background:tokens.color.goldBg,border:`1px solid ${tokens.color.goldBorder}`,borderRadius:'0.75rem',padding:'0.85rem 1.1rem',marginBottom:'1.25rem' }}>
-                    <span style={{ color:tokens.color.whiteMuted,fontSize:'0.8rem',fontWeight:600,letterSpacing:'0.1em',textTransform:'uppercase',fontFamily:tokens.font.family }}>Total Price</span>
+                    <span style={{ color:tokens.color.whiteMuted,fontSize:'0.8rem',fontWeight:600,letterSpacing:'0.1em',textTransform:'uppercase',fontFamily:tokens.font.family }}>{t(lang,'s2.totalPrice')}</span>
                     <span style={{ color:tokens.color.gold,fontSize:'1.15rem',fontWeight:700,fontFamily:tokens.font.family }}>LKR {totalPrice.toLocaleString()}</span>
                   </div>
 
                   <div style={{ marginBottom:'1.25rem' }}>
-                    <FieldLabel text="Special Requests" opt/>
-                    <textarea className="sayo-input" placeholder="Allergies, preferences, or anything else…" value={notes} onChange={e=>setNotes(e.target.value)} rows={3} style={{ resize:'vertical',minHeight:'76px',lineHeight:1.6 }}/>
+                    <FieldLabel text={t(lang,'s2.specialRequests')} opt lang={lang}/>
+                    <textarea className="sayo-input" placeholder={t(lang,'s2.notesPlaceholder')} value={notes} onChange={e=>setNotes(e.target.value)} rows={3} style={{ resize:'vertical',minHeight:'76px',lineHeight:1.6 }}/>
                   </div>
 
                   <p style={{ color:tokens.color.whiteFaint,fontSize:'0.7rem',lineHeight:1.75,marginBottom:'1.25rem',fontFamily:tokens.font.family }}>
-                    {mode==='walkin'?'Registrations are first-come-first-served. Please arrive on time. Payment collected at salon.':'Payment is collected at the salon. Please notify us at least 24 hours in advance to cancel or reschedule.'}
+                    {t(lang, mode==='without_confirmation' ? 's2.walkinPolicy' : 's2.confirmPolicy')}
                   </p>
 
                   <div style={{ display:'flex',justifyContent:'space-between',gap:'1rem' }}>
-                    <button className="btn-ghost" type="button" onClick={()=>{setStep(1);setApiError('');}} style={{ padding:'0.75rem 1.5rem',fontSize:'0.85rem' }}>← Back</button>
+                    <button className="btn-ghost" type="button" onClick={()=>{setStep(1);setApiError('');}} style={{ padding:'0.75rem 1.5rem',fontSize:'0.85rem' }}>{t(lang,'s2.back')}</button>
                     <button className={btnClass} type="button" disabled={loading} onClick={handleConfirm} style={{ padding:'0.8rem 2rem',fontSize:'0.87rem',minWidth:'210px' }}>
                       {loading
-                        ? <><span style={{ width:'0.85rem',height:'0.85rem',border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'#fff',borderRadius:'50%',display:'inline-block',animation:'spin 0.7s linear infinite' }}/>{mode==='walkin'?'Registering…':'Confirming…'}</>
-                        : mode==='walkin'?'Register Without Confirmation':'Confirm Booking'
+                        ? <><span style={{ width:'0.85rem',height:'0.85rem',border:'2px solid rgba(255,255,255,0.3)',borderTopColor:'#fff',borderRadius:'50%',display:'inline-block',animation:'spin 0.7s linear infinite' }}/>{t(lang, mode==='without_confirmation'?'s2.registering':'s2.confirming')}</>
+                        : t(lang, mode==='without_confirmation'?'s2.registerWithout':'s2.confirmBooking')
                       }
                     </button>
                   </div>
@@ -1330,7 +1422,9 @@ export default function BookingPage() {
           data={conflictModal}
           onBookBackToBack={handleBookBackToBack}
           onBookSplit={handleBookSplit}
+          onBookSwapped={handleBookSwapped}
           onClose={()=>setConflictModal(null)}
+          lang={lang}
         />
       )}
     </>

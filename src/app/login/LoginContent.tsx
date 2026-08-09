@@ -105,7 +105,7 @@ export default function LoginContent() {
 
           {/* back */}
           <div className="reveal-up" style={{ maxWidth: '440px', margin: '0 auto', width: '100%' }}>
-            <Link href="/" className="back-link" style={{ marginBottom: '1.75rem', display: 'inline-flex' }}>
+            <Link href="https://sayoweb.netlify.app/" className="back-link" style={{ marginBottom: '1.75rem', display: 'inline-flex' }}>
               <Ico.ArrowLeft s={13} /> Back to Home
             </Link>
           </div>

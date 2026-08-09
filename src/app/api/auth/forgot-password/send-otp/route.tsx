@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
-import { localPrisma, cloudPrisma }  from '@/lib/prisma';
+import { prisma }  from '@/lib/prisma';
 
 export const dynamic    = 'force-dynamic';
 export const revalidate = 0;
@@ -25,14 +25,11 @@ export async function POST(req: NextRequest) {
 
     /* ── find user ── */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const localClient = localPrisma as any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cloudClient = cloudPrisma as any;
+    const cloudClient = prisma as any;
 
     const MODEL_NAMES = ['tbl_UserDetails', 'tblUserDetails', 'tbl_userdetails'];
-    const localModel  = MODEL_NAMES.find(n => typeof localClient[n]?.findUnique === 'function');
     const cloudModel  = MODEL_NAMES.find(n => typeof cloudClient[n]?.findUnique === 'function');
-    const modelName   = cloudModel ?? localModel;
+    const modelName   = cloudModel;
 
     if (!modelName) {
       return NextResponse.json({ error: 'User model not found. Run: npx prisma generate' }, { status: 500 });
@@ -44,15 +41,8 @@ export async function POST(req: NextRequest) {
         where:  { EmailAddress: emailNorm },
         select: { UserId: true, UserName: true },
       });
-    } catch { /* fall through to local */ }
-
-    if (!user && localModel) {
-      try {
-        user = await localClient[localModel].findUnique({
-          where:  { EmailAddress: emailNorm },
-          select: { UserId: true, UserName: true },
-        });
-      } catch (err) { console.error('[send-otp] local lookup error:', errMsg(err)); }
+    } catch (err) {
+      console.error('[send-otp] cloud lookup error:', errMsg(err));
     }
 
     /* ── always respond the same way to prevent email enumeration ── */

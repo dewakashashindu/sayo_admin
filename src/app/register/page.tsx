@@ -79,14 +79,14 @@ export default function RegisterPage() {
 
     try {
       const res = await fetch('/api/auth/register', {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name, email, phone, gender, password }),
+        body: JSON.stringify({ name, email, phone, gender, password }),
       });
 
       console.log('[register page] response status:', res.status);
 
-      let data: Record<string, unknown> = {};
+      let data: Record<string, unknown> | null = null;
       try {
         data = await res.json();
       } catch (parseErr) {
@@ -101,15 +101,11 @@ export default function RegisterPage() {
 
       console.log('[register page] response data:', data);
 
-      if (!res.ok) {
-        setServerError(
-          (data.error as string) ?? 'Registration failed. Please try again.',
-        );
+      // Expect backend to return { success: true } on success
+      if (!res.ok || data?.success !== true) {
+        const msg = (data && (data.message || (data.error as string))) ?? 'Registration failed. Please try again.';
+        setServerError(String(msg));
         return;
-      }
-
-      if (data.warning) {
-        console.warn('[register page] warning:', data.warning);
       }
 
       setSuccess(true);
@@ -231,7 +227,7 @@ export default function RegisterPage() {
             style={{ maxWidth: '480px', margin: '0 auto', width: '100%' }}
           >
             <Link
-              href="/"
+              href="https://sayoweb.netlify.app/"
               className="back-link"
               style={{ marginBottom: '1.75rem', display: 'inline-flex' }}
             >

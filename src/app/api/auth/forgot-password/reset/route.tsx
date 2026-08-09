@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt                        from 'bcryptjs';
-import { localPrisma, cloudPrisma }  from '@/lib/prisma';
+import { prisma }  from '@/lib/prisma';
 import { otpStore }                  from '../send-otp/route';
 
 export const dynamic    = 'force-dynamic';
@@ -41,52 +41,39 @@ export async function POST(req: NextRequest) {
 
     /* ── find model accessor ── */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const localClient = localPrisma as any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cloudClient = cloudPrisma as any;
+    const cloudClient = prisma as any;
 
     const MODEL_NAMES = ['tbl_UserDetails', 'tblUserDetails', 'tbl_userdetails'];
-    const localModel  = MODEL_NAMES.find(n => typeof localClient[n]?.update === 'function');
     const cloudModel  = MODEL_NAMES.find(n => typeof cloudClient[n]?.update === 'function');
 
-    if (!localModel && !cloudModel) {
+    if (!cloudModel) {
       return NextResponse.json({ error: 'User model not found. Run: npx prisma generate' }, { status: 500 });
     }
 
-    /* ── update both DBs ── */
+    /* ── update cloud DB ── */
     let cloudResult: unknown = null;
-    let localResult: unknown = null;
     let cloudError:  unknown = null;
-    let localError:  unknown = null;
 
-    if (cloudModel) {
-      try {
-        cloudResult = await cloudClient[cloudModel].update({
-          where: { EmailAddress: emailNorm },
-          data:  { PasswordHash },
-        });
-      } catch (err) { cloudError = err; console.error('[reset] cloud update error:', errMsg(err)); }
+    try {
+      cloudResult = await cloudClient[cloudModel].update({
+        where: { EmailAddress: emailNorm },
+        data:  { PasswordHash },
+      });
+    } catch (err) {
+      cloudError = err;
+      console.error('[reset] cloud update error:', errMsg(err));
     }
 
-    if (localModel) {
-      try {
-        localResult = await localClient[localModel].update({
-          where: { EmailAddress: emailNorm },
-          data:  { PasswordHash },
-        });
-      } catch (err) { localError = err; console.error('[reset] local update error:', errMsg(err)); }
-    }
-
-    if (!cloudResult && !localResult) {
+    if (!cloudResult) {
       return NextResponse.json({
-        error:   'Password reset failed on both databases.',
-        details: { cloud: errMsg(cloudError), local: errMsg(localError) },
+        error:   'Password reset failed.',
+        details: { cloud: errMsg(cloudError) },
       }, { status: 500 });
     }
 
     /* ── success — NOW delete the OTP ── */
     otpStore.delete(emailNorm);
-    console.log(`[reset] password updated for ${emailNorm} — source: ${cloudResult ? 'cloud' : 'local'}`);
+    console.log(`[reset] password updated for ${emailNorm} — source: cloud`);
 
     return NextResponse.json({ success: true });
 

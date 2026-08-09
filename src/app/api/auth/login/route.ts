@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
-import { localPrisma, cloudPrisma } from '@/lib/prisma';
+import { prisma } from '@/lib/prisma';
 
 export const dynamic    = 'force-dynamic';
 export const revalidate = 0;
@@ -22,22 +22,19 @@ export async function POST(req: NextRequest) {
     const emailNorm = email.trim().toLowerCase();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const localClient = localPrisma as any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cloudClient = cloudPrisma as any;
+    const cloudClient = prisma as any;
 
     const MODEL_NAMES = ['tbl_UserDetails', 'tblUserDetails', 'tbl_userdetails'];
-    const localModel  = MODEL_NAMES.find(n => typeof localClient[n]?.findUnique === 'function');
     const cloudModel  = MODEL_NAMES.find(n => typeof cloudClient[n]?.findUnique === 'function');
 
-    if (!localModel && !cloudModel) {
+    if (!cloudModel) {
       return NextResponse.json(
         { error: 'User model not found. Run: npx prisma generate' },
         { status: 500 }
       );
     }
 
-    const modelName = cloudModel ?? localModel!;
+    const modelName = cloudModel;
 
     let user: {
       UserId:       number;
@@ -62,26 +59,7 @@ export async function POST(req: NextRequest) {
         },
       });
     } catch (err) {
-      console.warn('[login] cloud lookup failed, trying local:', errMsg(err));
-    }
-
-    if (!user && localModel) {
-      try {
-        user = await localClient[localModel].findUnique({
-          where:  { EmailAddress: emailNorm },
-          select: {
-            UserId:       true,
-            UserName:     true,
-            EmailAddress: true,
-            PasswordHash: true,
-            PhoneNumber:  true,   // ← ADD
-            Gender:       true,   // ← ADD
-          },
-        });
-        source = 'local';
-      } catch (err) {
-        console.error('[login] local lookup failed:', errMsg(err));
-      }
+      console.error('[login] cloud lookup failed:', errMsg(err));
     }
 
     if (!user) {

@@ -2,7 +2,6 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaMariaDb } from '@prisma/adapter-mariadb';
 
 const globalForPrisma = globalThis as unknown as {
-  localPrisma: PrismaClient | undefined;
   cloudPrisma: PrismaClient | undefined;
 };
 
@@ -37,21 +36,14 @@ function parseDbUrl(url: string): PrismaMariaDbConfig {
   return config;
 }
 
-// ── Configs ──────────────────────────────────────────────────────────────────
-const cloudRawUrl = process.env.CLOUD_DATABASE_URL || process.env.DATABASE_URL || '';
-const localRawUrl = process.env.LOCAL_DATABASE_URL || cloudRawUrl;
-
-const localConfig = parseDbUrl(localRawUrl);
+// ── Configs — require CLOUD_DATABASE_URL only (single cloud DB)
+const cloudRawUrl = process.env.CLOUD_DATABASE_URL || '';
+if (!cloudRawUrl) {
+  throw new Error('CLOUD_DATABASE_URL environment variable is required when using a single cloud database.');
+}
 const cloudConfig = parseDbUrl(cloudRawUrl);
 
 // ── Prisma singletons ────────────────────────────────────────────────────────
-export const localPrisma: PrismaClient =
-  globalForPrisma.localPrisma ??
-  new PrismaClient({
-    adapter: new PrismaMariaDb(localConfig),
-    log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
-  });
-
 export const cloudPrisma: PrismaClient =
   globalForPrisma.cloudPrisma ??
   new PrismaClient({
@@ -61,9 +53,8 @@ export const cloudPrisma: PrismaClient =
 
 // ── Persist across hot reloads in dev ───────────────────────────────────────
 if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.localPrisma = localPrisma;
   globalForPrisma.cloudPrisma = cloudPrisma;
 }
 
 // ── Export default alias for single-instance routes ─────────────────────────
-export const prisma = localPrisma;
+export const prisma = cloudPrisma;
