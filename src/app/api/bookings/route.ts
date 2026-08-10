@@ -92,8 +92,15 @@ function validateBookingBody(body: Partial<BookingRequestBody>): string | null {
   if (!Array.isArray(body.services) || body.services.length === 0) {
     return 'At least one service is required.';
   }
-  if (!Array.isArray(body.providers) || body.providers.length === 0) {
+
+  // Providers are optional for confirmed mode (staff will assign on call)
+  // Walk-in (without_confirmation) must have at least one provider
+  const isWalkin = body.mode === 'without_confirmation';
+  if (isWalkin && (!Array.isArray(body.providers) || body.providers.length === 0)) {
     return 'At least one provider is required.';
+  }
+  if (!Array.isArray(body.providers)) {
+    return 'Invalid providers format.';
   }
 
   return null;

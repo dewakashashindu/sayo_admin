@@ -1,3 +1,7 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   slotEvaluator.ts  —  Booking slot logic engine
+═══════════════════════════════════════════════════════════════════════════ */
+
 export interface ServiceItem {
   name:     string;
   price:    string;
@@ -13,107 +17,85 @@ export interface Provider {
 }
 
 export interface SwappedDetails {
-  /** Services in the winning permutation order */
   orderedServices: string[];
-  /** Why the original order fails */
   reason:          string;
-  /**
-   * permutation[i] = original index that goes in position i.
-   * e.g. [1,0] = "do service[1] first, then service[0]"
-   * e.g. [2,0,1] for a 3-service reorder
-   */
   permutation:     number[];
-  // Legacy 2-service compat — ConflictModal uses these
   firstService:    string;
   secondService:   string;
-
-  /**
-   * Gap between when service 1 ends and service 2 starts in the WINNING
-   * permutation, measured in minutes.
-   *
-   * Calculated precisely as:
-   *   startOf(service[i+1]) − (startOf(service[i]) + duration(service[i]))
-   * across all consecutive pairs, then summed.
-   *
-   * === 0 : back-to-back, no waiting time
-   *  > 0  : customer has to wait this many minutes between services
-   */
-  gapMinutes: number;
-
-  /**
-   * The clock time at which service 2 (or the second service in the
-   * winning order) actually starts, accounting for the gap.
-   * Useful for the "Why?" sentence: "Provider 2 is busy until <nextFreeTime>".
-   */
-  nextFreeTime: string;
+  gapMinutes:      number;
+  nextFreeTime:    string;
+  occupiedSlots:   string[];
 }
 
 export interface SlotResult {
-  status: 'available' | 'partial' | 'booked';
+  status:                   'available' | 'partial' | 'booked';
   isSequenceSwapped:        boolean;
   swappedDetails?:          SwappedDetails;
   recommendedOriginalTime?: string;
+  occupiedSlots:            string[];
+  gapOnlyDetails?: {
+    gapMinutes:    number;
+    busyUntil:     string;
+    busyProvider:  string;
+    busyService:   string;
+    occupiedSlots: string[];
+  };
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-    CONSTANTS
+   CONSTANTS
 ───────────────────────────────────────────────────────────────────────────── */
-
 export const TIME_SLOTS = [
-  '09:00 AM','09:30 AM','10:00 AM','10:30 AM',
-  '11:00 AM','11:30 AM','12:00 PM','12:30 PM',
-  '01:00 PM','01:30 PM','02:00 PM','02:30 PM',
-  '03:00 PM','03:30 PM','04:00 PM','04:30 PM',
-  '05:00 PM','05:30 PM','06:00 PM',
+  '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM',
+  '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM',
+  '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM',
+  '03:00 PM', '03:30 PM', '04:00 PM', '04:30 PM',
+  '05:00 PM', '05:30 PM', '06:00 PM',
 ] as const;
 
 const SLOT_INCREMENT = 30;
+const LAST_SLOT_MINS = slotToMinutes('06:00 PM');
 
 /* ─────────────────────────────────────────────────────────────────────────────
-    LOW-LEVEL HELPERS
+   TIME HELPERS
 ───────────────────────────────────────────────────────────────────────────── */
-
 export function slotToMinutes(slot: string): number {
   const m = slot.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)$/i);
   if (!m) return 0;
-  let h = parseInt(m[1], 10);
-  const mn = parseInt(m[2], 10);
-  const period = m[3].toUpperCase();
+  let h          = parseInt(m[1], 10);
+  const mn       = parseInt(m[2], 10);
+  const period   = m[3].toUpperCase();
   if (period === 'PM' && h !== 12) h += 12;
-  if (period === 'AM' && h === 12) h = 0;
+  if (period === 'AM' && h === 12) h  = 0;
   return h * 60 + mn;
 }
 
 export function minutesToSlot(minutes: number): string | null {
-  const h24    = Math.floor(minutes / 60);
-  const mn     = minutes % 60;
-  const period = h24 >= 12 ? 'PM' : 'AM';
-  const h12    = h24 % 12 === 0 ? 12 : h24 % 12;
-  const candidate = `${String(h12).padStart(2,'0')}:${String(mn).padStart(2,'0')} ${period}`;
+  const h24      = Math.floor(minutes / 60);
+  const mn       = minutes % 60;
+  const period   = h24 >= 12 ? 'PM' : 'AM';
+  const h12      = h24 % 12 === 0 ? 12 : h24 % 12;
+  const candidate = `${String(h12).padStart(2, '0')}:${String(mn).padStart(2, '0')} ${period}`;
   return (TIME_SLOTS as readonly string[]).includes(candidate) ? candidate : null;
 }
 
-/**
- * Converts a raw minute value to a display time string even if it falls
- * outside the bookable TIME_SLOTS grid. Used for displaying "busy until"
- * times in conflict messages where the exact end time may not land on a
- * 30-min boundary.
- */
-function minutesToDisplayTime(minutes: number): string {
+function minutesToDisplay(minutes: number): string {
   if (minutes < 0)    minutes = 0;
   if (minutes > 1439) minutes = 1439;
-
   const h24    = Math.floor(minutes / 60);
   const mn     = minutes % 60;
   const period = h24 >= 12 ? 'PM' : 'AM';
   const h12    = h24 % 12 === 0 ? 12 : h24 % 12;
-  return `${String(h12).padStart(2,'0')}:${String(mn).padStart(2,'0')} ${period}`;
+  return `${String(h12).padStart(2, '0')}:${String(mn).padStart(2, '0')} ${period}`;
 }
 
 export function parseDurationMins(duration: string): number {
-  return parseInt(duration, 10) || 0;
+  return Math.max(parseInt(duration, 10) || 0, 0);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   CHUNK HELPERS
+───────────────────────────────────────────────────────────────────────────── */
 function occupiedChunks(startMinutes: number, durationMins: number): string[] {
   const chunks: string[] = [];
   for (let t = startMinutes; t < startMinutes + durationMins; t += SLOT_INCREMENT) {
@@ -123,6 +105,22 @@ function occupiedChunks(startMinutes: number, durationMins: number): string[] {
   return chunks;
 }
 
+function buildOccupiedSlots(
+  segments: Array<{ startMins: number; durationMins: number }>,
+): string[] {
+  const seen   = new Set<string>();
+  const result: string[] = [];
+  for (const seg of segments) {
+    for (const slot of occupiedChunks(seg.startMins, seg.durationMins)) {
+      if (!seen.has(slot)) { seen.add(slot); result.push(slot); }
+    }
+  }
+  return result;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   PROVIDER AVAILABILITY
+───────────────────────────────────────────────────────────────────────────── */
 function isProviderFreeFor(
   providerName:  string,
   startMinutes:  number,
@@ -134,52 +132,12 @@ function isProviderFreeFor(
   return chunks.every(c => !busy.has(c));
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-    SEQUENCE CHECKER
-    Returns ok:true when every (provider, service) pair is free back-to-back.
-    On failure returns the first failing pair's index, provider name, and the
-    next minute at which that provider becomes free for the required duration.
-───────────────────────────────────────────────────────────────────────────── */
-
-function checkSequence(
-  baseMinutes:   number,
-  providers:     Provider[],
-  services:      ServiceItem[],
-  providerSlots: Record<string, string[]>,
-): { ok: true } | {
-  ok:           false;
-  failIndex:    number;
-  failProvider: string;
-  nextFreeAt:   number | null;
-} {
-  let cursor = baseMinutes;
-
-  for (let i = 0; i < services.length; i++) {
-    const svc  = services[i];
-    const prov = providers[i];
-
-    if (!prov?.name) {
-      return { ok: false, failIndex: i, failProvider: 'Unknown', nextFreeAt: null };
-    }
-
-    const duration = parseDurationMins(svc.duration);
-
-    if (!isProviderFreeFor(prov.name, cursor, duration, providerSlots)) {
-      const nextFreeAt = findNextFreeStart(prov.name, cursor, duration, providerSlots);
-      return { ok: false, failIndex: i, failProvider: prov.name, nextFreeAt };
-    }
-    cursor += duration;
-  }
-  return { ok: true };
-}
-
 function findNextFreeStart(
   providerName:  string,
   fromMinutes:   number,
   durationMins:  number,
   providerSlots: Record<string, string[]>,
 ): number | null {
-  const LAST_SLOT_MINS = slotToMinutes('06:00 PM');
   for (
     let t = fromMinutes + SLOT_INCREMENT;
     t <= LAST_SLOT_MINS;
@@ -190,6 +148,100 @@ function findNextFreeStart(
   return null;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   SEQUENCE CHECKER
+───────────────────────────────────────────────────────────────────────────── */
+type SeqOk   = { ok: true };
+type SeqFail = {
+  ok:           false;
+  failIndex:    number;
+  failProvider: string;
+  failService:  string;
+  nextFreeAt:   number | null;
+};
+
+function checkSequence(
+  baseMinutes:   number,
+  providers:     Provider[],
+  services:      ServiceItem[],
+  providerSlots: Record<string, string[]>,
+): SeqOk | SeqFail {
+  let cursor = baseMinutes;
+  for (let i = 0; i < services.length; i++) {
+    const svc  = services[i];
+    const prov = providers[i];
+    if (!prov?.name) {
+      return { ok: false, failIndex: i, failProvider: 'Unknown', failService: svc?.name ?? '', nextFreeAt: null };
+    }
+    const duration = parseDurationMins(svc.duration);
+    if (!isProviderFreeFor(prov.name, cursor, duration, providerSlots)) {
+      const nextFreeAt = findNextFreeStart(prov.name, cursor, duration, providerSlots);
+      return { ok: false, failIndex: i, failProvider: prov.name, failService: svc.name, nextFreeAt };
+    }
+    cursor += duration;
+  }
+  return { ok: true };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   GAP CALCULATOR
+───────────────────────────────────────────────────────────────────────────── */
+interface GapResult {
+  gapMinutes:   number;
+  nextFreeTime: string;
+  segments:     Array<{ startMins: number; durationMins: number }>;
+}
+
+function calculateSequenceGap(
+  baseMinutes:   number,
+  providers:     Provider[],
+  services:      ServiceItem[],
+  providerSlots: Record<string, string[]>,
+): GapResult {
+  let cursor             = baseMinutes;
+  let totalGap           = 0;
+  let secondServiceStart = baseMinutes;
+  const segments: Array<{ startMins: number; durationMins: number }> = [];
+
+  for (let i = 0; i < services.length; i++) {
+    const duration   = parseDurationMins(services[i].duration);
+    const serviceEnd = cursor + duration;
+    segments.push({ startMins: cursor, durationMins: duration });
+
+    if (i < services.length - 1) {
+      const nextProvider = providers[i + 1];
+      const nextDur      = parseDurationMins(services[i + 1].duration);
+      let earliestStart  = serviceEnd;
+
+      if (!isProviderFreeFor(nextProvider.name, serviceEnd, nextDur, providerSlots)) {
+        const found = findNextFreeStart(
+          nextProvider.name,
+          serviceEnd - SLOT_INCREMENT,
+          nextDur,
+          providerSlots,
+        );
+        if (found !== null) earliestStart = found;
+      }
+
+      const gapHere = Math.max(0, earliestStart - serviceEnd);
+      totalGap     += gapHere;
+      cursor        = earliestStart;
+      if (i === 0) secondServiceStart = earliestStart;
+    } else {
+      cursor = serviceEnd;
+    }
+  }
+
+  return {
+    gapMinutes:   totalGap,
+    nextFreeTime: minutesToDisplay(secondServiceStart),
+    segments,
+  };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   RECOMMENDED TIME
+───────────────────────────────────────────────────────────────────────────── */
 function findRecommendedOriginalTime(
   fromSlot:      string,
   providers:     Provider[],
@@ -199,84 +251,26 @@ function findRecommendedOriginalTime(
   const fromIdx = TIME_SLOTS.indexOf(fromSlot as typeof TIME_SLOTS[number]);
   if (fromIdx === -1) return undefined;
 
+  // ✅ FIX: Only scan FUTURE slots (fromIdx + 1 onwards)
   for (let i = fromIdx + 1; i < TIME_SLOTS.length; i++) {
-    const result = checkSequence(slotToMinutes(TIME_SLOTS[i]), providers, services, providerSlots);
-    if (result.ok) return TIME_SLOTS[i];
+    const candidateSlot = TIME_SLOTS[i];
+    const result = checkSequence(
+      slotToMinutes(candidateSlot),
+      providers,
+      services,
+      providerSlots,
+    );
+    if (result.ok) return candidateSlot;
   }
   return undefined;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-    GAP CALCULATOR
-    Given a winning permutation, calculates the total waiting-time gap the
-    customer will experience.
-
-    For each consecutive pair (i, i+1) in the permuted sequence:
-      - Service i runs from `cursor` to `cursor + duration_i`
-      - Provider i+1's earliest free start ≥ end of service i is found
-      - gap_i = (earliest free start of provider i+1) − (cursor + duration_i)
-
-    Sum of all gap_i = total waiting time.
-    If every service can start exactly when the previous one ends: gap = 0.
+   PERMUTATION HELPERS
 ───────────────────────────────────────────────────────────────────────────── */
-
-function calculatePermutationGap(
-  baseMinutes:   number,
-  providers:     Provider[],
-  services:      ServiceItem[],
-  providerSlots: Record<string, string[]>,
-): { gapMinutes: number; nextFreeTime: string } {
-  let cursor      = baseMinutes;
-  let totalGap    = 0;
-  let nextFreeMin = baseMinutes; // will be set to where the 2nd service starts
-
-  for (let i = 0; i < services.length; i++) {
-    const duration    = parseDurationMins(services[i].duration);
-    const serviceEnd  = cursor + duration;                // end of THIS service
-
-    if (i < services.length - 1) {
-      // Find the earliest moment ≥ serviceEnd at which provider[i+1] is free
-      // for the full duration of services[i+1].
-      const nextDur      = parseDurationMins(services[i + 1].duration);
-      const nextProvider = providers[i + 1];
-
-      let earliestStart = serviceEnd; // optimistic: provider is free immediately
-      if (!isProviderFreeFor(nextProvider.name, serviceEnd, nextDur, providerSlots)) {
-        // Provider not free at serviceEnd — scan forward in 30-min steps
-        const found = findNextFreeStart(nextProvider.name, serviceEnd - SLOT_INCREMENT, nextDur, providerSlots);
-        earliestStart = found !== null ? found : serviceEnd; // fallback keeps gap=0 if scan fails
-      }
-
-      const gapHere = Math.max(0, earliestStart - serviceEnd);
-      totalGap     += gapHere;
-      cursor        = earliestStart; // next service actually starts here
-
-      // Capture the start time of service[1] (the second slot in the sequence)
-      // for use in the "Why?" explanation sentence.
-      if (i === 0) {
-        nextFreeMin = earliestStart;
-      }
-    } else {
-      cursor = serviceEnd;
-    }
-  }
-
-  return {
-    gapMinutes:  totalGap,
-    nextFreeTime: minutesToDisplayTime(nextFreeMin),
-  };
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
-    PERMUTATION HELPERS
-    N-provider support: n=2→2 perms, n=3→6 perms, n=4→24 perms.
-    Salon context: n≤4 realistic, no perf concern.
-───────────────────────────────────────────────────────────────────────────── */
-
 function getPermutations(n: number): number[][] {
   if (n === 0) return [];
   if (n === 1) return [[0]];
-
   function permute(arr: number[]): number[][] {
     if (arr.length <= 1) return [arr];
     const result: number[][] = [];
@@ -286,10 +280,12 @@ function getPermutations(n: number): number[][] {
     }
     return result;
   }
-
   return permute(Array.from({ length: n }, (_, i) => i));
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   WORKING PERMUTATION FINDER  ← MAIN BUG FIX HERE
+───────────────────────────────────────────────────────────────────────────── */
 function findWorkingPermutation(
   baseMinutes:          number,
   providers:            Provider[],
@@ -297,6 +293,7 @@ function findWorkingPermutation(
   providerSlots:        Record<string, string[]>,
   originalFailIndex:    number,
   originalFailProvider: string,
+  originalFailService:  string,
   originalNextFreeAt:   number | null,
 ): SwappedDetails | null {
   const n = providers.length;
@@ -304,71 +301,96 @@ function findWorkingPermutation(
 
   const identityStr = Array.from({ length: n }, (_, i) => i).join(',');
 
+  interface Candidate {
+    perm:       number[];
+    gapMinutes: number;
+    gapResult:  GapResult;
+  }
+  const candidates: Candidate[] = [];
+
   for (const perm of getPermutations(n)) {
-    if (perm.join(',') === identityStr) continue; // skip original order
+    if (perm.join(',') === identityStr) continue;
 
     const permProviders = perm.map(i => providers[i]);
     const permServices  = perm.map(i => services[i]);
 
-    // A permutation "works" if ALL providers are free when it's their turn.
-    // We use the gap calculator rather than checkSequence so we can handle
-    // permutations where provider[i+1] isn't free exactly at serviceEnd but
-    // IS free a little later (the gap case).
-    //
-    // Strategy: run checkSequence first as the fast path.  If it passes
-    // without conflict, gap = 0 — ideal.  If it fails because a provider
-    // needs to wait, we compute the gap and accept the permutation only if
-    // every provider eventually becomes free (i.e. nextFreeAt is not null).
-    const seqResult = checkSequence(baseMinutes, permProviders, permServices, providerSlots);
+    // ✅ FIX #1: First provider in swapped order MUST be free at baseMinutes
+    // Without this check, we accept swaps where the first service is also blocked,
+    // which causes the modal to show wrong time slots (e.g., 09:00 AM for an 11:30 AM booking)
+    const firstDuration = parseDurationMins(permServices[0].duration);
+    const firstProviderFree = isProviderFreeFor(
+      permProviders[0].name,
+      baseMinutes,
+      firstDuration,
+      providerSlots,
+    );
+    if (!firstProviderFree) continue;
+
+    // ✅ FIX #2: Also verify the swapped sequence actually improves on original
+    // The first service must start exactly at baseMinutes with no gap
+    const seqResult = checkSequence(
+      baseMinutes,
+      permProviders,
+      permServices,
+      providerSlots,
+    );
 
     let accepted = false;
-
     if (seqResult.ok) {
+      // Zero-gap permutation — best case
       accepted = true;
     } else {
-      // The permutation has a conflict, but maybe it resolves with a gap.
-      // Accept it if the conflicting provider has a free slot later today.
+      // Has a gap but first service is free and next provider eventually becomes free
       accepted = seqResult.nextFreeAt !== null;
     }
 
     if (!accepted) continue;
 
-    // ── Calculate precise gap for the accepted permutation ────────────────
-    const { gapMinutes, nextFreeTime } = calculatePermutationGap(
-      baseMinutes, permProviders, permServices, providerSlots,
+    const gapResult = calculateSequenceGap(
+      baseMinutes,
+      permProviders,
+      permServices,
+      providerSlots,
     );
-
-    const orderedServices = perm.map(i => services[i].name);
-
-    const failedSvc  = services[originalFailIndex];
-    const failedProv = providers[originalFailIndex];
-    const nextLabel  =
-      originalNextFreeAt !== null
-        ? (minutesToSlot(originalNextFreeAt) ?? minutesToDisplayTime(originalNextFreeAt))
-        : 'later today';
-
-    const reason =
-      `${failedProv?.name ?? 'Provider'} is busy during ` +
-      `"${failedSvc?.name ?? 'service'}" — next free at ${nextLabel}`;
-
-    return {
-      orderedServices,
-      reason,
-      permutation:   perm,
-      firstService:  orderedServices[0] ?? '',
-      secondService: orderedServices[1] ?? '',
-      gapMinutes,
-      nextFreeTime,
-    };
+    candidates.push({ perm, gapMinutes: gapResult.gapMinutes, gapResult });
   }
 
-  return null;
+  if (candidates.length === 0) return null;
+
+  // Prefer zero-gap; then smallest gap
+  candidates.sort((a, b) => a.gapMinutes - b.gapMinutes);
+  const best = candidates[0];
+
+  const { perm, gapResult } = best;
+  const permProviders   = perm.map(i => providers[i]);
+  const permServices    = perm.map(i => services[i]);
+  const orderedServices = permServices.map(s => s.name);
+  const occupiedSlots   = buildOccupiedSlots(gapResult.segments);
+
+  const nextLabel =
+    originalNextFreeAt !== null
+      ? (minutesToSlot(originalNextFreeAt) ?? minutesToDisplay(originalNextFreeAt))
+      : 'later today';
+
+  const reason =
+    `${originalFailProvider} is busy during "${originalFailService}" — ` +
+    `next free at ${nextLabel}`;
+
+  return {
+    orderedServices,
+    reason,
+    permutation:   perm,
+    firstService:  orderedServices[0]  ?? '',
+    secondService: orderedServices[1]  ?? '',
+    gapMinutes:    gapResult.gapMinutes,
+    nextFreeTime:  gapResult.nextFreeTime,
+    occupiedSlots,
+  };
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-    MAIN EXPORT: evaluateSlot
+   MAIN EXPORT
 ───────────────────────────────────────────────────────────────────────────── */
-
 export function evaluateSlot(
   slot:          string,
   providers:     Provider[],
@@ -377,45 +399,52 @@ export function evaluateSlot(
   bookedSlots:   Set<string> | string[],
 ): SlotResult {
 
-  /* ── Guard: globally blocked ── */
+  /* Guard: globally blocked */
   const blocked = bookedSlots instanceof Set ? bookedSlots : new Set(bookedSlots);
-  if (blocked.has(slot)) return { status: 'booked', isSequenceSwapped: false };
-
-  /* ── Guard: nothing selected ── */
-  if (providers.length === 0 || services.length === 0) {
-    return { status: 'available', isSequenceSwapped: false };
+  if (blocked.has(slot)) {
+    return { status: 'booked', isSequenceSwapped: false, occupiedSlots: [] };
   }
 
-  /*
-   * Guard: providers/services count mismatch.
-   * Evaluate only the paired portion so we never crash on undefined access.
-   */
+  /* Guard: nothing selected */
+  if (providers.length === 0 || services.length === 0) {
+    return { status: 'available', isSequenceSwapped: false, occupiedSlots: [] };
+  }
+
   const pairCount       = Math.min(providers.length, services.length);
   const pairedProviders = providers.slice(0, pairCount);
   const pairedServices  = services.slice(0, pairCount);
+  const baseMins        = slotToMinutes(slot);
 
-  /* ── Single pair fast path ── */
+  /* ══════════════════════════════════════════════════════════════════════════
+     SINGLE SERVICE
+  ══════════════════════════════════════════════════════════════════════════ */
   if (pairCount === 1) {
-    if (!pairedProviders[0]?.name) return { status: 'booked', isSequenceSwapped: false };
-    const free = isProviderFreeFor(
-      pairedProviders[0].name,
-      slotToMinutes(slot),
-      parseDurationMins(pairedServices[0].duration),
-      providerSlots,
-    );
-    return free
-      ? { status: 'available', isSequenceSwapped: false }
-      : { status: 'booked',    isSequenceSwapped: false };
+    if (!pairedProviders[0]?.name) {
+      return { status: 'booked', isSequenceSwapped: false, occupiedSlots: [] };
+    }
+    const duration = parseDurationMins(pairedServices[0].duration);
+    const free     = isProviderFreeFor(pairedProviders[0].name, baseMins, duration, providerSlots);
+    if (free) {
+      const slots = buildOccupiedSlots([{ startMins: baseMins, durationMins: duration }]);
+      return { status: 'available', isSequenceSwapped: false, occupiedSlots: slots };
+    }
+    return { status: 'booked', isSequenceSwapped: false, occupiedSlots: [] };
   }
 
-  const baseMins = slotToMinutes(slot);
+  /* ══════════════════════════════════════════════════════════════════════════
+     MULTI-SERVICE
+  ══════════════════════════════════════════════════════════════════════════ */
 
-  /* ── Check ORIGINAL sequence ── */
+  /* Step 1: Try original order */
   const originalCheck = checkSequence(baseMins, pairedProviders, pairedServices, providerSlots);
 
-  if (originalCheck.ok) return { status: 'available', isSequenceSwapped: false };
+  if (originalCheck.ok) {
+    const { segments } = calculateSequenceGap(baseMins, pairedProviders, pairedServices, providerSlots);
+    const slots = buildOccupiedSlots(segments);
+    return { status: 'available', isSequenceSwapped: false, occupiedSlots: slots };
+  }
 
-  /* ── Try every permutation (N-provider generalisation) ── */
+  /* Step 2: Try alternative permutations (R2 / R3) */
   const swappedDetails = findWorkingPermutation(
     baseMins,
     pairedProviders,
@@ -423,23 +452,62 @@ export function evaluateSlot(
     providerSlots,
     originalCheck.failIndex,
     originalCheck.failProvider,
+    originalCheck.failService,
     originalCheck.nextFreeAt,
   );
 
+  /* Step 3: Check gap-only path (R4) */
+  let gapOnlyDetails: SlotResult['gapOnlyDetails'] | undefined;
+
+  // ✅ FIX #3: Only compute gapOnly when there's no valid swap,
+  // OR when the swap also has a gap (to show both options in modal)
+  const shouldCheckGapOnly = !swappedDetails || swappedDetails.gapMinutes > 0;
+
+  if (shouldCheckGapOnly) {
+    const fail = originalCheck as SeqFail;
+    if (fail.nextFreeAt !== null) {
+      const gapResult = calculateSequenceGap(
+        baseMins,
+        pairedProviders,
+        pairedServices,
+        providerSlots,
+      );
+
+      if (gapResult.gapMinutes > 0) {
+        gapOnlyDetails = {
+          gapMinutes:    gapResult.gapMinutes,
+          busyUntil:     minutesToDisplay(fail.nextFreeAt),
+          busyProvider:  fail.failProvider,
+          busyService:   fail.failService,
+          occupiedSlots: buildOccupiedSlots(gapResult.segments),
+        };
+      }
+    }
+  }
+
+  /* Step 4: Recommended original time */
+  // ✅ FIX #4: Only find recommended time when there's actually a conflict
+  // This prevents showing "start at 09:00 AM" for an 11:30 AM booking
+  const recommendedOriginalTime = (swappedDetails !== null || gapOnlyDetails !== undefined)
+    ? findRecommendedOriginalTime(slot, pairedProviders, pairedServices, providerSlots)
+    : undefined;
+
+  /* Step 5: Final status */
   const isSequenceSwapped = swappedDetails !== null;
+  const isPartial         = isSequenceSwapped || !!gapOnlyDetails || !!recommendedOriginalTime;
+  const status: SlotResult['status'] = isPartial ? 'partial' : 'booked';
 
-  /* ── Find recommended original time ── */
-  const recommendedOriginalTime = findRecommendedOriginalTime(
-    slot, pairedProviders, pairedServices, providerSlots,
-  );
-
-  const status: SlotResult['status'] =
-    isSequenceSwapped || recommendedOriginalTime ? 'partial' : 'booked';
+  const occupiedSlots: string[] =
+    swappedDetails?.occupiedSlots ??
+    gapOnlyDetails?.occupiedSlots ??
+    [];
 
   return {
     status,
     isSequenceSwapped,
     swappedDetails:          swappedDetails ?? undefined,
     recommendedOriginalTime,
+    occupiedSlots,
+    gapOnlyDetails,
   };
 }

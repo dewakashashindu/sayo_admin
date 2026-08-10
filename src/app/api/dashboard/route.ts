@@ -1,3 +1,4 @@
+// app/api/admin/dashboard/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
@@ -15,57 +16,101 @@ export async function GET(req: NextRequest) {
     const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
 
     /* ── Stats ── */
-      const [totalToday, totalPending, totalConfirmed, totalWalkin] = await Promise.all([
-        prisma.tbl_Bookings.count({ where: { BookingDate: date, Status: { not: 'cancelled' } } }),
-        prisma.tbl_Bookings.count({ where: { BookingDate: date, Status: 'pending' } }),
-        prisma.tbl_Bookings.count({ where: { BookingDate: date, Status: 'confirmed' } }),
-        prisma.tbl_Bookings.count({ where: { BookingDate: date, BookingMode: 'without_confirmation' } }),
-    ]);
+    const [totalToday, totalPending, totalConfirmed, totalWalkin, totalCancelled] =
+      await Promise.all([
+        prisma.tbl_Bookings.count({
+          where: { BookingDate: date, Status: { not: 'cancelled' } },
+        }),
+        prisma.tbl_Bookings.count({
+          where: { BookingDate: date, Status: 'pending' },
+        }),
+        prisma.tbl_Bookings.count({
+          where: { BookingDate: date, Status: 'confirmed' },
+        }),
+        prisma.tbl_Bookings.count({
+          where: { BookingDate: date, BookingMode: 'without_confirmation' },
+        }),
+        prisma.tbl_Bookings.count({
+          where: { BookingDate: date, Status: 'cancelled' },
+        }),
+      ]);
 
-    /* ── Bookings for schedule grid ── */
-    const bookings = await prisma.tbl_Bookings.findMany({
-      where: { BookingDate: date, Status: { not: 'cancelled' } },
-      select: { TimeSlot: true, Providers: true, Services: true },
+    /* ── All bookings for the date (including cancelled) ── */
+    const rawBookings = await prisma.tbl_Bookings.findMany({
+      where: { BookingDate: date },
+      orderBy: { TimeSlot: 'asc' },
+      select: {
+        BookingId:    true,
+        UserId:       true,
+        BookingMode:  true,
+        Gender:       true,
+        Location:     true,
+        Services:     true,
+        Categories:   true,
+        TotalDuration:true,
+        TotalPrice:   true,
+        Providers:    true,
+        BookingDate:  true,
+        TimeSlot:     true,
+        SpecialNotes: true,
+        Status:       true,
+        CreatedAt:    true,
+      },
     });
 
-    /* Build provider list dynamically from today's bookings */
+    /* ── Parse JSON fields ── */
+    const bookings = rawBookings.map((b) => {
+      let services: { name: string; price: string; duration: string; category: string }[] = [];
+      let providers: { name: string; role: string }[] = [];
+
+      try { services  = JSON.parse(b.Services  || '[]'); } catch {}
+      try { providers = JSON.parse(b.Providers || '[]'); } catch {}
+
+      return {
+        ...b,
+        TotalPrice:    Number(b.TotalPrice),
+        TotalDuration: Number(b.TotalDuration),
+        services,
+        providers,
+      };
+    });
+
+    /* ── Schedule grid ── */
     const providerSet = new Set<string>();
-    const grid: Record<string, Record<string, string>> = {}; // timeSlot -> providerName -> serviceName
+    const grid: Record<string, Record<string, { service: string; bookingId: number; status: string }>> = {};
 
     for (const slot of TIME_SLOTS) grid[slot] = {};
 
     for (const b of bookings) {
-      let provs: { name: string }[] = [];
-      let svcs:  { name: string }[] = [];
-      try { provs = JSON.parse(b.Providers || '[]'); } catch {}
-      try { svcs  = JSON.parse(b.Services  || '[]'); } catch {}
-
-      for (const p of provs) {
+      if (b.Status === 'cancelled') continue;
+      for (const p of b.providers) {
         providerSet.add(p.name);
         if (grid[b.TimeSlot]) {
-          grid[b.TimeSlot][p.name] = svcs.map(s => s.name).join(', ') || 'Booked';
+          grid[b.TimeSlot][p.name] = {
+            service:   b.services.map((s) => s.name).join(', ') || 'Booked',
+            bookingId: b.BookingId,
+            status:    b.Status,
+          };
         }
       }
     }
 
-    const providers = Array.from(providerSet).slice(0, 6); // limit columns shown
+    const providers = Array.from(providerSet).slice(0, 6);
 
     return NextResponse.json({
       success: true,
       date,
-      stats: {
-        totalToday,
-        totalPending,
-        totalConfirmed,
-        totalWalkin,
-      },
+      stats: { totalToday, totalPending, totalConfirmed, totalWalkin, totalCancelled },
       providers,
       timeSlots: TIME_SLOTS,
       grid,
+      bookings,
     });
-
   } catch (error) {
     console.error('[ADMIN_DASHBOARD_API_ERROR]', error);
-    return NextResponse.json({ success: false, message: 'Internal server error.' }, { status: 500 });
+    return NextResponse.json(
+      { success: false, message: 'Internal server error.' },
+      { status: 500 },
+    );
   }
 }
