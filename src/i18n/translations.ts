@@ -71,7 +71,7 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   's1.reviewBooking':        { en: 'Review Booking',                                  si: 'වෙන්කිරීම සමාලෝචනය',                           ta: 'முன்பதிவை மதிப்பாய்வு செய்' },
 
   /* ─────────── TIME SECTION ─────────── */
-  'time.preferredTime':      { en: 'Preferred Time',                                  si: 'කාමති වේලාව',                                  ta: 'விரும்பிய நேரம்' },
+  'time.preferredTime':      { en: 'Preferred Time',                                  si: 'කැමති වේලාව',                                  ta: 'விரும்பிய நேரம்' },
   'time.checking':           { en: 'Checking live availability…',                     si: 'සජීවී ලබාගත හැකි බව පරීක්ෂා කරමින්…',             ta: 'நேரடி கிடைக்கும் நிலையைச் சரிபார்க்கிறது…' },
   'time.needProvider':       { en: 'Please select a provider above to see real-time availability.', si: 'සජීවී ලබාගත හැකි බව බැලීමට කරුණාකර ඉහතින් සේවා සැපයුම්කරුවෙකු තෝරන්න.', ta: 'நிகழ்நேர கிடைக்கும் நிலையைப் பார்க்க மேலே ஒரு வழங்குநரைத் தேர்ந்தெடுக்கவும்.' },
   'time.loadError':          { en: 'Could not load live availability.',               si: 'සජීවී ලබාගත හැකි බව ලබාගත නොහැකි විය.',           ta: 'நேரடி கிடைக்கும் நிலையை ஏற்ற முடியவில்லை.' },

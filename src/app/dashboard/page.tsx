@@ -826,8 +826,8 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const raw = localStorage.getItem('admin');
-    try { setAdmin(raw ? JSON.parse(raw) : { name:'Mr.Sonic', email:'admin@sayo.com' }); }
-    catch { setAdmin({ name:'Mr.Sonic', email:'admin@sayo.com' }); }
+    try { setAdmin(raw ? JSON.parse(raw) : { name:'Mr.SAYO', email:'admin@sayo.com' }); }
+    catch { setAdmin({ name:'Mr.SAYO', email:'admin@sayo.com' }); }
   }, [router]);
 
   /* fetch */
