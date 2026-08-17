@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
+import { sendRegistrationSMS } from '@/lib/sms'; 
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -19,8 +20,6 @@ export const GENDER_OPTIONS = [
 ] as const;
 
 export type GenderValue = typeof GENDER_OPTIONS[number]['value'];
-
-const VALID_GENDERS = new Set(GENDER_OPTIONS.map(g => g.value));
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -71,6 +70,22 @@ export async function POST(req: NextRequest) {
 
     try {
       const created = await prisma.tbl_UserDetails.create({ data: payload });
+
+     
+      if (payload.PhoneNumber) {
+        try {
+          await sendRegistrationSMS({
+            name: payload.UserName,
+            email: payload.EmailAddress,
+            phone: payload.PhoneNumber,
+          });
+        } catch (smsErr) {
+          
+          console.error('[register] SMS trigger failed:', smsErr);
+        }
+      }
+      // ─────────────────────────────────────────────────────────────
+
       return NextResponse.json({ success: true, message: 'User registered successfully', userId: (created as any).UserId ?? null }, { status: 201 });
     } catch (err) {
       const code = err instanceof Error ? (err as any).code : undefined;
