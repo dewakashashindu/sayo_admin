@@ -12,6 +12,7 @@ import {
   t, svc as svcName, role as roleName, cat as catName, loc as locName,
   monthNames, dayNames, formatDateL, durStr, fmtDur, type Lang,
 } from '@/i18n/translations';
+import { GENDER_OPTIONS } from '@/lib/genderOptions';
 
 /* ─────────────────────────────────────────
    STORED USER TYPE
@@ -59,12 +60,7 @@ type BookingMode = 'confirmed' | 'without_confirmation';
 type Step        = 1 | 2;
 type GenderValue = 'male' | 'female' | 'prefer_not_to_say' | 'other';
 
-export const GENDER_OPTIONS: { value: GenderValue; label: string }[] = [
-  { value: 'male',              label: 'Male'               },
-  { value: 'female',            label: 'Female'             },
-  { value: 'prefer_not_to_say', label: 'Prefer not to say' },
-  { value: 'other',             label: 'Other'              },
-];
+
 
 interface ServiceItem { name: string; price: string; duration: string; category: string; }
 interface Provider    { name: string; role: string; avatar: string; expertise: string[]; }

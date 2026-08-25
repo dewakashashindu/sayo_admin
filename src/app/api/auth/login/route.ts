@@ -21,71 +21,58 @@ export async function POST(req: NextRequest) {
 
     const emailNorm = email.trim().toLowerCase();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const cloudClient = prisma as any;
-
-    const MODEL_NAMES = ['tbl_UserDetails', 'tblUserDetails', 'tbl_userdetails'];
-    const cloudModel  = MODEL_NAMES.find(n => typeof cloudClient[n]?.findUnique === 'function');
-
-    if (!cloudModel) {
-      return NextResponse.json(
-        { error: 'User model not found. Run: npx prisma generate' },
-        { status: 500 }
-      );
-    }
-
-    const modelName = cloudModel;
-
+    // ── Find user in Tbl_CustomerMaster ───────────────────────────────────
     let user: {
-      UserId:       number;
-      UserName:     string;
-      EmailAddress: string;
-      PasswordHash: string;
-      PhoneNumber:  string | null;  // ← ADD
-      Gender:       string | null;  // ← ADD
+      CusCode:  string;
+      CusName:  string;
+      CusEmail: string;
+      PSW:      string;
+      RegTel:   string;
+      Gender:   string | null;
     } | null = null;
-    let source = 'cloud';
 
     try {
-      user = await cloudClient[modelName].findUnique({
-        where:  { EmailAddress: emailNorm },
+      user = await prisma.tbl_CustomerMaster.findFirst({
+        where:  { CusEmail: emailNorm },
         select: {
-          UserId:       true,
-          UserName:     true,
-          EmailAddress: true,
-          PasswordHash: true,
-          PhoneNumber:  true,   // ← ADD
-          Gender:       true,   // ← ADD
+          CusCode:  true,
+          CusName:  true,
+          CusEmail: true,
+          PSW:      true,
+          RegTel:   true,
+          Gender:   true,
         },
       });
     } catch (err) {
-      console.error('[login] cloud lookup failed:', errMsg(err));
+      console.error('[login] lookup failed:', errMsg(err));
+      return NextResponse.json({ error: 'Login failed. Please try again.' }, { status: 500 });
     }
 
     if (!user) {
       return NextResponse.json(
         { error: 'No account found with this email address.' },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
-    const passwordMatch = await bcrypt.compare(password, user.PasswordHash);
+    // ── Password check ─────────────────────────────────────────────────────
+    const passwordMatch = await bcrypt.compare(password, user.PSW);
     if (!passwordMatch) {
       return NextResponse.json(
         { error: 'Incorrect password. Please try again.' },
-        { status: 401 }
+        { status: 401 },
       );
     }
 
-    console.log(`[login] success — UserId: ${user.UserId} source: ${source}`);
+    console.log(`[login] success — CusCode: ${user.CusCode}`);
 
     return NextResponse.json({
       success:     true,
-      userId:      user.UserId,
-      name:        user.UserName,
-      email:       user.EmailAddress,
-      phoneNumber: user.PhoneNumber ?? '',   // ← ADD
-      gender:      user.Gender      ?? '',   // ← ADD
+      userId:      user.CusCode,
+      name:        user.CusName,
+      email:       user.CusEmail,
+      phoneNumber: user.RegTel.trim() || '',
+      gender:      user.Gender ?? '',
     }, { status: 200 });
 
   } catch (err) {

@@ -1,11 +1,11 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows", "debian-openssl-3.0.x"]
 }
 
 datasource db {
   provider = "mysql"
-  
-  
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -43,8 +43,6 @@ model AdminActivityLog {
   @@index([adminUsername])
   @@index([timestamp])
 }
-
-// ── SITE CONFIG MODELS ──
 
 model NavConfig {
   id               Int      @id @default(1)
@@ -140,7 +138,7 @@ model Tbl_Feedback {
   cusRating   Int      @default(0)
   cusComment  String   @db.Text
   cusConsent  Boolean  @default(false)
-  isPublished Boolean  @default(false)   
+  isPublished Boolean  @default(false)
   submittedAt DateTime @default(now())
 
   @@index([cusEmail])
@@ -149,19 +147,18 @@ model Tbl_Feedback {
   @@index([cusRating])
   @@index([isPublished])
 }
+
 model GalleryConfig {
-  id                Int      @id @default(autoincrement())
-  hero_eyebrow      String   @default("")
-  hero_title        String   @default("")
-  hero_subtitle     String   @default("")
-  section_title     String   @default("")
-  section_subtitle  String   @default("")
-  items             Json
-  updated_by        String?
-  updatedAt         DateTime @updatedAt
+  id               Int      @id @default(autoincrement())
+  hero_eyebrow     String   @default("")
+  hero_title       String   @default("")
+  hero_subtitle    String   @default("")
+  section_title    String   @default("")
+  section_subtitle String   @default("")
+  items            Json
+  updated_by       String?
+  updatedAt        DateTime @updatedAt
 }
-
-
 
 model Tbl_OtpStore {
   id        Int      @id @default(autoincrement())
@@ -173,41 +170,164 @@ model Tbl_OtpStore {
   @@index([email])
 }
 
+// ── MAIN USER TABLE ──
 
-// schema.prisma
-model Tbl_UserDetails {
-  UserId        Int      @id @default(autoincrement())
-  UserName      String   @db.VarChar(200)
-  EmailAddress  String   @unique @db.VarChar(200)
-  PhoneNumber   String?  @db.VarChar(50)
-  PasswordHash  String   @db.VarChar(255)
-  Gender        String?  @db.VarChar(50)
-  CreatedAt     DateTime @default(now())
+model Tbl_CustomerMaster {
+  CusCode          String   @id @db.Char(10)
+  RegTel           String   @default(" ") @db.Char(15)
+  CusName          String   @db.VarChar(200)
+  CusAdd           String   @default(" ") @db.VarChar(200)
+  CusEmail         String   @default(" ") @db.VarChar(200)
+  PSW              String   @default(" ") @db.VarChar(255)
+  Gender           String?  @db.VarChar(50)
+  CreditCustomer   Boolean  @default(false)
+  CreditLimit      Float    @default(0)
+  UsedCredit       Float    @default(0)
+  Rmks             String   @default(" ") @db.VarChar(400)
+  LoyalCus         Boolean  @default(false)
+  CreatedBy        String   @default("SYSTEM") @db.VarChar(50)
+  CreateDateTime   DateTime @default(now())
+  DisPre           Float    @default(0)
+  Picture          Bytes?
+  CusBehaviour     Int      @default(0)
+  BlackList        Boolean  @default(false)
+  BlackListRemarks String   @default(" ") @db.VarChar(500)
+  MemberTypeID     String   @default("0") @db.Char(10)
+  Enable           Boolean  @default(true)
 
-  bookings      Tbl_Bookings[]
+  @@index([CusEmail])
+  @@map("tbl_customermaster")
+}
+model Tbl_LocationMaster {
+  LocCode String  @id @db.Char(10)
+  LocDes  String  @db.VarChar(50)
+  Address String  @default(" ") @db.VarChar(300)
+  Enable  Boolean @default(true)
 
-  @@index([EmailAddress])
+  @@index([LocDes])
+  @@map("tbl_locationmaster")
+}
+model Tbl_UnitMaster {
+  MasterUnitID String  @id @db.Char(10)
+  UnitDes      String  @db.VarChar(50)
+  Enable       Boolean @default(true)
+
+  @@index([UnitDes])
+  @@map("tbl_unitmaster")
 }
 
-model Tbl_Bookings {
-  BookingId       Int      @id @default(autoincrement())
-  UserId          Int
-  BookingMode     String   @db.VarChar(50)
-  Gender          String   @db.VarChar(10)
-  Location        String   @db.VarChar(100)
-  Services        String   @db.Text
-  Categories      String   @db.VarChar(255)
-  TotalDuration   Int
-  TotalPrice      Int
-  Providers       String   @db.VarChar(255)
-  BookingDate     String   @db.VarChar(50)
-  TimeSlot        String   @db.VarChar(50)
-  SpecialNotes    String?  @db.Text
-  Status          String   @default("pending") @db.VarChar(50)
-  CreatedAt       DateTime @default(now())
+model Tbl_UnitSub {
+  SubUnitID  String  @id @db.Char(10)
+  SubUnitDes String  @db.VarChar(50)
+  Enable     Boolean @default(true)
 
-  user            Tbl_UserDetails @relation(fields: [UserId], references: [UserId])
+  @@index([SubUnitDes])
+  @@map("tbl_unitsub")
+}
 
-  @@index([UserId])
-  @@index([BookingDate])
+model Tbl_UnitConversion {
+  MasterUnitID String  @db.Char(10)
+  SubUnitID    String  @db.Char(10)
+  NoOfUnits    Float   @default(0)
+  Enable       Boolean @default(true)
+
+  @@id([MasterUnitID, SubUnitID])
+  @@map("tbl_unitconversion")
+}
+
+model Tbl_SupplierMaster {
+  SupID          String   @id @db.Char(10)
+  SupName        String   @db.VarChar(200)
+  SuppAdd1       String   @default(" ") @db.VarChar(200)
+  ContactNO      String   @default(" ") @db.VarChar(100)
+  Emails         String   @default(" ") @db.VarChar(100)
+  Web            String   @default(" ") @db.VarChar(50)
+  DebtAmount     Float    @default(0)
+  CreateUser     String   @default("0") @db.VarChar(50)
+  CreateDatetime DateTime @default(now())
+  Remarks        String   @default(" ") @db.VarChar(260)
+  Enable         Boolean  @default(true)
+
+  @@map("tbl_suppliermaster")
+}
+
+model Tbl_Recipes {
+  MenuItmID    String   @db.Char(10)
+  RowItemCode  String   @db.Char(15)
+  MasterUnitID String   @default(" ") @db.Char(10)
+  SubUnitID    String   @db.Char(10)
+  Qty          Float    @default(0)
+  LocCode      String   @db.Char(10)
+  ItemCost     Float    @default(0)
+
+  @@id([MenuItmID, RowItemCode])
+  @@map("tbl_recipes")
+}
+
+
+
+model Tbl_ItemMaster {
+  LocCode          String    @db.Char(10)
+  ItemCode         String    @db.Char(15)
+  ServiceItem      Boolean   @default(false)
+  ItemDes          String    @db.VarChar(50)
+  ItemPrintDes     String    @default(" ") @db.VarChar(50)
+  MasterUnitID     String    @db.Char(10)
+  Category1        String    @default(" ") @db.Char(10)
+  Category2        String    @default(" ") @db.Char(10)
+  Category3        String    @default(" ") @db.Char(10)
+  Category4        String    @default(" ") @db.Char(10)
+  SupID            String    @default("0") @db.Char(10)
+  ROL              Float     @default(0)
+  ROQ              Float     @default(0)
+  MinQty           Float     @default(0)
+  MaxQty           Float     @default(0)
+  RawCost          Float     @default(0)
+  CostMarkup       Float     @default(0)
+  OverallCost      Float     @default(0)
+  SalesMargin      Float     @default(0)
+  StockBalance     Float     @default(0)
+  ExpiryItem       Boolean   @default(false)
+  Retailprice      Float     @default(0)
+  WSApp            Boolean   @default(false)
+  WSQty            Float     @default(0)
+  WSPrice          Float     @default(0)
+  PackedItem       Boolean   @default(false)
+  PackSize         Float     @default(0)
+  PackPrice        Float     @default(0)
+  SemiFinishedProd Boolean   @default(false)
+  ItemPic          Bytes?    @db.LongBlob
+  CreateDate       DateTime  @default(now())
+  CreateBy         String    @default("0") @db.Char(10)
+  UpdDate          DateTime  @default(now()) @updatedAt
+  UpdBy            String    @default("0") @db.Char(10)
+  Enable           Boolean   @default(true)
+
+  @@id([LocCode, ItemCode])
+  @@map("tbl_itemmaster")
+}
+
+model Tbl_ItemCategory1 {
+  CatCode String  @id @db.Char(10)
+  CatDes  String  @db.VarChar(50)
+  Enable  Boolean @default(true)
+  @@map("tbl_itemcategory1")
+}
+model Tbl_ItemCategory2 {
+  CatCode String  @id @db.Char(10)
+  CatDes  String  @db.VarChar(50)
+  Enable  Boolean @default(true)
+  @@map("tbl_itemcategory2")
+}
+model Tbl_ItemCategory3 {
+  CatCode String  @id @db.Char(10)
+  CatDes  String  @db.VarChar(50)
+  Enable  Boolean @default(true)
+  @@map("tbl_itemcategory3")
+}
+model Tbl_ItemCategory4 {
+  CatCode String  @id @db.Char(10)
+  CatDes  String  @db.VarChar(50)
+  Enable  Boolean @default(true)
+  @@map("tbl_itemcategory4")
 }

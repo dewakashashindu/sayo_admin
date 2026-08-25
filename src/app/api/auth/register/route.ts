@@ -1,29 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
-import { sendRegistrationSMS } from '@/lib/sms'; 
+import { sendRegistrationSMS } from '@/lib/sms';
+import { GENDER_OPTIONS } from '@/lib/genderOptions';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-export const GENDER_OPTIONS = [
-  { value: 'male', label: 'Male' },
-  { value: 'female', label: 'Female' },
-  { value: 'non_binary', label: 'Non-binary' },
-  { value: 'genderqueer', label: 'Genderqueer' },
-  { value: 'genderfluid', label: 'Gender-fluid' },
-  { value: 'agender', label: 'Agender' },
-  { value: 'bigender', label: 'Bigender' },
-  { value: 'two_spirit', label: 'Two-Spirit' },
-  { value: 'prefer_not_to_say', label: 'Prefer not to say' },
-  { value: 'other', label: 'Other' },
-] as const;
-
-export type GenderValue = typeof GENDER_OPTIONS[number]['value'];
+type GenderValue = typeof GENDER_OPTIONS[number]['value'];
 
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+// ── Generate next CusCode (CUS0000001 format) ──────────────────────────────
+async function generateCusCode(): Promise<string> {
+  const last = await prisma.tbl_CustomerMaster.findFirst({
+    orderBy: { CusCode: 'desc' },
+    select:  { CusCode: true },
+  });
+
+  if (!last) return 'CUS0000001';
+
+  const num  = parseInt(last.CusCode.replace('CUS', ''), 10);
+  const next = isNaN(num) ? 1 : num + 1;
+  return 'CUS' + String(next).padStart(7, '0');
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
@@ -35,66 +39,80 @@ export async function POST(req: NextRequest) {
     }
 
     const { name, email, phone, password, gender } = body as {
-      name?: string;
-      email?: string;
-      phone?: string;
-      password?: string;
-      gender?: string;
+      name?: string; email?: string; phone?: string;
+      password?: string; gender?: string;
     };
 
-    if (!name?.trim()) return NextResponse.json({ success: false, message: 'Full name is required.' }, { status: 400 });
-    if (!email?.trim()) return NextResponse.json({ success: false, message: 'Email address is required.' }, { status: 400 });
-    if (!password || password.length < 6) return NextResponse.json({ success: false, message: 'Password must be at least 6 characters.' }, { status: 400 });
+    if (!name?.trim())
+      return NextResponse.json({ success: false, message: 'Full name is required.' }, { status: 400 });
+    if (!email?.trim())
+      return NextResponse.json({ success: false, message: 'Email address is required.' }, { status: 400 });
+    if (!password || password.length < 6)
+      return NextResponse.json({ success: false, message: 'Password must be at least 6 characters.' }, { status: 400 });
 
     const emailLower = email.trim().toLowerCase();
 
-    // quick duplicate check
+    // ── Duplicate check ────────────────────────────────────────────────────
     try {
-      const exists = await prisma.tbl_UserDetails.findFirst({ where: { EmailAddress: emailLower } });
+      const exists = await prisma.tbl_CustomerMaster.findFirst({
+        where: { CusEmail: emailLower },
+      });
       if (exists) {
-        return NextResponse.json({ success: false, message: 'An account with this email already exists.' }, { status: 409 });
+        return NextResponse.json(
+          { success: false, message: 'An account with this email already exists.' },
+          { status: 409 },
+        );
       }
     } catch (err) {
       console.error('[register] duplicate-check error:', errMsg(err));
       return NextResponse.json({ success: false, message: 'Registration failed.' }, { status: 500 });
     }
 
-    const PasswordHash = await bcrypt.hash(password, 12);
-    const payload = {
-      UserName:     name.trim(),
-      EmailAddress: emailLower,
-      PhoneNumber:  phone?.trim() ?? null,
-      PasswordHash,
-      Gender:       gender?.trim() ?? null,
-    };
+    // ── Hash password ──────────────────────────────────────────────────────
+    const hashedPSW = await bcrypt.hash(password, 12);
 
+    // ── Save to Tbl_CustomerMaster ─────────────────────────────────────────
     try {
-      const created = await prisma.tbl_UserDetails.create({ data: payload });
+      const cusCode = await generateCusCode();
 
-     
-      if (payload.PhoneNumber) {
+      const created = await prisma.tbl_CustomerMaster.create({
+        data: {
+          CusCode:  cusCode,
+          CusName:  name.trim().substring(0, 200),
+          CusEmail: emailLower.substring(0, 200),
+          RegTel:   (phone?.trim() ?? ' ').substring(0, 15) || ' ',
+          PSW:      hashedPSW,
+          Gender:   gender?.trim() ?? null,
+          CreatedBy: 'SYSTEM',
+        },
+      });
+
+      // ── SMS ───────────────────────────────────────────────────────────────
+      if (phone?.trim()) {
         try {
           await sendRegistrationSMS({
-            name: payload.UserName,
-            email: payload.EmailAddress,
-            phone: payload.PhoneNumber,
+            name:  name.trim(),
+            email: emailLower,
+            phone: phone.trim(),
           });
         } catch (smsErr) {
-          
           console.error('[register] SMS trigger failed:', smsErr);
         }
       }
-      // ─────────────────────────────────────────────────────────────
 
-      return NextResponse.json({ success: true, message: 'User registered successfully', userId: (created as any).UserId ?? null }, { status: 201 });
+      return NextResponse.json(
+        { success: true, message: 'User registered successfully', userId: created.CusCode },
+        { status: 201 },
+      );
+
     } catch (err) {
-      const code = err instanceof Error ? (err as any).code : undefined;
-      if (code === 'P2002') {
-        return NextResponse.json({ success: false, message: 'An account with this email already exists.' }, { status: 409 });
-      }
       console.error('[register] create error:', errMsg(err));
-      return NextResponse.json({ success: false, message: 'Registration failed due to server error.' }, { status: 500 });
+      return NextResponse.json(
+        { success: false, message: 'Registration failed due to server error.' },
+        { status: 500 },
+      );
     }
+
   } catch (err) {
     console.error('[register POST] unexpected error:', err);
     return NextResponse.json({ success: false, message: 'Unexpected server error.' }, { status: 500 });
