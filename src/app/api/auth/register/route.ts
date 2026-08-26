@@ -52,10 +52,11 @@ export async function POST(req: NextRequest) {
 
     const emailLower = email.trim().toLowerCase();
 
-    // ── Duplicate check ────────────────────────────────────────────────────
+    // ── Duplicate check (Select CusCode only to avoid unnecessary column queries) ─
     try {
       const exists = await prisma.tbl_CustomerMaster.findFirst({
         where: { CusEmail: emailLower },
+        select: { CusCode: true },
       });
       if (exists) {
         return NextResponse.json(
@@ -77,14 +78,15 @@ export async function POST(req: NextRequest) {
 
       const created = await prisma.tbl_CustomerMaster.create({
         data: {
-          CusCode:  cusCode,
-          CusName:  name.trim().substring(0, 200),
-          CusEmail: emailLower.substring(0, 200),
-          RegTel:   (phone?.trim() ?? ' ').substring(0, 15) || ' ',
-          PSW:      hashedPSW,
-          Gender:   gender?.trim() ?? null,
+          CusCode:   cusCode,
+          CusName:   name.trim().substring(0, 200),
+          CusEmail:  emailLower.substring(0, 200),
+          RegTel:    (phone?.trim() ?? ' ').substring(0, 15) || ' ',
+          PSW:       hashedPSW,
+          Gender:    gender?.trim() ?? null,
           CreatedBy: 'SYSTEM',
         },
+        select: { CusCode: true },
       });
 
       // ── SMS ───────────────────────────────────────────────────────────────

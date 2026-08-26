@@ -5,7 +5,7 @@ const globalForPrisma = global as unknown as { prisma: PrismaClient };
 const prisma = globalForPrisma.prisma || new PrismaClient();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
-type Ctx = { params: { level: string; catCode: string } };
+type Ctx = { params: Promise<{ level: string; catCode: string }> };
 
 function getModel(level: string) {
   switch (level) {
@@ -20,8 +20,10 @@ function getModel(level: string) {
 /* PUT — update */
 export async function PUT(req: NextRequest, { params }: Ctx) {
   try {
-    const catCode = decodeURIComponent(params.catCode).trim();
-    const model   = getModel(params.level);
+    
+    const resolvedParams = await params;
+    const catCode = decodeURIComponent(resolvedParams.catCode).trim();
+    const model   = getModel(resolvedParams.level);
     const b       = await req.json();
 
     if (!b.catDes?.trim())
@@ -45,8 +47,10 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
 /* DELETE */
 export async function DELETE(_: NextRequest, { params }: Ctx) {
   try {
-    const catCode = decodeURIComponent(params.catCode).trim();
-    const model   = getModel(params.level);
+    
+    const resolvedParams = await params;
+    const catCode = decodeURIComponent(resolvedParams.catCode).trim();
+    const model   = getModel(resolvedParams.level);
 
     await (model as typeof prisma.tbl_ItemCategory1).delete({ where: { CatCode: catCode } });
     return NextResponse.json({ success: true, message: 'Deleted successfully' });

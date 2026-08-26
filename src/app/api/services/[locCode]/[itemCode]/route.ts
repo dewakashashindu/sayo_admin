@@ -6,12 +6,14 @@ const globalForPrisma = global as unknown as { prisma: PrismaClient };
 const prisma = globalForPrisma.prisma || new PrismaClient();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
-type Ctx = { params: { locCode: string; itemCode: string } };
+
+type Ctx = { params: Promise<{ locCode: string; itemCode: string }> };
 
 export async function PUT(req: NextRequest, { params }: Ctx) {
   try {
-    const locCode  = decodeURIComponent(params.locCode).trim();
-    const itemCode = decodeURIComponent(params.itemCode).trim();
+    const resolvedParams = await params;
+    const locCode  = decodeURIComponent(resolvedParams.locCode).trim();
+    const itemCode = decodeURIComponent(resolvedParams.itemCode).trim();
     const b        = await req.json();
 
     if (!b.itemDes?.trim()) {
@@ -102,8 +104,9 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
 
 export async function DELETE(_: NextRequest, { params }: Ctx) {
   try {
-    const locCode  = decodeURIComponent(params.locCode).trim();
-    const itemCode = decodeURIComponent(params.itemCode).trim();
+    const resolvedParams = await params;
+    const locCode  = decodeURIComponent(resolvedParams.locCode).trim();
+    const itemCode = decodeURIComponent(resolvedParams.itemCode).trim();
 
     await prisma.tbl_ItemMaster.delete({
       where: { LocCode_ItemCode: { LocCode: locCode, ItemCode: itemCode } },

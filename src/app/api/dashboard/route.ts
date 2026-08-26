@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
       orderBy: { TimeSlot: 'asc' },
       select: {
         BookingId:    true,
-        UserId:       true,
+        CusCode:       true,
         BookingMode:  true,
         Gender:       true,
         Location:     true,

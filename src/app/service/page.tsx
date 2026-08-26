@@ -4,9 +4,6 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 
-/* ─────────────────────────────────────────
-   TYPES
-───────────────────────────────────────── */
 interface LocationDetail {
   locCode:         string;
   locName:         string;
@@ -92,9 +89,6 @@ function emptyItem(nextId: number): Item {
   };
 }
 
-/* ─────────────────────────────────────────
-   CSS
-───────────────────────────────────────── */
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -179,7 +173,6 @@ const PAGE_CSS = `
     margin-bottom:4px; display:block;
   }
 
-  /* FLAGS */
   .flags-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
   .flag-card {
     position:relative; border-radius:12px;
@@ -220,7 +213,6 @@ const PAGE_CSS = `
   .flag-sub-input:focus { border-color:var(--fc,#1e3a40); box-shadow:0 0 0 2px rgba(30,58,64,0.08); }
   .flag-sub-input:disabled { background:#f3f6f6; color:#9ca3af; cursor:not-allowed; }
 
-  /* BUTTONS */
   .btn-save {
     display:flex; align-items:center; justify-content:center; gap:7px;
     padding:0 24px; height:40px; border-radius:9px;
@@ -314,8 +306,7 @@ const PAGE_CSS = `
   .panel-tab:hover  { color:rgba(255,255,255,0.85); }
   .panel-tab.active { color:#fff; border-bottom-color:#7dd3c8; }
 
-  /* RECIPE TABLE */
-  .rcp-wrap  { border-radius:12px; border:1.5px solid #e5e7eb; overflow:hidden; }
+  .rcp-wrap  { border-radius:12px; border:1.5px solid #e5e7eb; overflow:visible; }
   .rcp-table { width:100%; border-collapse:collapse; font-family:'Inter',sans-serif; font-size:13px; }
   .rcp-table thead tr { background:linear-gradient(90deg,#1e3a40,#2a5260); }
   .rcp-table thead th { padding:10px 12px; text-align:left; color:rgba(255,255,255,0.85); font-size:10.5px; font-weight:700; letter-spacing:0.07em; text-transform:uppercase; white-space:nowrap; }
@@ -346,24 +337,32 @@ const PAGE_CSS = `
   }
   .rcp-btn-remove:hover { background:#fecaca; border-color:#f87171; }
 
-  /* AUTOCOMPLETE */
-  .ac-wrap { position:relative; }
-  .ac-dropdown {
-    position:absolute; top:calc(100% + 4px); left:0; right:0;
-    background:#fff; border:1.5px solid #1e3a40; border-radius:9px;
-    box-shadow:0 8px 24px rgba(30,58,64,0.18);
-    z-index:9999; max-height:220px; overflow-y:auto; font-family:'Inter',sans-serif;
+  /* ✅ KEY FIX: Portal-based dropdown styles */
+  .ac-portal-dropdown {
+    position:fixed;
+    background:#fff;
+    border:2px solid #1e3a40;
+    border-radius:10px;
+    box-shadow:0 12px 32px rgba(30,58,64,0.22), 0 2px 8px rgba(0,0,0,0.12);
+    z-index:99999;
+    max-height:240px;
+    overflow-y:auto;
+    font-family:'Inter',sans-serif;
   }
   .ac-item {
-    display:flex; align-items:center; gap:10px; padding:8px 12px;
+    display:flex; align-items:center; gap:10px; padding:9px 13px;
     cursor:pointer; transition:background 0.1s; border-bottom:1px solid #f0f4f4;
   }
   .ac-item:last-child { border-bottom:none; }
-  .ac-item:hover, .ac-item.highlighted { background:rgba(30,58,64,0.07); }
-  .ac-code { font-size:11px; font-weight:800; color:#1e3a40; background:rgba(30,58,64,0.08); padding:2px 7px; border-radius:5px; white-space:nowrap; flex-shrink:0; }
-  .ac-des  { font-size:12px; color:#374151; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .ac-cost { font-size:11px; color:#6b7280; font-weight:600; margin-left:auto; white-space:nowrap; flex-shrink:0; }
-  .ac-empty { padding:12px; text-align:center; font-size:12px; color:#9ca3af; font-style:italic; }
+  .ac-item:hover, .ac-item.highlighted { background:rgba(30,58,64,0.08); }
+  .ac-code {
+    font-size:11px; font-weight:800; color:#1e3a40;
+    background:rgba(30,58,64,0.1); padding:2px 7px;
+    border-radius:5px; white-space:nowrap; flex-shrink:0;
+  }
+  .ac-des  { font-size:12px; color:#374151; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .ac-cost { font-size:11px; color:#6b7280; font-weight:600; white-space:nowrap; flex-shrink:0; }
+  .ac-empty { padding:14px 16px; text-align:center; font-size:12px; color:#9ca3af; font-style:italic; }
 
   @media(max-width:767px) {
     .left-panel { display:none !important; }
@@ -371,9 +370,6 @@ const PAGE_CSS = `
   }
 `;
 
-/* ─────────────────────────────────────────
-   ICONS
-───────────────────────────────────────── */
 const IBell    = ({s=21}:{s?:number}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
 const ISearch  = ({s=15}:{s?:number}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
 const IChevD   = ({s=13}:{s?:number}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>;
@@ -392,9 +388,6 @@ const IFlag    = ({s=13}:{s?:number}) => <svg width={s} height={s} viewBox="0 0 
 const IFlask   = ({s=14}:{s?:number}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h6"/><path d="M10 3v6l-4 9a1 1 0 0 0 .9 1.45h10.2A1 1 0 0 0 18 18l-4-9V3"/></svg>;
 const IImage   = ({s=13}:{s?:number}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>;
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
 function FieldRow({ label, htmlFor, children }: {
   label: string; htmlFor?: string; children: React.ReactNode;
 }) {
@@ -433,9 +426,6 @@ function useToast() {
   return { toast, show };
 }
 
-/* ─────────────────────────────────────────
-   FLAG DEFINITIONS & CARD
-───────────────────────────────────────── */
 interface FlagDef {
   key:       keyof Item;
   label:     string;
@@ -524,83 +514,166 @@ function FlagsCard({ item, onChange }: {
   );
 }
 
-/* ─────────────────────────────────────────
-   AUTOCOMPLETE
-───────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════
+   ✅ FIXED AUTOCOMPLETE — Portal-based dropdown
+   Dropdown renders at document.body level so it's never
+   clipped by overflow:hidden parents (table cells, cards)
+═══════════════════════════════════════════════════════ */
 function ItemCodeAC({ value, rawItems, onSelect, onChange }: {
-  value: string; rawItems: RawItem[];
+  value: string;
+  rawItems: RawItem[];
   onSelect: (item: RawItem) => void;
   onChange: (val: string) => void;
 }) {
-  const [open,  setOpen]  = useState(false);
-  const [hiIdx, setHiIdx] = useState(0);
-  const wrapRef = useRef<HTMLDivElement>(null);
+  const [open,    setOpen]    = useState(false);
+  const [hiIdx,   setHiIdx]   = useState(0);
+  const [ddStyle, setDdStyle] = useState<React.CSSProperties>({});
+  const inputRef = useRef<HTMLInputElement>(null);
+  const ddRef    = useRef<HTMLDivElement>(null);
 
   const suggestions = useMemo(() => {
-    if (!value.trim()) return [];
-    const q = value.trim().toUpperCase();
+    const q = value.trim().toUpperCase().replace(/\s+/g, '');
+    if (!q) return [];
     return rawItems
-      .filter(it => it.code.toUpperCase().includes(q) || it.des.toUpperCase().includes(q))
-      .slice(0, 10);
+      .filter(it =>
+        it.code.toUpperCase().replace(/\s+/g,'').includes(q) ||
+        it.des.toUpperCase().includes(q)
+      )
+      .slice(0, 12);
   }, [value, rawItems]);
 
-  useEffect(() => {
-    function h(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+  /* ✅ Calculate dropdown position from input's bounding rect */
+  const updatePosition = useCallback(() => {
+    if (!inputRef.current) return;
+    const rect = inputRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const dropH = Math.min(240, suggestions.length * 44 + 8);
+
+    if (spaceBelow >= dropH || spaceBelow >= spaceAbove) {
+      // Show below
+      setDdStyle({
+        top:   rect.bottom + window.scrollY + 4,
+        left:  rect.left   + window.scrollX,
+        width: rect.width,
+        maxHeight: Math.min(240, spaceBelow - 8),
+      });
+    } else {
+      // Show above
+      setDdStyle({
+        top:   rect.top + window.scrollY - dropH - 4,
+        left:  rect.left + window.scrollX,
+        width: rect.width,
+        maxHeight: Math.min(240, spaceAbove - 8),
+      });
     }
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, []);
+  }, [suggestions.length]);
+
+  useEffect(() => {
+    if (open) updatePosition();
+  }, [open, updatePosition, suggestions.length]);
+
+  /* Close on outside click or scroll */
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (
+        inputRef.current && inputRef.current.contains(e.target as Node)
+      ) return;
+      if (
+        ddRef.current && ddRef.current.contains(e.target as Node)
+      ) return;
+      setOpen(false);
+    }
+    function onScroll() {
+      updatePosition();
+    }
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [open, updatePosition]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (!open || suggestions.length === 0) return;
-    if (e.key==='ArrowDown') { e.preventDefault(); setHiIdx(h=>Math.min(h+1,suggestions.length-1)); }
-    else if (e.key==='ArrowUp') { e.preventDefault(); setHiIdx(h=>Math.max(h-1,0)); }
-    else if (e.key==='Enter') {
-      e.preventDefault(); e.stopPropagation();
-      if (suggestions[hiIdx]) { onSelect(suggestions[hiIdx]); setOpen(false); }
-    } else if (e.key==='Escape') setOpen(false);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setOpen(true);
+      setHiIdx(h => Math.min(h + 1, suggestions.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHiIdx(h => Math.max(h - 1, 0));
+    } else if (e.key === 'Enter') {
+      if (open && suggestions[hiIdx]) {
+        e.preventDefault();
+        e.stopPropagation();
+        onSelect(suggestions[hiIdx]);
+        setOpen(false);
+      }
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    } else if (e.key === 'Tab') {
+      setOpen(false);
+    }
   }
 
+  /* ✅ Render dropdown via portal into document.body */
+  const dropdown = open && (suggestions.length > 0 || value.trim().length > 0)
+    ? (() => {
+        if (typeof document === 'undefined') return null;
+        const { createPortal } = require('react-dom');
+        return createPortal(
+          <div
+            ref={ddRef}
+            className="ac-portal-dropdown"
+            style={ddStyle}
+            onMouseDown={e => e.preventDefault()} // prevent blur before click
+          >
+            {suggestions.length > 0 ? suggestions.map((it, i) => (
+              <div
+                key={it.code}
+                className={`ac-item ${i === hiIdx ? 'highlighted' : ''}`}
+                onMouseDown={() => { onSelect(it); setOpen(false); }}
+                onMouseEnter={() => setHiIdx(i)}
+              >
+                <span className="ac-code">{it.code}</span>
+                <span className="ac-des">{it.des}</span>
+                <span className="ac-cost">LKR {it.cost.toFixed(2)}</span>
+              </div>
+            )) : (
+              <div className="ac-empty">No items match &ldquo;{value}&rdquo;</div>
+            )}
+          </div>,
+          document.body
+        );
+      })()
+    : null;
+
   return (
-    <div className="ac-wrap" ref={wrapRef}>
+    <>
       <input
+        ref={inputRef}
         className="rcp-input"
-        style={{ minWidth:120, textTransform:'uppercase' }}
+        style={{ textTransform:'uppercase' }}
         value={value}
-        placeholder="Item Code"
-        onChange={e => { onChange(e.target.value.toUpperCase()); setOpen(true); setHiIdx(0); }}
-        onFocus={() => { if (value.trim()) setOpen(true); }}
+        placeholder="Item Code / Name"
+        autoComplete="off"
+        onChange={e => {
+          onChange(e.target.value.toUpperCase());
+          setOpen(true);
+          setHiIdx(0);
+        }}
+        onFocus={() => {
+          if (value.trim()) { setOpen(true); updatePosition(); }
+        }}
         onKeyDown={handleKeyDown}
       />
-      {open && suggestions.length > 0 && (
-        <div className="ac-dropdown">
-          {suggestions.map((it,i) => (
-            <div
-              key={it.code}
-              className={`ac-item ${i===hiIdx?'highlighted':''}`}
-              onMouseDown={() => { onSelect(it); setOpen(false); }}
-              onMouseEnter={() => setHiIdx(i)}
-            >
-              <span className="ac-code">{it.code}</span>
-              <span className="ac-des">{it.des}</span>
-              <span className="ac-cost">LKR {it.cost.toFixed(2)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      {open && value.trim().length > 0 && suggestions.length === 0 && (
-        <div className="ac-dropdown">
-          <div className="ac-empty">No items match &ldquo;{value}&rdquo;</div>
-        </div>
-      )}
-    </div>
+      {dropdown}
+    </>
   );
 }
 
-/* ─────────────────────────────────────────
-   LOCATION GRID
-───────────────────────────────────────── */
 function LocationGrid({ rows, onChange }: {
   rows: LocationDetail[]; onChange: (u: LocationDetail[]) => void;
 }) {
@@ -630,17 +703,17 @@ function LocationGrid({ rows, onChange }: {
                   style={{ display:'flex',justifyContent:'center',cursor:'pointer' }}
                   role="checkbox" aria-checked={row.enable} tabIndex={0}
                   onClick={()=>updRow(idx,'enable',!row.enable)}
-                  onKeyDown={e=>{ if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();updRow(idx,'enable',!row.enable);} }}
+                  onKeyDown={e=>{ if(e.key==='Enter'||e.key===' '){e.preventDefault();updRow(idx,'enable',!row.enable);} }}
                 >
                   <div style={{ width:20,height:20,borderRadius:5,border:`2px solid ${row.enable?'#1e3a40':'#9ca3af'}`,background:row.enable?'#1e3a40':'#fff',display:'flex',alignItems:'center',justifyContent:'center',transition:'all 0.15s' }}>
                     {row.enable&&<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                   </div>
                 </div>
               </td>
-              <td><input className="loc-grid-input" type="number" value={row.locStockBalance} onChange={e=>updRow(idx,'locStockBalance',Number(e.target.value))} min={0} style={{ minWidth:100 }}/></td>
-              <td><input className="loc-grid-input" type="number" value={row.salesMargin}     onChange={e=>updRow(idx,'salesMargin',    Number(e.target.value))} min={0} style={{ minWidth:100 }}/></td>
-              <td><input className="loc-grid-input" type="number" value={row.retailPrice}     onChange={e=>updRow(idx,'retailPrice',    Number(e.target.value))} min={0} style={{ minWidth:100 }}/></td>
-              <td><input className="loc-grid-input" type="number" value={row.wsPrice}         onChange={e=>updRow(idx,'wsPrice',        Number(e.target.value))} min={0} style={{ minWidth:100 }}/></td>
+              <td><input className="loc-grid-input" type="number" value={row.locStockBalance} onChange={e=>updRow(idx,'locStockBalance',Number(e.target.value))} min={0}/></td>
+              <td><input className="loc-grid-input" type="number" value={row.salesMargin}     onChange={e=>updRow(idx,'salesMargin',    Number(e.target.value))} min={0}/></td>
+              <td><input className="loc-grid-input" type="number" value={row.retailPrice}     onChange={e=>updRow(idx,'retailPrice',    Number(e.target.value))} min={0}/></td>
+              <td><input className="loc-grid-input" type="number" value={row.wsPrice}         onChange={e=>updRow(idx,'wsPrice',        Number(e.target.value))} min={0}/></td>
             </tr>
           ))}
         </tbody>
@@ -649,15 +722,11 @@ function LocationGrid({ rows, onChange }: {
   );
 }
 
-/* ─────────────────────────────────────────
-   RECIPE GRID  ← KEY FIX HERE
-───────────────────────────────────────── */
 function RecipeGrid({ rows, rawItems, subUnits, onChange, menuItmID, defaultLocCode }: {
   rows: RecipeRow[]; rawItems: RawItem[]; subUnits: SubUnit[];
   onChange: (r: RecipeRow[]) => void;
   menuItmID: string; defaultLocCode: string;
 }) {
-  /* ✅ FIX: normalize both sides before comparing */
   function findRaw(code: string): RawItem | undefined {
     const q = code.trim().toUpperCase().replace(/\s+/g,'');
     return rawItems.find(it => it.code.trim().toUpperCase().replace(/\s+/g,'') === q);
@@ -665,25 +734,22 @@ function RecipeGrid({ rows, rawItems, subUnits, onChange, menuItmID, defaultLocC
 
   function updRow(idx: number, key: keyof RecipeRow, val: RecipeRow[keyof RecipeRow]) {
     onChange(rows.map((r,i) => {
-      if (i!==idx) return r;
-      const u = { ...r,[key]:val };
-      if (key==='rowItemCode') {
-        /* try exact match first, then partial */
+      if (i !== idx) return r;
+      const u = { ...r, [key]: val };
+      if (key === 'rowItemCode') {
         const exact = findRaw(String(val));
         if (exact) {
           u.rowItemDes   = exact.des;
           u.masterUnitID = exact.unit;
           u.itemCost     = exact.cost;
         }
-        /* if no exact match yet, keep existing des (user still typing) */
       }
       return u;
     }));
   }
 
-  /* Called when user picks from autocomplete dropdown */
   function selectItem(idx: number, it: RawItem) {
-    onChange(rows.map((r,i) => i!==idx ? r : {
+    onChange(rows.map((r,i) => i !== idx ? r : {
       ...r,
       rowItemCode:  it.code,
       rowItemDes:   it.des,
@@ -693,50 +759,64 @@ function RecipeGrid({ rows, rawItems, subUnits, onChange, menuItmID, defaultLocC
   }
 
   function addRow() {
-    onChange([...rows,{
+    onChange([...rows, {
       menuItmID, rowItemCode:'', rowItemDes:'',
       masterUnitID:'', subUnitID:'', qty:1,
-      locCode:defaultLocCode, itemCost:0, isNew:true,
+      locCode: defaultLocCode, itemCost:0, isNew:true,
     }]);
   }
 
-  const totalCost = rows.reduce((s,r) => s + Number(r.qty)*Number(r.itemCost), 0);
+  const totalCost = rows.reduce((s,r) => s + Number(r.qty) * Number(r.itemCost), 0);
 
   return (
-    <div style={{ display:'flex',flexDirection:'column',gap:10 }}>
-      <div className="rcp-wrap">
-        <table className="rcp-table">
+    <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+      {/* ✅ overflow:visible so portal dropdown isn't clipped */}
+      <div className="rcp-wrap" style={{ overflowX:'auto', overflowY:'visible' }}>
+        <table className="rcp-table" style={{ tableLayout:'fixed', minWidth:760 }}>
+          <colgroup>
+            <col style={{ width:40 }}/>
+            <col style={{ width:180 }}/>
+            <col style={{ width:'auto' }}/>
+            <col style={{ width:130 }}/>
+            <col style={{ width:80 }}/>
+            <col style={{ width:110 }}/>
+            <col style={{ width:110 }}/>
+            <col style={{ width:44 }}/>
+          </colgroup>
           <thead>
             <tr>
-              <th style={{ width:36 }}>#</th>
-              <th style={{ minWidth:160 }}>Item Code</th>
-              <th style={{ minWidth:200 }}>Description</th>
-              <th style={{ minWidth:120 }}>Sub Unit</th>
-              <th style={{ minWidth:80  }}>Qty</th>
-              <th style={{ minWidth:110 }}>Unit Cost</th>
-              <th style={{ minWidth:110 }}>Line Total</th>
-              <th style={{ width:40 }}></th>
+              <th>#</th>
+              <th>Item Code</th>
+              <th>Description</th>
+              <th>Sub Unit</th>
+              <th>Qty</th>
+              <th>Unit Cost</th>
+              <th>Line Total</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
-            {rows.length===0 && (
+            {rows.length === 0 && (
               <tr>
-                <td colSpan={8} style={{ textAlign:'center',color:'#9ca3af',padding:'24px 0',fontSize:13 }}>
+                <td colSpan={8} style={{ textAlign:'center', color:'#9ca3af', padding:'28px 0', fontSize:13 }}>
                   No ingredients yet — click <strong>+ Add Ingredient</strong> below.
                 </td>
               </tr>
             )}
-            {rows.map((row,idx) => (
+            {rows.map((row, idx) => (
               <tr key={idx}>
-                <td style={{ color:'#9ca3af',fontSize:11,textAlign:'center',fontWeight:700 }}>{idx+1}</td>
-                <td style={{ position:'relative' }}>
+                <td style={{ color:'#9ca3af', fontSize:11, textAlign:'center', fontWeight:700 }}>{idx+1}</td>
+
+                {/* ✅ NO overflow:hidden here — portal handles clipping */}
+                <td>
                   <ItemCodeAC
                     value={row.rowItemCode}
                     rawItems={rawItems}
-                    onChange={val => updRow(idx,'rowItemCode',val)}
-                    onSelect={it  => selectItem(idx,it)}
+                    onChange={val => updRow(idx, 'rowItemCode', val)}
+                    onSelect={it  => selectItem(idx, it)}
                   />
                 </td>
+
                 <td>
                   <input
                     className="rcp-input"
@@ -744,42 +824,52 @@ function RecipeGrid({ rows, rawItems, subUnits, onChange, menuItmID, defaultLocC
                     readOnly
                     placeholder="Auto-filled on select"
                     style={{
-                      minWidth:190,
                       background: row.rowItemDes ? '#f0fdf4' : '#f8fafa',
                       color:      row.rowItemDes ? '#15803d' : '#9ca3af',
                       fontWeight: row.rowItemDes ? 600 : 400,
                     }}
                   />
                 </td>
+
                 <td>
                   <select
                     className="rcp-input frm-select"
-                    style={{ minWidth:110,paddingRight:28 }}
+                    style={{ paddingRight:28 }}
                     value={row.subUnitID}
-                    onChange={e => updRow(idx,'subUnitID',e.target.value)}
+                    onChange={e => updRow(idx, 'subUnitID', e.target.value)}
                   >
                     <option value="">-- Unit --</option>
-                    {subUnits.map(u=><option key={u.id} value={u.id}>{u.des}</option>)}
+                    {subUnits.map(u => <option key={u.id} value={u.id}>{u.des}</option>)}
                   </select>
                 </td>
+
                 <td>
-                  <input className="rcp-input" type="number" min={0} style={{ minWidth:70 }}
-                    value={row.qty} onChange={e=>updRow(idx,'qty',Number(e.target.value))}/>
+                  <input className="rcp-input" type="number" min={0}
+                    value={row.qty}
+                    onChange={e => updRow(idx, 'qty', Number(e.target.value))}/>
                 </td>
+
                 <td>
-                  <input className="rcp-input" type="number" min={0} style={{ minWidth:100 }}
-                    value={row.itemCost} onChange={e=>updRow(idx,'itemCost',Number(e.target.value))}/>
+                  <input className="rcp-input" type="number" min={0}
+                    value={row.itemCost}
+                    onChange={e => updRow(idx, 'itemCost', Number(e.target.value))}/>
                 </td>
+
                 <td>
                   <input className="rcp-input" readOnly
-                    style={{ minWidth:100,background:'#f0f9ff',color:'#0369a1',fontWeight:700 }}
-                    value={(Number(row.qty)*Number(row.itemCost)).toFixed(2)}/>
+                    style={{ background:'#f0f9ff', color:'#0369a1', fontWeight:700 }}
+                    value={(Number(row.qty) * Number(row.itemCost)).toFixed(2)}/>
                 </td>
+
                 <td>
-                  <button className="rcp-btn-remove"
-                    onClick={()=>onChange(rows.filter((_,i)=>i!==idx))}
-                    title="Remove">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  <button
+                    className="rcp-btn-remove"
+                    onClick={() => onChange(rows.filter((_,i) => i !== idx))}
+                    title="Remove row"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
                   </button>
                 </td>
               </tr>
@@ -788,21 +878,23 @@ function RecipeGrid({ rows, rawItems, subUnits, onChange, menuItmID, defaultLocC
         </table>
       </div>
 
-      <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',gap:10,flexWrap:'wrap' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
         <button className="rcp-btn-add" onClick={addRow}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
           Add Ingredient
         </button>
-        {rows.length>0 && (
-          <div style={{ display:'flex',alignItems:'center',gap:16,background:'linear-gradient(135deg,#f0fdf4,#dcfce7)',border:'1.5px solid #bbf7d0',borderRadius:10,padding:'10px 18px' }}>
+        {rows.length > 0 && (
+          <div style={{ display:'flex', alignItems:'center', gap:16, background:'linear-gradient(135deg,#f0fdf4,#dcfce7)', border:'1.5px solid #bbf7d0', borderRadius:10, padding:'10px 18px' }}>
             <div>
-              <p style={{ fontSize:10,fontWeight:700,color:'#6b7280',textTransform:'uppercase',letterSpacing:'0.06em' }}>Ingredients</p>
-              <p style={{ fontSize:15,fontWeight:800,color:'#15803d' }}>{rows.length}</p>
+              <p style={{ fontSize:10, fontWeight:700, color:'#6b7280', textTransform:'uppercase', letterSpacing:'0.06em' }}>Ingredients</p>
+              <p style={{ fontSize:15, fontWeight:800, color:'#15803d' }}>{rows.length}</p>
             </div>
-            <div style={{ width:1,height:32,background:'#bbf7d0' }}/>
+            <div style={{ width:1, height:32, background:'#bbf7d0' }}/>
             <div>
-              <p style={{ fontSize:10,fontWeight:700,color:'#6b7280',textTransform:'uppercase',letterSpacing:'0.06em' }}>Total Recipe Cost</p>
-              <p style={{ fontSize:15,fontWeight:800,color:'#15803d' }}>LKR {totalCost.toFixed(2)}</p>
+              <p style={{ fontSize:10, fontWeight:700, color:'#6b7280', textTransform:'uppercase', letterSpacing:'0.06em' }}>Total Recipe Cost</p>
+              <p style={{ fontSize:15, fontWeight:800, color:'#15803d' }}>LKR {totalCost.toFixed(2)}</p>
             </div>
           </div>
         )}
@@ -811,9 +903,6 @@ function RecipeGrid({ rows, rawItems, subUnits, onChange, menuItmID, defaultLocC
   );
 }
 
-/* ─────────────────────────────────────────
-   QUICK-NAV
-───────────────────────────────────────── */
 const SECTIONS = [
   { id:'sec-ident',      label:'Identification',  icon:<ITag s={11}/>     },
   { id:'sec-categories', label:'Categories',      icon:<IArchive s={11}/> },
@@ -824,9 +913,6 @@ const SECTIONS = [
   { id:'sec-image',      label:'Image',           icon:<IImage s={11}/>   },
 ];
 
-/* ─────────────────────────────────────────
-   MAIN PAGE
-───────────────────────────────────────── */
 export default function ItemMasterPage() {
   const router  = useRouter();
   const [navKey, setNavKey] = useState('services');
@@ -847,12 +933,12 @@ export default function ItemMasterPage() {
   const [saving,   setSaving]   = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const [activeTab,      setActiveTab]      = useState<'details'|'recipe'>('details');
-  const [allRecipes,     setAllRecipes]     = useState<RecipeRow[]>([]);
-  const [rawItems,       setRawItems]       = useState<RawItem[]>([]);
-  const [recipeRows,     setRecipeRows]     = useState<RecipeRow[]>([]);
-  const [subUnits,       setSubUnits]       = useState<SubUnit[]>([]);
-  const [recipeSaving,   setRecipeSaving]   = useState(false);
+  const [activeTab,    setActiveTab]    = useState<'details'|'recipe'>('details');
+  const [allRecipes,   setAllRecipes]   = useState<RecipeRow[]>([]);
+  const [rawItems,     setRawItems]     = useState<RawItem[]>([]);
+  const [recipeRows,   setRecipeRows]   = useState<RecipeRow[]>([]);
+  const [subUnits,     setSubUnits]     = useState<SubUnit[]>([]);
+  const [recipeSaving, setRecipeSaving] = useState(false);
   const [recipeLocCodes, setRecipeLocCodes] = useState<string[]>([]);
 
   const nextIdRef    = useRef(1);
@@ -866,16 +952,12 @@ export default function ItemMasterPage() {
   );
 
   const catDes = useCallback(
-    (list: MasterOpt[], code: string) => list.find(c=>c.code===code)?.des ?? code,
+    (list: MasterOpt[], code: string) => list.find(c => c.code === code)?.des ?? code,
     [],
   );
 
-  /* ✅ FIX: stable primary loc (fixes useEffect size error) */
   const primaryLocCode = recipeLocCodes[0] ?? current.locCode;
 
-  /* ════════════════════════════════════════
-     LOAD ITEMS  ← KEY FIX: proper select after save
-  ════════════════════════════════════════ */
   const loadItems = useCallback(async (
     selectKey?: { locCode: string; itemCode: string }
   ) => {
@@ -900,19 +982,22 @@ export default function ItemMasterPage() {
       setCategory4(json.category4);
 
       nextIdRef.current = json.items.length > 0
-        ? Math.max(...json.items.map(s=>s.id)) + 1 : 1;
+        ? Math.max(...json.items.map((s: Item) => s.id)) + 1 : 1;
 
       if (json.items.length > 0) {
-        /* ✅ FIX: normalize comparison so saved item is always found */
-        const target = selectKey
-          ? json.items.find(i =>
-              i.locCode.trim().toUpperCase()  === selectKey.locCode.trim().toUpperCase() &&
-              i.itemCode.trim().toUpperCase() === selectKey.itemCode.trim().toUpperCase()
-            ) ?? json.items[0]
-          : json.items[0];
-
+        let target: Item;
+        if (selectKey) {
+          const nl = selectKey.locCode.trim().toUpperCase();
+          const ni = selectKey.itemCode.trim().toUpperCase();
+          target = json.items.find((i: Item) =>
+            i.locCode.trim().toUpperCase()  === nl &&
+            i.itemCode.trim().toUpperCase() === ni
+          ) ?? json.items[0];
+        } else {
+          target = json.items[0];
+        }
         setCurrent({ ...target });
-        setIsNew(false);           // ✅ FIX: always set isNew=false after load
+        setIsNew(false);
       } else {
         setCurrent(emptyItem(1));
         setIsNew(true);
@@ -926,10 +1011,6 @@ export default function ItemMasterPage() {
 
   useEffect(() => { loadItems(); }, [loadItems]);
 
-  /* ════════════════════════════════════════
-     LOAD RECIPE MASTER
-     ✅ FIX: all items (not just non-service) returned as rawItems
-  ════════════════════════════════════════ */
   const loadRecipeMaster = useCallback(async () => {
     try {
       const res  = await fetch('/api/recipes');
@@ -948,16 +1029,15 @@ export default function ItemMasterPage() {
       setRawItems(ri);
       setSubUnits(json.subUnits ?? []);
 
-      /* ✅ FIX: normalize codes on both sides during description lookup */
       setAllRecipes(
         (json.recipes ?? []).map(r => {
-          const normalizedCode = r.rowItemCode.trim().toUpperCase();
-          const found = ri.find(it => it.code.trim().toUpperCase() === normalizedCode);
+          const nc = r.rowItemCode.trim().toUpperCase();
+          const found = ri.find(it => it.code.trim().toUpperCase() === nc);
           return {
             ...r,
             rowItemDes:   found?.des  ?? '',
             masterUnitID: found?.unit ?? r.masterUnitID,
-            itemCost:     r.itemCost  !== 0 ? r.itemCost : (found?.cost ?? 0),
+            itemCost:     r.itemCost !== 0 ? r.itemCost : (found?.cost ?? 0),
           };
         })
       );
@@ -966,7 +1046,6 @@ export default function ItemMasterPage() {
 
   useEffect(() => { loadRecipeMaster(); }, [loadRecipeMaster]);
 
-  /* ── Filter recipes for current item ── */
   const loadRecipes = useCallback((menuItmID: string, locCode: string) => {
     if (!menuItmID) { setRecipeRows([]); return; }
     setRecipeRows(
@@ -979,7 +1058,6 @@ export default function ItemMasterPage() {
     );
   }, [allRecipes]);
 
-  /* ✅ FIX: stable deps – primaryLocCode is a string, not an array */
   useEffect(() => {
     if (!isNew && current.itemCode)
       loadRecipes(current.itemCode, primaryLocCode);
@@ -992,7 +1070,6 @@ export default function ItemMasterPage() {
     setRecipeLocCodes([current.locCode]);
   }, [current.locCode]);
 
-  /* ── Save recipes ── */
   const handleSaveRecipes = useCallback(async () => {
     if (!current.itemCode || isNew) { showToast('Save item first', true); return; }
     if (recipeRows.length === 0)    { showToast('Add at least one ingredient', true); return; }
@@ -1008,8 +1085,8 @@ export default function ItemMasterPage() {
         recipeLocCodes.map(lc =>
           fetch('/api/recipes', {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ menuItmID:current.itemCode, lines:lines.map(l=>({...l,locCode:lc})) }),
-          }).then(r=>r.json())
+            body: JSON.stringify({ menuItmID: current.itemCode, lines: lines.map(l => ({ ...l, locCode: lc })) }),
+          }).then(r => r.json())
         )
       );
       showToast(`Recipe saved for ${recipeLocCodes.length} location(s) ✓`);
@@ -1021,9 +1098,6 @@ export default function ItemMasterPage() {
     }
   }, [current.itemCode, isNew, recipeLocCodes, recipeRows, loadRecipeMaster, showToast]);
 
-  /* ════════════════════════════════════════
-     ITEM CRUD
-  ════════════════════════════════════════ */
   const filtered = useMemo(() =>
     items.filter(it =>
       it.itemDes.toLowerCase().includes(search.toLowerCase()) ||
@@ -1032,12 +1106,12 @@ export default function ItemMasterPage() {
     ), [items, search]);
 
   const originalItem = useMemo(() =>
-    isNew ? null : items.find(s=>s.id===current.id) ?? null,
+    isNew ? null : items.find(s => s.id === current.id) ?? null,
     [items, current.id, isNew],
   );
 
   const isDirty = useMemo(() => {
-    if (isNew) return current.itemDes.trim()!=='' || current.itemCode.trim()!=='';
+    if (isNew) return current.itemDes.trim() !== '' || current.itemCode.trim() !== '';
     if (!originalItem) return false;
     return JSON.stringify(current) !== JSON.stringify(originalItem);
   }, [current, originalItem, isNew]);
@@ -1048,10 +1122,10 @@ export default function ItemMasterPage() {
   }
 
   function upd<K extends keyof Item>(key: K, val: Item[K]) {
-    setCurrent(p => ({ ...p, [key]:val }));
+    setCurrent(p => ({ ...p, [key]: val }));
   }
   function updLocDetail(updated: LocationDetail[]) {
-    setCurrent(p => ({ ...p, locationDetails:updated }));
+    setCurrent(p => ({ ...p, locationDetails: updated }));
   }
 
   function handleNew() {
@@ -1063,21 +1137,18 @@ export default function ItemMasterPage() {
   }
 
   function handleSelect(it: Item) {
-    if (current.id===it.id && !isNew) return;
+    if (current.id === it.id && !isNew) return;
     if (!confirmDiscard('Discard changes?')) return;
     setCurrent({ ...it });
     setIsNew(false);
     document.getElementById('sec-ident')?.scrollIntoView({ behavior:'smooth', block:'start' });
   }
 
-  /* ✅ KEY FIX: handleSave – pass correct selectKey so form stays on saved item */
   const handleSave = useCallback(async () => {
     if (!current.itemDes.trim())           { showToast('Item Description is required', true); return; }
     if (isNew && !current.itemCode.trim()) { showToast('Item Code is required', true); return; }
 
     setSaving(true);
-
-    /* Capture codes before async call */
     const savedLocCode  = current.locCode.trim();
     const savedItemCode = current.itemCode.trim().toUpperCase();
 
@@ -1085,21 +1156,19 @@ export default function ItemMasterPage() {
       const res = isNew
         ? await fetch('/api/services', {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify(current),
+            body: JSON.stringify({ ...current, itemCode: savedItemCode }),
           })
         : await fetch(
             `/api/services/${encodeURIComponent(savedLocCode)}/${encodeURIComponent(savedItemCode)}`,
-            { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(current) }
+            { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(current) }
           );
 
-      const json = await res.json() as { success:boolean; message?:string };
+      const json = await res.json() as { success: boolean; message?: string };
       if (!json.success) throw new Error(json.message ?? 'Save failed');
 
       showToast(isNew ? 'Item created ✓' : 'Saved ✓');
-
-      /* ✅ FIX: pass named object so loadItems can find the right item */
+      setIsNew(false);
       await loadItems({ locCode: savedLocCode, itemCode: savedItemCode });
-
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Save failed', true);
     } finally {
@@ -1129,7 +1198,7 @@ export default function ItemMasterPage() {
 
   function handleClear() {
     if (isNew) { setCurrent(emptyItem(current.id)); return; }
-    const orig = items.find(s=>s.id===current.id);
+    const orig = items.find(s => s.id === current.id);
     if (orig) setCurrent({ ...orig });
   }
 
@@ -1150,19 +1219,19 @@ export default function ItemMasterPage() {
   }
 
   function handleFormKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.key!=='Enter') return;
+    if (e.key !== 'Enter') return;
     const target = e.target as HTMLElement;
-    if (target.tagName!=='INPUT' && target.tagName!=='SELECT') return;
+    if (target.tagName !== 'INPUT' && target.tagName !== 'SELECT') return;
     e.preventDefault();
     if (!formRef.current) return;
     const focusable = Array.from(
       formRef.current.querySelectorAll<HTMLElement>(
         'input:not([type="hidden"]):not([readonly]):not([disabled]), select:not([disabled])'
       )
-    ).filter(el=>el.offsetParent!==null);
+    ).filter(el => el.offsetParent !== null);
     const idx = focusable.indexOf(target);
-    if (idx===-1||idx>=focusable.length-1) { target.blur(); return; }
-    const next = focusable[idx+1];
+    if (idx === -1 || idx >= focusable.length - 1) { target.blur(); return; }
+    const next = focusable[idx + 1];
     next.focus();
     if (next instanceof HTMLInputElement) next.select();
   }
@@ -1174,7 +1243,7 @@ export default function ItemMasterPage() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s')) return;
+      if (!((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's')) return;
       e.preventDefault();
       if (!busyRef.current) saveRef.current();
     }
@@ -1188,70 +1257,67 @@ export default function ItemMasterPage() {
 
   const busy = saving || deleting;
 
-  /* ════════════════════════════════════════
-     RENDER
-  ════════════════════════════════════════ */
   return (
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
-      {toast && <div className={`toast ${toast.err?'err':''}`}>{toast.msg}</div>}
+      {toast && <div className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
 
-      <div style={{ display:'flex',height:'100vh',overflow:'hidden',background:'#c2d4d4' }}>
+      <div style={{ display:'flex', height:'100vh', overflow:'hidden', background:'#c2d4d4' }}>
         <AdminSidebar active={navKey} onNav={handleNavigate} onLogout={handleLogout}/>
 
-        <div style={{ flex:1,display:'flex',flexDirection:'column',minWidth:0,overflow:'hidden' }}>
+        <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0, overflow:'hidden' }}>
 
           {/* HEADER */}
-          <header style={{ background:'#dae6e6',height:56,flexShrink:0,display:'flex',alignItems:'center',padding:'0 18px',gap:12,borderBottom:'1px solid rgba(0,0,0,0.06)',zIndex:10 }}>
-            <div style={{ position:'relative',flexShrink:0 }}>
-              <span style={{ position:'absolute',left:11,top:'50%',transform:'translateY(-50%)',display:'flex',alignItems:'center',pointerEvents:'none',opacity:0.4 }}><ISearch/></span>
+          <header style={{ background:'#dae6e6', height:56, flexShrink:0, display:'flex', alignItems:'center', padding:'0 18px', gap:12, borderBottom:'1px solid rgba(0,0,0,0.06)', zIndex:10 }}>
+            <div style={{ position:'relative', flexShrink:0 }}>
+              <span style={{ position:'absolute', left:11, top:'50%', transform:'translateY(-50%)', display:'flex', alignItems:'center', pointerEvents:'none', opacity:0.4 }}><ISearch/></span>
               <input
                 aria-label="Search items"
-                style={{ border:'1.5px solid #c0cbcc',borderRadius:10,padding:'0 14px 0 38px',height:40,width:260,fontFamily:"'Inter',sans-serif",fontSize:14,color:'#1f2937',background:'#fff',outline:'none' }}
-                placeholder="Search items…" value={search} onChange={e=>setSearch(e.target.value)}
+                style={{ border:'1.5px solid #c0cbcc', borderRadius:10, padding:'0 14px 0 38px', height:40, width:260, fontFamily:"'Inter',sans-serif", fontSize:14, color:'#1f2937', background:'#fff', outline:'none' }}
+                placeholder="Search items…" value={search} onChange={e => setSearch(e.target.value)}
               />
             </div>
             <div style={{ flex:1 }}/>
-            <button style={{ background:'none',border:'none',cursor:'pointer',color:'#374151',display:'flex',alignItems:'center',padding:4,borderRadius:8 }}><IBell/></button>
-            <div style={{ display:'flex',alignItems:'center',gap:4,cursor:'pointer' }}>
-              <span style={{ fontSize:14,fontWeight:500,color:'#1f2937' }}>MR. SAYO</span>
+            <button style={{ background:'none', border:'none', cursor:'pointer', color:'#374151', display:'flex', alignItems:'center', padding:4, borderRadius:8 }}><IBell/></button>
+            <div style={{ display:'flex', alignItems:'center', gap:4, cursor:'pointer' }}>
+              <span style={{ fontSize:14, fontWeight:500, color:'#1f2937' }}>MR. SAYO</span>
               <IChevD/>
             </div>
-            <div style={{ width:34,height:34,borderRadius:'50%',background:'linear-gradient(135deg,#5a8a92,#3a6a72)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:14,cursor:'pointer',flexShrink:0 }}>S</div>
+            <div style={{ width:34, height:34, borderRadius:'50%', background:'linear-gradient(135deg,#5a8a92,#3a6a72)', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontWeight:700, fontSize:14, cursor:'pointer', flexShrink:0 }}>S</div>
           </header>
 
-          <div style={{ flex:1,overflow:'hidden',padding:'13px 15px',display:'flex',gap:13 }}>
+          <div style={{ flex:1, overflow:'hidden', padding:'13px 15px', display:'flex', gap:13 }}>
 
             {/* LEFT PANEL */}
-            <div className="left-panel" style={{ width:250,flexShrink:0,background:'#deeaea',borderRadius:12,display:'flex',flexDirection:'column',overflow:'hidden',boxShadow:'0 1px 5px rgba(0,0,0,0.08)' }}>
-              <div style={{ padding:'12px 12px 8px',borderBottom:'1px solid rgba(30,58,64,0.1)',flexShrink:0 }}>
-                <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8 }}>
-                  <span style={{ fontSize:13,fontWeight:700,color:'#1e3a40' }}>Items</span>
-                  <span style={{ fontSize:11,color:'#6b7280',fontWeight:500 }}>{loading?'…':`${items.length} total`}</span>
+            <div className="left-panel" style={{ width:250, flexShrink:0, background:'#deeaea', borderRadius:12, display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:'0 1px 5px rgba(0,0,0,0.08)' }}>
+              <div style={{ padding:'12px 12px 8px', borderBottom:'1px solid rgba(30,58,64,0.1)', flexShrink:0 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+                  <span style={{ fontSize:13, fontWeight:700, color:'#1e3a40' }}>Items</span>
+                  <span style={{ fontSize:11, color:'#6b7280', fontWeight:500 }}>{loading ? '…' : `${items.length} total`}</span>
                 </div>
                 <button className="btn-new" style={{ width:'100%' }} onClick={handleNew} disabled={busy}>
                   <IPlus s={14}/> New Item
                 </button>
               </div>
-              <div style={{ flex:1,overflowY:'auto',padding:'8px' }}>
-                {loading && <div style={{ display:'flex',justifyContent:'center',padding:'2rem 0' }}><span className="spinner dark"/></div>}
-                {!loading && filtered.length===0 && <p style={{ textAlign:'center',color:'#9ca3af',fontSize:12,padding:'2rem 0' }}>No items found</p>}
-                {!loading && filtered.map(it=>(
+              <div style={{ flex:1, overflowY:'auto', padding:'8px' }}>
+                {loading && <div style={{ display:'flex', justifyContent:'center', padding:'2rem 0' }}><span className="spinner dark"/></div>}
+                {!loading && filtered.length === 0 && <p style={{ textAlign:'center', color:'#9ca3af', fontSize:12, padding:'2rem 0' }}>No items found</p>}
+                {!loading && filtered.map(it => (
                   <button
                     key={it.id}
-                    className={`srv-list-item ${current.id===it.id&&!isNew?'active':''}`}
-                    onClick={()=>handleSelect(it)}
+                    className={`srv-list-item ${current.id === it.id && !isNew ? 'active' : ''}`}
+                    onClick={() => handleSelect(it)}
                   >
-                    <div style={{ width:36,height:36,borderRadius:9,background:it.enable?'linear-gradient(135deg,#1e3a40,#2a5260)':'#d1d5db',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:'#fff',overflow:'hidden' }}>
-                      {it.itemPic ? <img src={it.itemPic} alt="" style={{ width:'100%',height:'100%',objectFit:'cover' }}/> : <IBox s={17}/>}
+                    <div style={{ width:36, height:36, borderRadius:9, background: it.enable ? 'linear-gradient(135deg,#1e3a40,#2a5260)' : '#d1d5db', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, color:'#fff', overflow:'hidden' }}>
+                      {it.itemPic ? <img src={it.itemPic} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }}/> : <IBox s={17}/>}
                     </div>
-                    <div style={{ flex:1,minWidth:0 }}>
-                      <p style={{ fontSize:13,fontWeight:700,color:'#1e3a40',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis' }}>{it.itemDes||'(no description)'}</p>
-                      <p style={{ fontSize:11,color:'#6b7280',marginTop:1 }}>{it.itemCode} · Loc {it.locCode}</p>
-                      <div style={{ display:'flex',alignItems:'center',gap:4,marginTop:3,flexWrap:'wrap' }}>
-                        <span className={it.enable?'badge-active':'badge-inactive'}>{it.enable?'Active':'Inactive'}</span>
-                        {it.category1&&<span className="badge-cat">{catDes(category1,it.category1)}</span>}
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <p style={{ fontSize:13, fontWeight:700, color:'#1e3a40', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{it.itemDes || '(no description)'}</p>
+                      <p style={{ fontSize:11, color:'#6b7280', marginTop:1 }}>{it.itemCode} · Loc {it.locCode}</p>
+                      <div style={{ display:'flex', alignItems:'center', gap:4, marginTop:3, flexWrap:'wrap' }}>
+                        <span className={it.enable ? 'badge-active' : 'badge-inactive'}>{it.enable ? 'Active' : 'Inactive'}</span>
+                        {it.category1 && <span className="badge-cat">{catDes(category1, it.category1)}</span>}
                       </div>
                     </div>
                   </button>
@@ -1260,22 +1326,21 @@ export default function ItemMasterPage() {
             </div>
 
             {/* RIGHT PANEL */}
-            <div style={{ flex:1,minWidth:0,display:'flex',flexDirection:'column',overflow:'hidden',borderRadius:14,boxShadow:'0 2px 12px rgba(30,58,64,0.1)' }}>
+            <div style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column', overflow:'hidden', borderRadius:14, boxShadow:'0 2px 12px rgba(30,58,64,0.1)' }}>
 
-              {/* Title / tabs */}
-              <div style={{ background:'#1e3a40',borderRadius:'14px 14px 0 0',padding:'14px 18px 0',flexShrink:0 }}>
-                <p style={{ color:'rgba(255,255,255,0.45)',fontSize:10,fontWeight:700,letterSpacing:'0.1em',textTransform:'uppercase' }}>
-                  {isNew?'New Item':'Edit Item'}{isDirty&&'  •  Unsaved'}{'  •  Ctrl+S to save'}
+              <div style={{ background:'#1e3a40', borderRadius:'14px 14px 0 0', padding:'14px 18px 0', flexShrink:0 }}>
+                <p style={{ color:'rgba(255,255,255,0.45)', fontSize:10, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase' }}>
+                  {isNew ? 'New Item' : 'Edit Item'}{isDirty && '  •  Unsaved'}{'  •  Ctrl+S to save'}
                 </p>
-                <p style={{ color:'#fff',fontSize:18,fontWeight:800,marginTop:2,marginBottom:10 }}>ITEM MASTER DETAIL</p>
+                <p style={{ color:'#fff', fontSize:18, fontWeight:800, marginTop:2, marginBottom:10 }}>ITEM MASTER DETAIL</p>
                 <div className="panel-tabs">
-                  <button className={`panel-tab ${activeTab==='details'?'active':''}`} onClick={()=>setActiveTab('details')}>
+                  <button className={`panel-tab ${activeTab === 'details' ? 'active' : ''}`} onClick={() => setActiveTab('details')}>
                     <ITag s={13}/> Item Details
                   </button>
-                  {!isNew&&(
+                  {!isNew && (
                     <button
-                      className={`panel-tab ${activeTab==='recipe'?'active':''}`}
-                      onClick={()=>{ setActiveTab('recipe'); loadRecipes(current.itemCode,primaryLocCode); }}
+                      className={`panel-tab ${activeTab === 'recipe' ? 'active' : ''}`}
+                      onClick={() => { setActiveTab('recipe'); loadRecipes(current.itemCode, primaryLocCode); }}
                     >
                       <IFlask s={13}/> Recipe Management
                     </button>
@@ -1283,11 +1348,10 @@ export default function ItemMasterPage() {
                 </div>
               </div>
 
-              {/* Quick nav */}
-              {activeTab==='details'&&(
+              {activeTab === 'details' && (
                 <div className="quick-nav">
-                  {SECTIONS.map(s=>(
-                    <button key={s.id} className="quick-nav-btn" onClick={()=>scrollTo(s.id)}>
+                  {SECTIONS.map(s => (
+                    <button key={s.id} className="quick-nav-btn" onClick={() => scrollTo(s.id)}>
                       {s.icon}{s.label}
                     </button>
                   ))}
@@ -1298,193 +1362,193 @@ export default function ItemMasterPage() {
               <div
                 ref={formRef}
                 onKeyDown={handleFormKeyDown}
-                style={{ flex:1,overflowY:'auto',padding:'16px',display:'flex',flexDirection:'column',gap:14,background:'#e8f0f1' }}
+                style={{ flex:1, overflowY:'auto', padding:'16px', display:'flex', flexDirection:'column', gap:14, background:'#e8f0f1' }}
               >
-                {loading&&(
-                  <div style={{ display:'flex',justifyContent:'center',alignItems:'center',flex:1 }}>
-                    <span className="spinner dark" style={{ width:28,height:28 }}/>
+                {loading && (
+                  <div style={{ display:'flex', justifyContent:'center', alignItems:'center', flex:1 }}>
+                    <span className="spinner dark" style={{ width:28, height:28 }}/>
                   </div>
                 )}
 
-                {/* ══ RECIPE TAB ══ */}
-                {!loading&&activeTab==='recipe'&&!isNew&&(
-                  <div className="fade-up" style={{ display:'flex',flexDirection:'column',gap:14 }}>
-                    {/* Banner */}
-                    <div style={{ background:'linear-gradient(135deg,#1e3a40,#2a5260)',borderRadius:12,padding:'16px 20px',display:'flex',alignItems:'flex-start',gap:16,flexWrap:'wrap' }}>
-                      <div style={{ flex:1,minWidth:200 }}>
-                        <p style={{ color:'rgba(255,255,255,0.5)',fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.08em' }}>Recipe For</p>
-                        <p style={{ color:'#fff',fontSize:17,fontWeight:800,marginTop:3 }}>{current.itemDes}</p>
-                        <p style={{ color:'rgba(255,255,255,0.45)',fontSize:11,marginTop:2 }}>
-                          {current.itemCode} &nbsp;·&nbsp; {recipeRows.length} ingredient{recipeRows.length!==1?'s':''}
+                {/* RECIPE TAB */}
+                {!loading && activeTab === 'recipe' && !isNew && (
+                  <div className="fade-up" style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                    <div style={{ background:'linear-gradient(135deg,#1e3a40,#2a5260)', borderRadius:12, padding:'16px 20px', display:'flex', alignItems:'flex-start', gap:16, flexWrap:'wrap' }}>
+                      <div style={{ flex:1, minWidth:200 }}>
+                        <p style={{ color:'rgba(255,255,255,0.5)', fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.08em' }}>Recipe For</p>
+                        <p style={{ color:'#fff', fontSize:17, fontWeight:800, marginTop:3 }}>{current.itemDes}</p>
+                        <p style={{ color:'rgba(255,255,255,0.45)', fontSize:11, marginTop:2 }}>
+                          {current.itemCode} &nbsp;·&nbsp; {recipeRows.length} ingredient{recipeRows.length !== 1 ? 's' : ''}
                         </p>
                       </div>
-                      <div style={{ display:'flex',flexDirection:'column',gap:8,alignItems:'flex-end' }}>
-                        <p style={{ color:'rgba(255,255,255,0.5)',fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em' }}>Apply to Locations</p>
-                        <div style={{ display:'flex',flexWrap:'wrap',gap:7,justifyContent:'flex-end' }}>
-                          {locations.map(l=>{
-                            const checked=recipeLocCodes.includes(l.code);
+                      <div style={{ display:'flex', flexDirection:'column', gap:8, alignItems:'flex-end' }}>
+                        <p style={{ color:'rgba(255,255,255,0.5)', fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em' }}>Apply to Locations</p>
+                        <div style={{ display:'flex', flexWrap:'wrap', gap:7, justifyContent:'flex-end' }}>
+                          {locations.map(l => {
+                            const checked = recipeLocCodes.includes(l.code);
                             return (
                               <button
                                 key={l.code}
-                                onClick={()=>setRecipeLocCodes(prev=>checked?prev.filter(c=>c!==l.code):[...prev,l.code])}
-                                style={{ display:'inline-flex',alignItems:'center',gap:6,padding:'5px 13px',borderRadius:20,cursor:'pointer',fontFamily:"'Inter',sans-serif",border:`1.5px solid ${checked?'#7dd3c8':'rgba(255,255,255,0.2)'}`,background:checked?'rgba(125,211,200,0.2)':'rgba(255,255,255,0.07)',color:checked?'#7dd3c8':'rgba(255,255,255,0.55)',fontSize:12,fontWeight:700,transition:'all 0.15s' }}
+                                onClick={() => setRecipeLocCodes(prev => checked ? prev.filter(c => c !== l.code) : [...prev, l.code])}
+                                style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 13px', borderRadius:20, cursor:'pointer', fontFamily:"'Inter',sans-serif", border:`1.5px solid ${checked ? '#7dd3c8' : 'rgba(255,255,255,0.2)'}`, background: checked ? 'rgba(125,211,200,0.2)' : 'rgba(255,255,255,0.07)', color: checked ? '#7dd3c8' : 'rgba(255,255,255,0.55)', fontSize:12, fontWeight:700, transition:'all 0.15s' }}
                               >
-                                <div style={{ width:14,height:14,borderRadius:3,flexShrink:0,border:`2px solid ${checked?'#7dd3c8':'rgba(255,255,255,0.3)'}`,background:checked?'#7dd3c8':'transparent',display:'flex',alignItems:'center',justifyContent:'center' }}>
-                                  {checked&&<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#1e3a40" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                                <div style={{ width:14, height:14, borderRadius:3, flexShrink:0, border:`2px solid ${checked ? '#7dd3c8' : 'rgba(255,255,255,0.3)'}`, background: checked ? '#7dd3c8' : 'transparent', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                                  {checked && <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#1e3a40" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                                 </div>
                                 {l.code} – {l.name}
                               </button>
                             );
                           })}
                         </div>
-                        {recipeLocCodes.length>1&&<p style={{ color:'rgba(255,211,100,0.85)',fontSize:10,fontWeight:600 }}>⚠ Recipe will be saved to {recipeLocCodes.length} locations</p>}
+                        {recipeLocCodes.length > 1 && (
+                          <p style={{ color:'rgba(255,211,100,0.85)', fontSize:10, fontWeight:600 }}>
+                            ⚠ Recipe will be saved to {recipeLocCodes.length} locations
+                          </p>
+                        )}
                       </div>
                     </div>
 
                     <Card title="Recipe Ingredients" icon={<IFlask s={14}/>}>
                       <RecipeGrid
-                        rows={recipeRows} rawItems={rawItems} subUnits={subUnits}
+                        rows={recipeRows}
+                        rawItems={rawItems}
+                        subUnits={subUnits}
                         onChange={setRecipeRows}
-                        menuItmID={current.itemCode} defaultLocCode={primaryLocCode}
+                        menuItmID={current.itemCode}
+                        defaultLocCode={primaryLocCode}
                       />
                     </Card>
                   </div>
                 )}
 
-                {/* ══ DETAILS TAB ══ */}
-                {!loading&&activeTab==='details'&&(
-                  <div className="fade-up" style={{ display:'flex',flexDirection:'column',gap:14 }}>
+                {/* DETAILS TAB */}
+                {!loading && activeTab === 'details' && (
+                  <div className="fade-up" style={{ display:'flex', flexDirection:'column', gap:14 }}>
 
-                    {/* 1 – IDENTIFICATION */}
                     <Card id="sec-ident" title="Item Identification" icon={<ITag s={13}/>}>
-                      <div style={{ display:'grid',gridTemplateColumns:'200px 1fr',gap:12,marginBottom:12 }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'200px 1fr', gap:12, marginBottom:12 }}>
                         <FieldRow label="Item Code *" htmlFor="itm-code">
                           {isNew
-                            ? <input id="itm-code" className="frm-input" value={current.itemCode} onChange={e=>upd('itemCode',e.target.value.toUpperCase())} placeholder="e.g. ITM-006" maxLength={15}/>
+                            ? <input id="itm-code" className="frm-input" value={current.itemCode} onChange={e => upd('itemCode', e.target.value.toUpperCase())} placeholder="e.g. ITM-006" maxLength={15}/>
                             : <input id="itm-code" className="frm-input" value={current.itemCode} readOnly/>
                           }
                         </FieldRow>
                         <FieldRow label="Item Description *" htmlFor="itm-des">
-                          <input id="itm-des" className="frm-input" value={current.itemDes} onChange={e=>upd('itemDes',e.target.value)} placeholder="e.g. Shampoo & Conditioner" maxLength={50}/>
+                          <input id="itm-des" className="frm-input" value={current.itemDes} onChange={e => upd('itemDes', e.target.value)} placeholder="e.g. Shampoo & Conditioner" maxLength={50}/>
                         </FieldRow>
                       </div>
-                      <div style={{ display:'grid',gridTemplateColumns:'2fr 1fr 1fr',gap:12 }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr 1fr', gap:12 }}>
                         <FieldRow label="Print Description" htmlFor="itm-printdes">
-                          <input id="itm-printdes" className="frm-input" value={current.itemPrintDes} onChange={e=>upd('itemPrintDes',e.target.value)} maxLength={50}/>
+                          <input id="itm-printdes" className="frm-input" value={current.itemPrintDes} onChange={e => upd('itemPrintDes', e.target.value)} maxLength={50}/>
                         </FieldRow>
                         <FieldRow label="Master Unit" htmlFor="itm-unit">
-                          <select id="itm-unit" className="frm-select" value={current.masterUnitID} onChange={e=>upd('masterUnitID',e.target.value)}>
-                            {units.map(u=><option key={u.id} value={u.id}>{u.des}</option>)}
+                          <select id="itm-unit" className="frm-select" value={current.masterUnitID} onChange={e => upd('masterUnitID', e.target.value)}>
+                            {units.map(u => <option key={u.id} value={u.id}>{u.des}</option>)}
                           </select>
                         </FieldRow>
                         <FieldRow label="Supplier" htmlFor="itm-sup">
-                          <select id="itm-sup" className="frm-select" value={current.supID} onChange={e=>upd('supID',e.target.value)}>
+                          <select id="itm-sup" className="frm-select" value={current.supID} onChange={e => upd('supID', e.target.value)}>
                             <option value="">-- Select --</option>
-                            {suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                           </select>
                         </FieldRow>
                       </div>
                     </Card>
 
-                    {/* 2 – CATEGORIES */}
                     <Card id="sec-categories" title="Item Categories" icon={<IArchive s={13}/>}>
-                      <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:12 }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:12 }}>
                         {([
                           { label:'Main Category',  id:'itm-cat1', val:current.category1, list:category1, key:'category1' as const },
                           { label:'Sub Category 1', id:'itm-cat2', val:current.category2, list:category2, key:'category2' as const },
                           { label:'Sub Category 2', id:'itm-cat3', val:current.category3, list:category3, key:'category3' as const },
                           { label:'Sub Category 3', id:'itm-cat4', val:current.category4, list:category4, key:'category4' as const },
-                        ] as const).map(c=>(
+                        ] as const).map(c => (
                           <FieldRow key={c.key} label={c.label} htmlFor={c.id}>
-                            <select id={c.id} className="frm-select" value={c.val} onChange={e=>upd(c.key,e.target.value)}>
+                            <select id={c.id} className="frm-select" value={c.val} onChange={e => upd(c.key, e.target.value)}>
                               <option value="">-- Select --</option>
-                              {c.list.map(o=><option key={o.code} value={o.code}>{o.des}</option>)}
+                              {c.list.map(o => <option key={o.code} value={o.code}>{o.des}</option>)}
                             </select>
                           </FieldRow>
                         ))}
                       </div>
                     </Card>
 
-                    {/* 3 – FLAGS */}
                     <FlagsCard item={current} onChange={upd}/>
 
-                    {/* 4 – COST & MARGIN */}
                     <Card id="sec-cost" title="Cost & Margin" icon={<IDollar s={13}/>}>
-                      <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:12 }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:12 }}>
                         <FieldRow label="Raw Cost" htmlFor="itm-rawcost">
-                          <input id="itm-rawcost" className="frm-input" type="number" value={current.rawCost} onChange={e=>upd('rawCost',Number(e.target.value))} min={0}/>
+                          <input id="itm-rawcost" className="frm-input" type="number" value={current.rawCost} onChange={e => upd('rawCost', Number(e.target.value))} min={0}/>
                         </FieldRow>
                         <FieldRow label="Cost Markup %" htmlFor="itm-markup">
-                          <input id="itm-markup" className="frm-input" type="number" value={current.costMarkup} onChange={e=>upd('costMarkup',Number(e.target.value))} min={0}/>
+                          <input id="itm-markup" className="frm-input" type="number" value={current.costMarkup} onChange={e => upd('costMarkup', Number(e.target.value))} min={0}/>
                         </FieldRow>
                         <FieldRow label="Overall Cost (Auto)">
-                          <input className="frm-input" value={overallCost.toFixed(2)} readOnly style={{ background:'#f0fdf4',color:'#15803d',fontWeight:700 }}/>
+                          <input className="frm-input" value={overallCost.toFixed(2)} readOnly style={{ background:'#f0fdf4', color:'#15803d', fontWeight:700 }}/>
                         </FieldRow>
                         <FieldRow label="Sales Margin %" htmlFor="itm-margin">
-                          <input id="itm-margin" className="frm-input" type="number" value={current.salesMargin} onChange={e=>upd('salesMargin',Number(e.target.value))} min={0}/>
+                          <input id="itm-margin" className="frm-input" type="number" value={current.salesMargin} onChange={e => upd('salesMargin', Number(e.target.value))} min={0}/>
                         </FieldRow>
                       </div>
-                      <div style={{ marginTop:14,background:'linear-gradient(135deg,#1e3a40,#2a5260)',borderRadius:10,padding:'12px 16px',display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12 }}>
+                      <div style={{ marginTop:14, background:'linear-gradient(135deg,#1e3a40,#2a5260)', borderRadius:10, padding:'12px 16px', display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12 }}>
                         {[
-                          { label:'Raw Cost',val:`LKR ${current.rawCost.toLocaleString()}` },
+                          { label:'Raw Cost',    val:`LKR ${current.rawCost.toLocaleString()}` },
                           { label:'Overall Cost',val:`LKR ${overallCost.toFixed(2)}` },
-                          { label:'Margin',val:`${current.salesMargin}%` },
-                        ].map(it=>(
+                          { label:'Margin',      val:`${current.salesMargin}%` },
+                        ].map(it => (
                           <div key={it.label}>
-                            <p style={{ color:'rgba(255,255,255,0.45)',fontSize:9.5,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.06em' }}>{it.label}</p>
-                            <p style={{ color:'#fff',fontSize:15,fontWeight:800,marginTop:3 }}>{it.val}</p>
+                            <p style={{ color:'rgba(255,255,255,0.45)', fontSize:9.5, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em' }}>{it.label}</p>
+                            <p style={{ color:'#fff', fontSize:15, fontWeight:800, marginTop:3 }}>{it.val}</p>
                           </div>
                         ))}
                       </div>
                     </Card>
 
-                    {/* 5 – REORDER */}
                     <Card id="sec-reorder" title="Reorder Levels & Stock Limits" icon={<ILayers s={13}/>}>
-                      <div style={{ display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:12 }}>
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:12 }}>
                         {([
                           { label:'Reorder Level (ROL)', id:'itm-rol',    key:'rol'    },
                           { label:'Reorder Qty (ROQ)',   id:'itm-roq',    key:'roq'    },
                           { label:'Min Qty',             id:'itm-minqty', key:'minQty' },
                           { label:'Max Qty',             id:'itm-maxqty', key:'maxQty' },
-                        ] as {label:string;id:string;key:keyof Item}[]).map(f=>(
+                        ] as { label:string; id:string; key:keyof Item }[]).map(f => (
                           <FieldRow key={f.key as string} label={f.label} htmlFor={f.id}>
                             <input id={f.id} className="frm-input" type="number" min={0}
                               value={current[f.key] as number}
-                              onChange={e=>upd(f.key,Number(e.target.value) as Item[typeof f.key])}/>
+                              onChange={e => upd(f.key, Number(e.target.value) as Item[typeof f.key])}/>
                           </FieldRow>
                         ))}
                       </div>
-                      <div style={{ marginTop:10,background:'#fffbeb',border:'1.5px solid #fde68a',borderRadius:8,padding:'8px 12px',display:'flex',alignItems:'center',gap:8 }}>
+                      <div style={{ marginTop:10, background:'#fffbeb', border:'1.5px solid #fde68a', borderRadius:8, padding:'8px 12px', display:'flex', alignItems:'center', gap:8 }}>
                         <span style={{ fontSize:15 }}>💡</span>
-                        <span style={{ fontSize:12,color:'#92400e',fontWeight:500 }}>
+                        <span style={{ fontSize:12, color:'#92400e', fontWeight:500 }}>
                           Stock Balance is managed per-location — see <strong>Location Details</strong> below.
                         </span>
                       </div>
                     </Card>
 
-                    {/* 6 – LOCATIONS */}
                     <Card id="sec-locations" title="Location Details" icon={<IMapPin s={13}/>} badge={`${current.locationDetails.length} locations`}>
-                      <p style={{ fontSize:12,color:'#6b7280',marginBottom:10 }}>Per-location stock, pricing &amp; enable. Saved with the main Save button.</p>
+                      <p style={{ fontSize:12, color:'#6b7280', marginBottom:10 }}>Per-location stock, pricing &amp; enable. Saved with the main Save button.</p>
                       <LocationGrid rows={current.locationDetails} onChange={updLocDetail}/>
-                      {current.locationDetails.length>0&&(
-                        <div style={{ display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))',gap:10,marginTop:14 }}>
-                          {current.locationDetails.map(ld=>(
-                            <div key={ld.locCode} style={{ background:'#fff',borderRadius:10,border:`1.5px solid ${ld.enable?'#bbf7d0':'#fecaca'}`,padding:'12px 14px' }}>
-                              <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8 }}>
-                                <span style={{ fontSize:13,fontWeight:700,color:'#1e3a40' }}>{ld.locCode}</span>
-                                <span className={ld.enable?'badge-active':'badge-inactive'}>{ld.enable?'Active':'Inactive'}</span>
+                      {current.locationDetails.length > 0 && (
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(190px,1fr))', gap:10, marginTop:14 }}>
+                          {current.locationDetails.map(ld => (
+                            <div key={ld.locCode} style={{ background:'#fff', borderRadius:10, border:`1.5px solid ${ld.enable ? '#bbf7d0' : '#fecaca'}`, padding:'12px 14px' }}>
+                              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+                                <span style={{ fontSize:13, fontWeight:700, color:'#1e3a40' }}>{ld.locCode}</span>
+                                <span className={ld.enable ? 'badge-active' : 'badge-inactive'}>{ld.enable ? 'Active' : 'Inactive'}</span>
                               </div>
-                              <p style={{ fontSize:11,color:'#6b7280',marginBottom:8 }}>{ld.locName}</p>
-                              <div style={{ display:'flex',flexDirection:'column',gap:4 }}>
+                              <p style={{ fontSize:11, color:'#6b7280', marginBottom:8 }}>{ld.locName}</p>
+                              <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
                                 {[
                                   { label:'Stock',        val:String(ld.locStockBalance) },
                                   { label:'Sales Margin', val:`${ld.salesMargin}%` },
                                   { label:'Retail Price', val:`LKR ${ld.retailPrice.toFixed(2)}` },
                                   { label:'WS Price',     val:`LKR ${ld.wsPrice.toFixed(2)}` },
-                                ].map(r=>(
-                                  <div key={r.label} style={{ display:'flex',justifyContent:'space-between' }}>
-                                    <span style={{ fontSize:11,color:'#9ca3af' }}>{r.label}</span>
-                                    <span style={{ fontSize:11,fontWeight:600,color:'#1f2937' }}>{r.val}</span>
+                                ].map(r => (
+                                  <div key={r.label} style={{ display:'flex', justifyContent:'space-between' }}>
+                                    <span style={{ fontSize:11, color:'#9ca3af' }}>{r.label}</span>
+                                    <span style={{ fontSize:11, fontWeight:600, color:'#1f2937' }}>{r.val}</span>
                                   </div>
                                 ))}
                               </div>
@@ -1494,20 +1558,19 @@ export default function ItemMasterPage() {
                       )}
                     </Card>
 
-                    {/* 7 – IMAGE */}
                     <Card id="sec-image" title="Item Image" icon={<IImage s={13}/>}>
-                      <div style={{ display:'flex',alignItems:'center',gap:18 }}>
-                        <div style={{ width:100,height:100,borderRadius:12,background:current.itemPic?'transparent':'#f3f6f6',border:'2px dashed #d1d9da',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',flexShrink:0 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:18 }}>
+                        <div style={{ width:100, height:100, borderRadius:12, background: current.itemPic ? 'transparent' : '#f3f6f6', border:'2px dashed #d1d9da', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', flexShrink:0 }}>
                           {current.itemPic
-                            ? <img src={current.itemPic} alt="item" style={{ width:'100%',height:'100%',objectFit:'cover' }}/>
-                            : <div style={{ textAlign:'center',color:'#9ca3af' }}><IBox s={28}/><p style={{ fontSize:10,marginTop:4,fontWeight:600 }}>No Image</p></div>
+                            ? <img src={current.itemPic} alt="item" style={{ width:'100%', height:'100%', objectFit:'cover' }}/>
+                            : <div style={{ textAlign:'center', color:'#9ca3af' }}><IBox s={28}/><p style={{ fontSize:10, marginTop:4, fontWeight:600 }}>No Image</p></div>
                           }
                         </div>
-                        <div style={{ display:'flex',flexDirection:'column',gap:10 }}>
+                        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
                           <input ref={fileInputRef} type="file" accept="image/*" style={{ display:'none' }} onChange={handlePicChange}/>
-                          <button className="btn-clear" onClick={()=>fileInputRef.current?.click()}><IImage s={14}/> Upload Image</button>
-                          {current.itemPic&&<button className="btn-del" onClick={()=>upd('itemPic',null)}><ITrash s={13}/> Remove</button>}
-                          <p style={{ fontSize:11,color:'#9ca3af',maxWidth:200 }}>JPG, PNG, GIF, WebP. 400×400px recommended.</p>
+                          <button className="btn-clear" onClick={() => fileInputRef.current?.click()}><IImage s={14}/> Upload Image</button>
+                          {current.itemPic && <button className="btn-del" onClick={() => upd('itemPic', null)}><ITrash s={13}/> Remove</button>}
+                          <p style={{ fontSize:11, color:'#9ca3af', maxWidth:200 }}>JPG, PNG, GIF, WebP. 400×400px recommended.</p>
                         </div>
                       </div>
                     </Card>
@@ -1517,21 +1580,21 @@ export default function ItemMasterPage() {
               </div>
 
               {/* FOOTER */}
-              <div style={{ background:'#dce8e8',borderTop:'1.5px solid rgba(30,58,64,0.12)',padding:'12px 16px',display:'flex',gap:10,flexShrink:0,flexWrap:'wrap',alignItems:'center',borderRadius:'0 0 14px 14px' }}>
+              <div style={{ background:'#dce8e8', borderTop:'1.5px solid rgba(30,58,64,0.12)', padding:'12px 16px', display:'flex', gap:10, flexShrink:0, flexWrap:'wrap', alignItems:'center', borderRadius:'0 0 14px 14px' }}>
                 <button className="btn-clear" onClick={handleClear} disabled={busy}><IRefresh s={14}/> Reset</button>
-                <button className="btn-print" onClick={()=>window.print()} disabled={busy}><IPrint s={14}/> Print</button>
+                <button className="btn-print" onClick={() => window.print()} disabled={busy}><IPrint s={14}/> Print</button>
                 <div style={{ flex:1 }}/>
-                {!isNew&&(
+                {!isNew && (
                   <button className="btn-del" onClick={handleDelete} disabled={busy}>
-                    {deleting ? <><span className="spinner" style={{ borderTopColor:'#dc2626',borderColor:'rgba(220,38,38,0.2)' }}/> Deleting…</> : <><ITrash s={14}/> Delete</>}
+                    {deleting ? <><span className="spinner" style={{ borderTopColor:'#dc2626', borderColor:'rgba(220,38,38,0.2)' }}/> Deleting…</> : <><ITrash s={14}/> Delete</>}
                   </button>
                 )}
-                {activeTab==='details'&&(
+                {activeTab === 'details' && (
                   <button className="btn-save" onClick={handleSave} disabled={busy}>
                     {saving ? <><span className="spinner"/> Saving…</> : <><ISave s={14}/> Save Item</>}
                   </button>
                 )}
-                {activeTab==='recipe'&&!isNew&&(
+                {activeTab === 'recipe' && !isNew && (
                   <button className="btn-save" onClick={handleSaveRecipes} disabled={recipeSaving}>
                     {recipeSaving ? <><span className="spinner"/> Saving…</> : <><ISave s={14}/> Save Recipe</>}
                   </button>

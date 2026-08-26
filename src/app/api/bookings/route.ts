@@ -17,15 +17,14 @@ interface BookingProvider {
   role: string;
 }
 
-// FIX 1 — `date` is now inside the interface, not a floating external field
 interface BookingRequestBody {
   name:          string;
   email:         string;
   phone:         string;
-  gender?:       string;          // optional on the way IN (we default it below)
+  gender?:       string;
   location:      string;
   mode:          string;
-  date:          string;          // ← MOVED HERE from the ad-hoc & { date?: string }
+  date:          string;
   timeSlot:      string;
   services:      BookingService[];
   providers:     BookingProvider[];
@@ -79,6 +78,24 @@ function escapeHtml(str: string): string {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   CUSTOMER CODE GENERATOR
+   Tbl_CustomerMaster uses CusCode String @id @db.Char(10)
+   Generates zero-padded codes: "CUS0000001"
+─────────────────────────────────────────────────────────────────────────────── */
+async function generateCusCode(): Promise<string> {
+  const last = await prisma.tbl_CustomerMaster.findFirst({
+    orderBy: { CreateDateTime: 'desc' },
+    select:  { CusCode: true },
+  });
+
+  if (!last) return 'CUS0000001';
+
+  const num  = parseInt(last.CusCode.replace(/\D/g, ''), 10) || 0;
+  const next = num + 1;
+  return `CUS${String(next).padStart(7, '0')}`;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
    PAYLOAD VALIDATOR
 ─────────────────────────────────────────────────────────────────────────────── */
 function validateBookingBody(body: Partial<BookingRequestBody>): string | null {
@@ -93,8 +110,6 @@ function validateBookingBody(body: Partial<BookingRequestBody>): string | null {
     return 'At least one service is required.';
   }
 
-  // Providers are optional for confirmed mode (staff will assign on call)
-  // Walk-in (without_confirmation) must have at least one provider
   const isWalkin = body.mode === 'without_confirmation';
   if (isWalkin && (!Array.isArray(body.providers) || body.providers.length === 0)) {
     return 'At least one provider is required.';
@@ -106,22 +121,11 @@ function validateBookingBody(body: Partial<BookingRequestBody>): string | null {
   return null;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   FIX 2 — resolveGender
-   Schema: Gender String @db.VarChar(10)  ← required, NOT nullable
-   The DB column is required so we must always provide a non-empty string.
-   We cap at 10 chars to match the VarChar(10) constraint.
-─────────────────────────────────────────────────────────────────────────────── */
 function resolveGender(raw: string | undefined): string {
   const val = (raw ?? '').trim().slice(0, 10);
   return val.length > 0 ? val : 'Unknown';
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   FIX 3 — resolveCategories
-   Schema: Categories String @db.VarChar(255)  ← required, NOT nullable
-   We must always provide a non-empty string.
-─────────────────────────────────────────────────────────────────────────────── */
 function resolveCategories(raw: string | string[] | undefined): string {
   if (Array.isArray(raw)) {
     return raw.join(',').slice(0, 255) || 'General';
@@ -853,7 +857,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Safe to assert after validation
     const {
       name,
       email,
@@ -871,54 +874,49 @@ export async function POST(req: NextRequest) {
       notes,
     } = body as BookingRequestBody;
 
-    // ── FIX 2: Gender — schema requires String (NOT NULL, VarChar(10)) ────────
-    // resolveGender guarantees a non-empty string capped at 10 chars.
-    const resolvedGender = resolveGender(gender);
-
-    // ── FIX 3: Categories — schema requires String (NOT NULL) ─────────────────
-    // resolveCategories guarantees a non-empty string capped at 255 chars.
+    const resolvedGender     = resolveGender(gender);
     const resolvedCategories = resolveCategories(categories);
 
-    // ── 2. Upsert user ────────────────────────────────────────────────────────
-    let user = await prisma.tbl_UserDetails.findFirst({
-      where: { EmailAddress: email.trim().toLowerCase() },
+    // ── 2. Upsert customer (Tbl_CustomerMaster) ───────────────────────────────
+    let customer = await prisma.tbl_CustomerMaster.findFirst({
+      where: { CusEmail: email.trim().toLowerCase() },
     });
 
-    if (!user) {
+    if (!customer) {
       const placeholderHash = await bcrypt.hash(
         `guest_${email}_${Date.now()}`, 10
       );
-      user = await prisma.tbl_UserDetails.create({
+      const cusCode = await generateCusCode();
+
+      customer = await prisma.tbl_CustomerMaster.create({
         data: {
-          UserName:     name.trim(),
-          EmailAddress: email.trim().toLowerCase(),
-          PhoneNumber:  phone.trim(),
-          PasswordHash: placeholderHash,
-          // Gender on tbl_UserDetails is String? (nullable) — safe to pass directly
-          Gender:       gender ?? null,
+          CusCode:  cusCode,
+          CusName:  name.trim(),
+          CusEmail: email.trim().toLowerCase(),
+          RegTel:   phone.trim().slice(0, 15),
+          PSW:      placeholderHash,
+          Gender:   gender?.trim().slice(0, 50) ?? null,
         },
       });
     } else {
-      user = await prisma.tbl_UserDetails.update({
-        where: { UserId: user.UserId },
+      customer = await prisma.tbl_CustomerMaster.update({
+        where: { CusCode: customer.CusCode },
         data: {
-          UserName:    name.trim(),
-          PhoneNumber: phone.trim(),
-          // Preserve existing gender if none supplied
-          Gender:      gender?.trim() || user.Gender,
+          CusName: name.trim(),
+          RegTel:  phone.trim().slice(0, 15),
+          Gender:  gender?.trim().slice(0, 50) || customer.Gender,
         },
       });
     }
 
     // ── 3. Duplicate check (provider-aware) ───────────────────────────────────
-    // Same slot is only a conflict if the SAME provider is involved.
     const requestedProviderNames = new Set(
       providers.map(p => p.name.trim().toLowerCase())
     );
 
     const sameSlotBookings = await prisma.tbl_Bookings.findMany({
       where: {
-        UserId:      user.UserId,
+        CusCode:     customer.CusCode,
         BookingDate: date,
         TimeSlot:    timeSlot,
         Status:      { not: 'cancelled' },
@@ -962,15 +960,13 @@ export async function POST(req: NextRequest) {
 
     const booking = await prisma.tbl_Bookings.create({
       data: {
-        UserId:        user.UserId,
+        CusCode:       customer.CusCode,
         BookingMode:   mode === 'without_confirmation'
                          ? 'without_confirmation'
                          : 'confirmed',
-        // FIX 2 — resolvedGender is always a non-empty string ≤ 10 chars
         Gender:        resolvedGender,
         Location:      location,
         Services:      JSON.stringify(services),
-        // FIX 3 — resolvedCategories is always a non-empty string ≤ 255 chars
         Categories:    resolvedCategories,
         TotalDuration: totalDuration,
         TotalPrice:    totalPrice,
@@ -1013,10 +1009,10 @@ export async function POST(req: NextRequest) {
 
     // ── 6. Respond ────────────────────────────────────────────────────────────
     return NextResponse.json({
-      success:   true,
-      bookingId: booking.BookingId,
-      userId:    user.UserId,
-      message:   mode === 'without_confirmation'
+      success:    true,
+      bookingId:  booking.BookingId,
+      customerId: customer.CusCode,
+      message:    mode === 'without_confirmation'
         ? 'Booking registered without confirmation.'
         : 'Booking request received. We will call you shortly to confirm.',
     });
@@ -1045,24 +1041,24 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const user = await prisma.tbl_UserDetails.findFirst({
-      where:   { EmailAddress: email.toLowerCase() },
-      include: {
-        bookings: {
-          orderBy: { CreatedAt: 'desc' },
-          take:    10,
-        },
-      },
+    const customer = await prisma.tbl_CustomerMaster.findFirst({
+      where: { CusEmail: email.toLowerCase() },
     });
 
-    if (!user) {
+    if (!customer) {
       return NextResponse.json(
-        { success: false, message: 'No user found with this email.' },
+        { success: false, message: 'No customer found with this email.' },
         { status: 404 }
       );
     }
 
-    return NextResponse.json({ success: true, user });
+    const bookings = await prisma.tbl_Bookings.findMany({
+      where:   { CusCode: customer.CusCode },
+      orderBy: { CreatedAt: 'desc' },
+      take:    10,
+    });
+
+    return NextResponse.json({ success: true, customer, bookings });
 
   } catch (error) {
     console.error('[BOOKING_GET_ERROR]', error);

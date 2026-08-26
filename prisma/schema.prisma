@@ -331,3 +331,29 @@ model Tbl_ItemCategory4 {
   Enable  Boolean @default(true)
   @@map("tbl_itemcategory4")
 }
+
+model Tbl_Bookings {
+  BookingId        Int      @id @default(autoincrement())
+  CusCode          String   @db.Char(10)  // Changed from UserId
+  BookingMode      String   @db.VarChar(50)
+  Gender           String   @db.VarChar(10)
+  Location         String   @db.VarChar(100)
+  Services         String   @db.Text
+  Categories       String   @db.VarChar(255)
+  TotalDuration    Int
+  TotalPrice       Float
+  Providers        String   @db.Text
+  BookingDate      String   @db.VarChar(20)
+  TimeSlot         String   @db.VarChar(50)
+  SpecialNotes     String?  @db.Text
+  Status           String   @default("pending") @db.VarChar(50)
+  CreatedAt        DateTime @default(now())
+  UpdatedAt        DateTime @updatedAt
+
+
+
+  @@index([CusCode])
+  @@index([BookingDate])
+  @@index([Status])
+  @@map("tbl_bookings")
+}

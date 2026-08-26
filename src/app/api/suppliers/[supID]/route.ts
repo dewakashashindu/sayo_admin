@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
+const globalForPrisma = global as unknown as { prisma: PrismaClient };
+const prisma = globalForPrisma.prisma || new PrismaClient();
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
-type Ctx = { params: { supID: string } };
+
+type Ctx = { params: Promise<{ supID: string }> };
 
 function clean(v: string | null | undefined) {
   if (!v || v.trim() === ' ' || v.trim() === '') return '';
@@ -34,8 +37,9 @@ function mapRow(r: {
 /* ── GET single ── */
 export async function GET(_: NextRequest, { params }: Ctx) {
   try {
+    const { supID } = await params;
     const rec = await prisma.tbl_SupplierMaster.findUnique({
-      where: { SupID: params.supID },
+      where: { SupID: supID },
     });
     if (!rec) return NextResponse.json({ success: false, message: 'Not found' }, { status: 404 });
     return NextResponse.json({ success: true, data: mapRow(rec) });
@@ -48,13 +52,14 @@ export async function GET(_: NextRequest, { params }: Ctx) {
 /* ── PUT update ── */
 export async function PUT(req: NextRequest, { params }: Ctx) {
   try {
+    const { supID } = await params;
     const b = await req.json();
 
     if (!b.supName?.trim())
       return NextResponse.json({ success: false, message: 'Supplier Name is required' }, { status: 400 });
 
     const updated = await prisma.tbl_SupplierMaster.update({
-      where: { SupID: params.supID },
+      where: { SupID: supID },
       data: {
         SupName:    b.supName.trim(),
         SuppAdd1:   b.suppAdd1?.trim()  || ' ',
@@ -77,7 +82,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
 /* ── DELETE ── */
 export async function DELETE(_: NextRequest, { params }: Ctx) {
   try {
-    await prisma.tbl_SupplierMaster.delete({ where: { SupID: params.supID } });
+    const { supID } = await params;
+    await prisma.tbl_SupplierMaster.delete({ where: { SupID: supID } });
     return NextResponse.json({ success: true, message: 'Deleted successfully' });
   } catch (err) {
     console.error('DELETE /api/suppliers/[supID] error:', err);
