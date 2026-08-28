@@ -8,185 +8,19 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        Int      @id @default(autoincrement())
-  name      String
-  email     String   @unique
-  phone     String?
-  createdAt DateTime @default(now())
-}
-
-model Admin {
-  id           Int      @id @default(autoincrement())
-  username     String   @unique
-  passwordHash String   @db.Text
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-}
-
-model SiteConfig {
-  id         Int      @id @default(autoincrement())
-  configKey  String   @unique @db.VarChar(50)
-  configData Json
-  updatedAt  DateTime @default(now()) @updatedAt
-
-  @@index([configKey])
-}
-
-model AdminActivityLog {
-  id            Int      @id @default(autoincrement())
-  adminUsername String   @db.VarChar(100)
-  action        String   @db.VarChar(255)
-  section       String   @db.VarChar(50)
-  timestamp     DateTime @default(now())
-
-  @@index([adminUsername])
-  @@index([timestamp])
-}
-
-model NavConfig {
-  id               Int      @id @default(1)
-  logo_text        String   @default("SAYO") @db.VarChar(50)
-  contact_btn_text String   @default("CONTACT US") @db.VarChar(100)
-  contact_btn_link String   @default("/contact") @db.VarChar(200)
-  nav_items        Json
-  updated_at       DateTime @updatedAt
-  updated_by       String   @default("admin") @db.VarChar(100)
-}
-
-model HomeConfig {
-  id            Int      @id @default(1)
-  hero_eyebrow  String   @default("Experienced hair stylists") @db.VarChar(200)
-  hero_heading  String   @default("Enjoy Professional Beauty Services!") @db.VarChar(500)
-  hero_body     String   @db.Text
-  hero_cta_text String   @default("Reserve Experience") @db.VarChar(100)
-  hero_cta_link String   @default("/contact") @db.VarChar(200)
-  updated_at    DateTime @updatedAt
-  updated_by    String   @default("admin") @db.VarChar(100)
-}
-
-model FooterConfig {
-  id               Int      @id @default(1)
-  brand_name       String   @default("SAYO") @db.VarChar(100)
-  brand_tagline    String   @default("We are experienced in making you more beautiful") @db.VarChar(300)
-  contact_phone    String   @default("+94 77 233 6233") @db.VarChar(50)
-  contact_email    String   @default("hello@sayobeauty.com") @db.VarChar(100)
-  contact_address  String   @db.Text
-  copyright_text   String   @default("© 2025 SAYO Beauty. All rights reserved.") @db.VarChar(300)
-  locations        Json
-  quick_links      Json
-  social_whatsapp  String   @default("") @db.VarChar(300)
-  social_facebook  String   @default("") @db.VarChar(300)
-  social_instagram String   @default("") @db.VarChar(300)
-  updated_at       DateTime @updatedAt
-  updated_by       String   @default("admin") @db.VarChar(100)
-}
-
-model AboutConfig {
-  id                    Int      @id @default(1)
-  hero_eyebrow          String   @default("OUR STORY") @db.VarChar(200)
-  hero_heading          String   @default("We are experience in making you more beautiful") @db.VarChar(500)
-  hero_body             String   @db.Text
-  team_section_title    String   @default("Meet the Visionaries") @db.VarChar(200)
-  staff                 Json
-  gallery_section_title String   @default("Transformations & Artistry") @db.VarChar(200)
-  gallery_description   String   @db.Text
-  gallery_images        Json
-  review_section_title  String   @default("What Our Clients Say") @db.VarChar(200)
-  reviews               Json
-  updated_at            DateTime @updatedAt
-  updated_by            String   @default("admin") @db.VarChar(100)
-}
-
-model ServicesConfig {
-  id            Int      @id @default(1)
-  hero_heading  String   @default("Tailored Treatments for Your Unique Glow") @db.VarChar(500)
-  hero_subtitle String   @db.Text
-  categories    Json
-  price_list    Json
-  updated_at    DateTime @updatedAt
-  updated_by    String   @default("admin") @db.VarChar(100)
-}
-
-model ContactConfig {
-  id                 Int      @id @default(1)
-  hero_eyebrow       String   @default("Luxury Concierge Experience") @db.VarChar(200)
-  hero_heading       String   @default("GET IN TOUCH") @db.VarChar(200)
-  hero_subtitle      String   @db.Text
-  cta_primary_text   String   @default("Send an Inquiry") @db.VarChar(100)
-  cta_secondary_text String   @default("Call Us Now") @db.VarChar(100)
-  phone_number       String   @default("0772336233") @db.VarChar(50)
-  email_address      String   @default("info@sayobeauty.com") @db.VarChar(100)
-  stats              Json
-  map_embed_src      String   @db.Text
-  map_address        String   @db.Text
-  map_open_href      String   @db.Text
-  social_instagram   String   @default("") @db.VarChar(300)
-  social_facebook    String   @default("") @db.VarChar(300)
-  social_whatsapp    String   @default("") @db.VarChar(300)
-  branches           Json
-  updated_at         DateTime @updatedAt
-  updated_by         String   @default("admin") @db.VarChar(100)
-}
-
-model Tbl_Feedback {
-  id          Int      @id @default(autoincrement())
-  cusName     String   @db.VarChar(200)
-  cusEmail    String   @db.VarChar(200)
-  cusLocation String   @db.VarChar(100)
-  cusService  String   @db.VarChar(200)
-  cusRating   Int      @default(0)
-  cusComment  String   @db.Text
-  cusConsent  Boolean  @default(false)
-  isPublished Boolean  @default(false)
-  submittedAt DateTime @default(now())
-
-  @@index([cusEmail])
-  @@index([submittedAt])
-  @@index([cusLocation])
-  @@index([cusRating])
-  @@index([isPublished])
-}
-
-model GalleryConfig {
-  id               Int      @id @default(autoincrement())
-  hero_eyebrow     String   @default("")
-  hero_title       String   @default("")
-  hero_subtitle    String   @default("")
-  section_title    String   @default("")
-  section_subtitle String   @default("")
-  items            Json
-  updated_by       String?
-  updatedAt        DateTime @updatedAt
-}
-
-model Tbl_OtpStore {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique @db.VarChar(200)
-  code      String   @db.VarChar(6)
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-
-  @@index([email])
-}
-
-// ── MAIN USER TABLE ──
-
 model Tbl_CustomerMaster {
   CusCode          String   @id @db.Char(10)
-  RegTel           String   @default(" ") @db.Char(15)
+  RegTel           String   @db.Char(15)
   CusName          String   @db.VarChar(200)
   CusAdd           String   @default(" ") @db.VarChar(200)
   CusEmail         String   @default(" ") @db.VarChar(200)
-  PSW              String   @default(" ") @db.VarChar(255)
-  Gender           String?  @db.VarChar(50)
   CreditCustomer   Boolean  @default(false)
   CreditLimit      Float    @default(0)
   UsedCredit       Float    @default(0)
   Rmks             String   @default(" ") @db.VarChar(400)
   LoyalCus         Boolean  @default(false)
-  CreatedBy        String   @default("SYSTEM") @db.VarChar(50)
-  CreateDateTime   DateTime @default(now())
+  CreatedBy        String   @default("0") @db.VarChar(50)
+  CreateDateTime   DateTime @default(now()) @db.DateTime(0)
   DisPre           Float    @default(0)
   Picture          Bytes?
   CusBehaviour     Int      @default(0)
@@ -194,25 +28,26 @@ model Tbl_CustomerMaster {
   BlackListRemarks String   @default(" ") @db.VarChar(500)
   MemberTypeID     String   @default("0") @db.Char(10)
   Enable           Boolean  @default(true)
+  PSW              String   @default(" ") @db.VarChar(255)
+  Gender           String?  @db.VarChar(50)
 
-  @@index([CusEmail])
   @@map("tbl_customermaster")
 }
+
 model Tbl_LocationMaster {
   LocCode String  @id @db.Char(10)
   LocDes  String  @db.VarChar(50)
   Address String  @default(" ") @db.VarChar(300)
   Enable  Boolean @default(true)
 
-  @@index([LocDes])
   @@map("tbl_locationmaster")
 }
+
 model Tbl_UnitMaster {
   MasterUnitID String  @id @db.Char(10)
   UnitDes      String  @db.VarChar(50)
   Enable       Boolean @default(true)
 
-  @@index([UnitDes])
   @@map("tbl_unitmaster")
 }
 
@@ -221,7 +56,6 @@ model Tbl_UnitSub {
   SubUnitDes String  @db.VarChar(50)
   Enable     Boolean @default(true)
 
-  @@index([SubUnitDes])
   @@map("tbl_unitsub")
 }
 
@@ -244,7 +78,7 @@ model Tbl_SupplierMaster {
   Web            String   @default(" ") @db.VarChar(50)
   DebtAmount     Float    @default(0)
   CreateUser     String   @default("0") @db.VarChar(50)
-  CreateDatetime DateTime @default(now())
+  CreateDatetime DateTime @default(now()) @db.DateTime(0)
   Remarks        String   @default(" ") @db.VarChar(260)
   Enable         Boolean  @default(true)
 
@@ -252,56 +86,54 @@ model Tbl_SupplierMaster {
 }
 
 model Tbl_Recipes {
-  MenuItmID    String   @db.Char(10)
-  RowItemCode  String   @db.Char(15)
-  MasterUnitID String   @default(" ") @db.Char(10)
-  SubUnitID    String   @db.Char(10)
-  Qty          Float    @default(0)
-  LocCode      String   @db.Char(10)
-  ItemCost     Float    @default(0)
+  MenuItmID    String @db.Char(10)
+  RowItemCode  String @db.Char(15)
+  MasterUnitID String @default("") @db.Char(10)
+  SubUnitID    String @db.Char(10)
+  Qty          Float  @default(0)
+  LocCode      String @db.Char(10)
+  ItemCost     Float  @default(0)
 
   @@id([MenuItmID, RowItemCode])
   @@map("tbl_recipes")
 }
 
-
-
 model Tbl_ItemMaster {
-  LocCode          String    @db.Char(10)
-  ItemCode         String    @db.Char(15)
-  ServiceItem      Boolean   @default(false)
-  ItemDes          String    @db.VarChar(50)
-  ItemPrintDes     String    @default(" ") @db.VarChar(50)
-  MasterUnitID     String    @db.Char(10)
-  Category1        String    @default(" ") @db.Char(10)
-  Category2        String    @default(" ") @db.Char(10)
-  Category3        String    @default(" ") @db.Char(10)
-  Category4        String    @default(" ") @db.Char(10)
-  SupID            String    @default("0") @db.Char(10)
-  ROL              Float     @default(0)
-  ROQ              Float     @default(0)
-  MinQty           Float     @default(0)
-  MaxQty           Float     @default(0)
-  RawCost          Float     @default(0)
-  CostMarkup       Float     @default(0)
-  OverallCost      Float     @default(0)
-  SalesMargin      Float     @default(0)
-  StockBalance     Float     @default(0)
-  ExpiryItem       Boolean   @default(false)
-  Retailprice      Float     @default(0)
-  WSApp            Boolean   @default(false)
-  WSQty            Float     @default(0)
-  WSPrice          Float     @default(0)
-  PackedItem       Boolean   @default(false)
-  PackSize         Float     @default(0)
-  PackPrice        Float     @default(0)
-  SemiFinishedProd Boolean   @default(false)
-  ItemPic          Bytes?    @db.LongBlob
-  CreateDate       DateTime  @default(now())
-  CreateBy         String    @default("0") @db.Char(10)
-  UpdDate          DateTime  @default(now()) @updatedAt
-  UpdBy            String    @default("0") @db.Char(10)
-  Enable           Boolean   @default(true)
+  LocCode          String   @db.Char(10)
+  ItemCode         String   @db.Char(15)
+  ServiceItem      Boolean  @default(false)
+  ItemDes          String   @db.VarChar(50)
+  ItemPrintDes     String   @default(" ") @db.VarChar(50)
+  MasterUnitID     String   @db.Char(10)
+  Category1        String   @default("") @db.Char(10)
+  Category2        String   @default("") @db.Char(10)
+  Category3        String   @default("") @db.Char(10)
+  Category4        String   @default("") @db.Char(10)
+  SupID            String   @default("0") @db.Char(10)
+  ROL              Float    @default(0)
+  ROQ              Float    @default(0)
+  MinQty           Float    @default(0)
+  MaxQty           Float    @default(0)
+  RawCost          Float    @default(0)
+  CostMarkup       Float    @default(0)
+  OverallCost      Float    @default(0)
+  SalesMargin      Float    @default(0)
+  StockBalance     Float    @default(0)
+  ExpiryItem       Boolean  @default(false)
+  Retailprice      Float    @default(0)
+  WSApp            Boolean  @default(false)
+  WSQty            Float    @default(0)
+  WSPrice          Float    @default(0)
+  PackedItem       Boolean  @default(false)
+  PackSize         Float    @default(0)
+  PackPrice        Float    @default(0)
+  SemiFinishedProd Boolean  @default(false)
+  ItemPic          Bytes?
+  CreateDate       DateTime @default(now()) @db.DateTime(0)
+  CreateBy         String   @default("0") @db.Char(10)
+  UpdDate          DateTime @default(now()) @updatedAt @db.DateTime(0)
+  UpdBy            String   @default("0") @db.Char(10)
+  Enable           Boolean  @default(true)
 
   @@id([LocCode, ItemCode])
   @@map("tbl_itemmaster")
@@ -311,49 +143,369 @@ model Tbl_ItemCategory1 {
   CatCode String  @id @db.Char(10)
   CatDes  String  @db.VarChar(50)
   Enable  Boolean @default(true)
+
   @@map("tbl_itemcategory1")
 }
+
 model Tbl_ItemCategory2 {
   CatCode String  @id @db.Char(10)
   CatDes  String  @db.VarChar(50)
   Enable  Boolean @default(true)
+
   @@map("tbl_itemcategory2")
 }
+
 model Tbl_ItemCategory3 {
   CatCode String  @id @db.Char(10)
   CatDes  String  @db.VarChar(50)
   Enable  Boolean @default(true)
+
   @@map("tbl_itemcategory3")
 }
+
 model Tbl_ItemCategory4 {
   CatCode String  @id @db.Char(10)
   CatDes  String  @db.VarChar(50)
   Enable  Boolean @default(true)
+
   @@map("tbl_itemcategory4")
 }
 
 model Tbl_Bookings {
-  BookingId        Int      @id @default(autoincrement())
-  CusCode          String   @db.Char(10)  // Changed from UserId
-  BookingMode      String   @db.VarChar(50)
-  Gender           String   @db.VarChar(10)
-  Location         String   @db.VarChar(100)
-  Services         String   @db.Text
-  Categories       String   @db.VarChar(255)
-  TotalDuration    Int
-  TotalPrice       Float
-  Providers        String   @db.Text
-  BookingDate      String   @db.VarChar(20)
-  TimeSlot         String   @db.VarChar(50)
-  SpecialNotes     String?  @db.Text
-  Status           String   @default("pending") @db.VarChar(50)
-  CreatedAt        DateTime @default(now())
-  UpdatedAt        DateTime @updatedAt
-
-
+  BookingId     Int      @id @default(autoincrement())
+  CusCode       String   @db.Char(10)
+  BookingMode   String   @db.VarChar(50)
+  Gender        String   @db.VarChar(10)
+  Location      String   @db.VarChar(100)
+  Services      String   @db.Text
+  Categories    String   @db.VarChar(255)
+  TotalDuration Int
+  TotalPrice    Float
+  Providers     String   @db.Text
+  BookingDate   String   @db.VarChar(20)
+  TimeSlot      String   @db.VarChar(50)
+  SpecialNotes  String?  @db.Text
+  Status        String   @default("pending") @db.VarChar(50)
+  CreatedAt     DateTime @default(now())
+  UpdatedAt     DateTime @updatedAt
 
   @@index([CusCode])
   @@index([BookingDate])
   @@index([Status])
   @@map("tbl_bookings")
+}
+
+model aboutconfig {
+  id                    Int      @id @default(1)
+  hero_eyebrow          String   @default("OUR STORY") @db.VarChar(200)
+  hero_heading          String   @default("We are experience in making you more beautiful") @db.VarChar(500)
+  hero_body             String   @db.Text
+  team_section_title    String   @default("Meet the Visionaries") @db.VarChar(200)
+  staff                 Json
+  gallery_section_title String   @default("Transformations & Artistry") @db.VarChar(200)
+  gallery_description   String   @db.Text
+  gallery_images        Json
+  review_section_title  String   @default("What Our Clients Say") @db.VarChar(200)
+  reviews               Json
+  updated_at            DateTime
+  updated_by            String   @default("admin") @db.VarChar(100)
+}
+
+model admin {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique(map: "Admin_username_key")
+  passwordHash String   @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime
+}
+
+model adminactivitylog {
+  id            Int      @id @default(autoincrement())
+  adminUsername String   @db.VarChar(100)
+  action        String   @db.VarChar(255)
+  section       String   @db.VarChar(50)
+  timestamp     DateTime @default(now())
+
+  @@index([adminUsername], map: "AdminActivityLog_adminUsername_idx")
+  @@index([timestamp], map: "AdminActivityLog_timestamp_idx")
+}
+
+model contactconfig {
+  id                 Int      @id @default(1)
+  hero_eyebrow       String   @default("Luxury Concierge Experience") @db.VarChar(200)
+  hero_heading       String   @default("GET IN TOUCH") @db.VarChar(200)
+  hero_subtitle      String   @db.Text
+  cta_primary_text   String   @default("Send an Inquiry") @db.VarChar(100)
+  cta_secondary_text String   @default("Call Us Now") @db.VarChar(100)
+  phone_number       String   @default("0772336233") @db.VarChar(50)
+  email_address      String   @default("info@sayobeauty.com") @db.VarChar(100)
+  stats              Json
+  map_embed_src      String   @db.Text
+  map_address        String   @db.Text
+  map_open_href      String   @db.Text
+  social_instagram   String   @default("") @db.VarChar(300)
+  social_facebook    String   @default("") @db.VarChar(300)
+  social_whatsapp    String   @default("") @db.VarChar(300)
+  branches           Json
+  updated_at         DateTime
+  updated_by         String   @default("admin") @db.VarChar(100)
+}
+
+model footerconfig {
+  id               Int      @id @default(1)
+  brand_name       String   @default("SAYO") @db.VarChar(100)
+  brand_tagline    String   @default("We are experienced in making you more beautiful") @db.VarChar(300)
+  contact_phone    String   @default("+94 77 233 6233") @db.VarChar(50)
+  contact_email    String   @default("hello@sayobeauty.com") @db.VarChar(100)
+  contact_address  String   @db.Text
+  copyright_text   String   @default("© 2025 SAYO Beauty. All rights reserved.") @db.VarChar(300)
+  locations        Json
+  quick_links      Json
+  social_whatsapp  String   @default("") @db.VarChar(300)
+  social_facebook  String   @default("") @db.VarChar(300)
+  social_instagram String   @default("") @db.VarChar(300)
+  updated_at       DateTime
+  updated_by       String   @default("admin") @db.VarChar(100)
+}
+
+model galleryconfig {
+  id               Int      @id @default(autoincrement())
+  hero_eyebrow     String   @default("")
+  hero_title       String   @default("")
+  hero_subtitle    String   @default("")
+  section_title    String   @default("")
+  section_subtitle String   @default("")
+  items            Json
+  updated_by       String?
+  updatedAt        DateTime
+}
+
+model homeconfig {
+  id            Int      @id @default(1)
+  hero_eyebrow  String   @default("Experienced hair stylists") @db.VarChar(200)
+  hero_heading  String   @default("Enjoy Professional Beauty Services!") @db.VarChar(500)
+  hero_body     String   @db.Text
+  hero_cta_text String   @default("Reserve Experience") @db.VarChar(100)
+  hero_cta_link String   @default("/contact") @db.VarChar(200)
+  updated_at    DateTime
+  updated_by    String   @default("admin") @db.VarChar(100)
+}
+
+model navconfig {
+  id               Int      @id @default(1)
+  logo_text        String   @default("SAYO") @db.VarChar(50)
+  contact_btn_text String   @default("CONTACT US") @db.VarChar(100)
+  contact_btn_link String   @default("/contact") @db.VarChar(200)
+  nav_items        Json
+  updated_at       DateTime
+  updated_by       String   @default("admin") @db.VarChar(100)
+}
+
+model servicesconfig {
+  id            Int      @id @default(1)
+  hero_heading  String   @default("Tailored Treatments for Your Unique Glow") @db.VarChar(500)
+  hero_subtitle String   @db.Text
+  categories    Json
+  price_list    Json
+  updated_at    DateTime
+  updated_by    String   @default("admin") @db.VarChar(100)
+}
+
+model siteconfig {
+  id         Int      @id @default(autoincrement())
+  configKey  String   @unique(map: "SiteConfig_configKey_key") @db.VarChar(50)
+  configData Json
+  updatedAt  DateTime @default(now())
+
+  @@index([configKey], map: "SiteConfig_configKey_idx")
+}
+
+model tbl_feedback {
+  id          Int      @id @default(autoincrement())
+  cusName     String   @db.VarChar(200)
+  cusEmail    String   @db.VarChar(200)
+  cusLocation String   @db.VarChar(100)
+  cusService  String   @db.VarChar(200)
+  cusRating   Int      @default(0)
+  cusComment  String   @db.Text
+  cusConsent  Boolean  @default(false)
+  isPublished Boolean  @default(false)
+  submittedAt DateTime @default(now())
+
+  @@index([cusEmail], map: "Tbl_Feedback_cusEmail_idx")
+  @@index([cusLocation], map: "Tbl_Feedback_cusLocation_idx")
+  @@index([cusRating], map: "Tbl_Feedback_cusRating_idx")
+  @@index([isPublished], map: "Tbl_Feedback_isPublished_idx")
+  @@index([submittedAt], map: "Tbl_Feedback_submittedAt_idx")
+}
+
+model tbl_otpstore {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique(map: "Tbl_OtpStore_email_key") @db.VarChar(200)
+  code      String   @db.VarChar(6)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email], map: "Tbl_OtpStore_email_idx")
+}
+
+model user {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique(map: "User_email_key")
+  phone     String?
+  createdAt DateTime @default(now())
+}
+
+model tbl_ItemDetail {
+  LocCode    String   @db.Char(10)
+  ItemCode   String   @db.Char(15)
+  ExpiryDate DateTime @db.DateTime(0)
+  ItemQty    Float    @default(0)
+
+  @@id([LocCode, ItemCode, ExpiryDate])
+  @@map("tbl_itemdetail")
+}
+
+model tbl_billdetail {
+  LocCode       String @db.Char(10)
+  BillNo        String @db.Char(15)
+  ItemID        String @db.Char(10)
+  Qty           Float  @default(0)
+  SalesPrice    Float  @default(0)
+  TotalItmPrice Float  @default(0)
+  CostPrice     Float  @default(0)
+
+  @@id([LocCode, BillNo, ItemID])
+}
+
+model tbl_billheader {
+  LocCode            String   @db.Char(10)
+  BillNo             String   @db.Char(15)
+  Txndate            DateTime @default(now()) @db.DateTime(0)
+  Gross              Float    @default(0)
+  DisPre             Float    @default(0)
+  DisVal             Float    @default(0)
+  ServiceCharge      Float    @default(0)
+  OtherServiceCharge Float    @default(0)
+  TotalTaxAmount     Float    @default(0)
+  AdvAmount          Float    @default(0)
+  NetTotal           Float    @default(0)
+  CusID              String   @db.Char(10)
+  TxnTime            DateTime @default(now()) @db.DateTime(0)
+  ReferalCusID       String   @db.Char(10)
+  RewardPoints       Float    @default(0)
+  CashierID          String   @db.Char(10)
+  Rmks               String   @default(" ") @db.VarChar(200)
+
+  @@id([LocCode, BillNo])
+}
+
+model tbl_billpaytxn {
+  LocCode     String @db.Char(10)
+  BillNo      String @db.Char(15)
+  PayCode     String @db.Char(10)
+  TenderedAmt Float  @default(0)
+  ActAmt      Float  @default(0)
+  Rmks        String @default(" ") @db.VarChar(200)
+
+  @@id([LocCode, BillNo, PayCode])
+}
+
+model tbl_billtaxes {
+  LocCode   String @db.Char(10)
+  BillNo    String @db.Char(15)
+  TaxCode   String @db.Char(10)
+  TaxAmount String @db.Char(10)
+
+  @@id([LocCode, BillNo, TaxCode])
+}
+
+model tbl_bookingdetail {
+  LocCode       String @db.Char(10)
+  BookingID     String @db.Char(10)
+  GuessID       String @db.Char(10)
+  ServiceItemID String @db.Char(10)
+  Qty           String @db.Char(10)
+  ItemPrice     Float  @default(0)
+  TechID        String @db.Char(10)
+
+  @@id([LocCode, BookingID, GuessID, ServiceItemID])
+}
+
+model tbl_bookingheder {
+  LocCode           String   @db.Char(10)
+  BookingID         String   @db.Char(10)
+  CusCode           String   @db.Char(10)
+  TxnDateTime       DateTime @default(now()) @db.DateTime(0)
+  BookingTypeID     String   @db.Char(10)
+  Status            String   @db.Char(10)
+  ConfirmationType  String   @db.Char(2)
+  AdvBookingPayMode String   @default(" ") @db.VarChar(50)
+  AdvBookingAmount  Float    @default(0)
+  Remarks           String   @default(" ") @db.VarChar(500)
+  UserID            String   @default("0") @db.Char(10)
+
+  @@id([LocCode, BookingID])
+}
+
+model tbl_bookingtypes {
+  BooikingTypeID String  @id @db.Char(10)
+  BookingTypeDes String  @db.Char(50)
+  Enabel         Boolean @default(true)
+}
+
+model tbl_taxes {
+  TaxCode        String  @id @db.Char(10)
+  TaxDescription String  @db.VarChar(50)
+  TaxPrecentage  Float   @default(0)
+  Enable         Boolean @default(true)
+}
+
+model tbl_technicianspecilities {
+  SpecAreaID  String @id @db.Char(10)
+  Specilities String @db.VarChar(100)
+}
+
+model tbl_technicianspecilityassignment {
+  UserID     String @db.Char(10)
+  SpecAreaID String @db.Char(10)
+
+  @@id([UserID, SpecAreaID])
+}
+
+model tbl_txnnumbers {
+  LocCode        String  @db.Char(10)
+  TxnType        String  @db.Char(10)
+  Prefix         String  @default("") @db.Char(10)
+  TxnNo          Float   @default(0)
+  TxnDescription String  @default(" ") @db.VarChar(50)
+  Enable         Boolean @default(true)
+
+  @@id([LocCode, TxnType])
+}
+
+model tbl_userdetails {
+  UserId       String   @id @db.Char(10)
+  NIC          String   @default("") @db.Char(20)
+  LogName      String   @default(" ") @db.VarChar(400)
+  PSW          String   @default(" ") @db.VarChar(400)
+  GroupId      String   @default("") @db.Char(10)
+  UserName     String   @default(" ") @db.VarChar(200)
+  Address      String   @default(" ") @db.VarChar(200)
+  WorkingLocID String   @default("0") @db.VarChar(200)
+  ContNo       String   @default("0") @db.VarChar(100)
+  Email        String   @default(" ") @db.VarChar(100)
+  DOB          DateTime @default(now()) @db.DateTime(0)
+  DOJ          DateTime @default(now()) @db.DateTime(0)
+  DOL          DateTime @default(now()) @db.DateTime(0)
+  CreateUser   String   @default("0") @db.Char(10)
+  Picture      Bytes?
+  Rmks         String   @default(" ") @db.VarChar(250)
+  Enable       Boolean  @default(false)
+}
+
+model tbl_usergroups {
+  GroupId  String @id @db.Char(10)
+  GroupDes String @db.VarChar(50)
 }

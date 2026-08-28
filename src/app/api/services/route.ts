@@ -1,4 +1,4 @@
-//E:\sayo_admin\sayo-admin\src\app\api\services\route.ts
+// E:\sayo_admin\sayo-admin\src\app\api\services\route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 
@@ -9,6 +9,13 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 function bufferToDataUrl(buf: Buffer | null) {
   if (!buf) return null;
   return `data:image/jpeg;base64,${Buffer.from(buf).toString('base64')}`;
+}
+
+/* Raw SQL result type for tbl_itemdetail */
+interface ItemDetailRow {
+  LocCode:  string;
+  ItemCode: string;
+  ItemQty:  number;
 }
 
 export async function GET() {
@@ -24,7 +31,27 @@ export async function GET() {
       prisma.tbl_ItemCategory4.findMany({ where: { Enable: true } }),
     ]);
 
-    // Group items by ItemCode to build location details grid
+    /* ✅ Raw SQL — works without Prisma model for tbl_itemdetail */
+    let itemDetails: ItemDetailRow[] = [];
+    try {
+      itemDetails = await prisma.$queryRaw<ItemDetailRow[]>`
+        SELECT LocCode, ItemCode, SUM(ItemQty) AS ItemQty
+        FROM tbl_itemdetail
+        GROUP BY LocCode, ItemCode
+      `;
+    } catch {
+      /* table might not exist yet — silently use empty array */
+      itemDetails = [];
+    }
+
+    /* Build stock lookup map: "LocCode|ItemCode" → total qty */
+    const detailMap = new Map<string, number>();
+    for (const d of itemDetails) {
+      const key = `${String(d.LocCode).trim()}|${String(d.ItemCode).trim()}`;
+      detailMap.set(key, Number(d.ItemQty) ?? 0);
+    }
+
+    /* Group items by ItemCode */
     const itemsByCode = new Map<string, typeof items>();
     for (const it of items) {
       const key = it.ItemCode.trim();
@@ -32,7 +59,7 @@ export async function GET() {
       itemsByCode.get(key)!.push(it);
     }
 
-    // Build unique items (first occurrence per ItemCode as master)
+    /* Unique items — first occurrence per ItemCode as master row */
     const uniqueItems = new Map<string, typeof items[0]>();
     for (const it of items) {
       const key = it.ItemCode.trim();
@@ -41,15 +68,19 @@ export async function GET() {
 
     let idx = 1;
     const formattedItems = Array.from(uniqueItems.values()).map(it => {
-      const locDetails = (itemsByCode.get(it.ItemCode.trim()) ?? []).map(loc => ({
-        locCode:         loc.LocCode.trim(),
-        locName:         locations.find(l => l.LocCode.trim() === loc.LocCode.trim())?.LocDes ?? loc.LocCode.trim(),
-        enable:          loc.Enable,
-        locStockBalance: loc.StockBalance,
-        salesMargin:     loc.SalesMargin,
-        retailPrice:     loc.Retailprice,
-        wsPrice:         loc.WSPrice,
-      }));
+      const locDetails = (itemsByCode.get(it.ItemCode.trim()) ?? []).map(loc => {
+        const lm = locations.find(l => l.LocCode.trim() === loc.LocCode.trim());
+        const stockKey = `${loc.LocCode.trim()}|${loc.ItemCode.trim()}`;
+        return {
+          locCode:         loc.LocCode.trim(),
+          locName:         lm?.LocDes ?? loc.LocCode.trim(),
+          enable:          loc.Enable,
+          locStockBalance: detailMap.get(stockKey) ?? 0, 
+          salesMargin:     loc.SalesMargin,
+          retailPrice:     loc.Retailprice,
+          wsPrice:         loc.WSPrice,
+        };
+      });
 
       return {
         id:               idx++,
@@ -70,7 +101,7 @@ export async function GET() {
         maxQty:           it.MaxQty,
         rawCost:          it.RawCost,
         costMarkup:       it.CostMarkup,
-        overallCost:      it.OverallCost, 
+        overallCost:      it.OverallCost,
         salesMargin:      it.SalesMargin,
         stockBalance:     it.StockBalance,
         expiryItem:       it.ExpiryItem,
@@ -93,19 +124,23 @@ export async function GET() {
     });
 
     return NextResponse.json({
-      success: true,
-      items: formattedItems,
+      success:   true,
+      items:     formattedItems,
       locations: locations.map(l => ({ code: l.LocCode.trim(), name: l.LocDes })),
-      units: units.map(u => ({ id: u.MasterUnitID.trim(), des: u.UnitDes })),
+      units:     units.map(u => ({ id: u.MasterUnitID.trim(), des: u.UnitDes })),
       suppliers: suppliers.map(s => ({ id: s.SupID.trim(), name: s.SupName })),
       category1: cat1.map(c => ({ code: c.CatCode.trim(), des: c.CatDes })),
       category2: cat2.map(c => ({ code: c.CatCode.trim(), des: c.CatDes })),
       category3: cat3.map(c => ({ code: c.CatCode.trim(), des: c.CatDes })),
       category4: cat4.map(c => ({ code: c.CatCode.trim(), des: c.CatDes })),
     });
+
   } catch (err) {
     console.error('GET /api/services error:', err);
-    return NextResponse.json({ success: false, message: 'Failed to fetch items' }, { status: 500 });
+    return NextResponse.json(
+      { success: false, message: 'Failed to fetch items' },
+      { status: 500 }
+    );
   }
 }
 
@@ -159,7 +194,7 @@ export async function POST(req: NextRequest) {
         CostMarkup:       Number(b.costMarkup  ?? 0),
         OverallCost:      Number(b.rawCost ?? 0) * (1 + Number(b.costMarkup ?? 0) / 100),
         SalesMargin:      Number(b.salesMargin ?? 0),
-        StockBalance:     Number(b.stockBalance ?? 0),
+        StockBalance:     0,
         ExpiryItem:       Boolean(b.expiryItem),
         Retailprice:      Number(b.retailPrice ?? 0),
         WSApp:            Boolean(b.wsApp),
@@ -185,8 +220,12 @@ export async function POST(req: NextRequest) {
         itemPic:  bufferToDataUrl(created.ItemPic),
       },
     }, { status: 201 });
+
   } catch (err) {
     console.error('POST /api/services error:', err);
-    return NextResponse.json({ success: false, message: 'Failed to create item' }, { status: 500 });
+    return NextResponse.json(
+      { success: false, message: 'Failed to create item' },
+      { status: 500 }
+    );
   }
 }

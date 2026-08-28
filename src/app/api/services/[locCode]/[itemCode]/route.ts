@@ -6,7 +6,6 @@ const globalForPrisma = global as unknown as { prisma: PrismaClient };
 const prisma = globalForPrisma.prisma || new PrismaClient();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
-
 type Ctx = { params: Promise<{ locCode: string; itemCode: string }> };
 
 export async function PUT(req: NextRequest, { params }: Ctx) {
@@ -50,9 +49,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         MaxQty:           Number(b.maxQty   ?? 0),
         RawCost:          Number(b.rawCost  ?? 0),
         CostMarkup:       Number(b.costMarkup  ?? 0),
-        OverallCost:      Number(b.rawCost ?? 0) * (1 + Number(b.costMarkup ?? 0) / 100), 
+        OverallCost:      Number(b.rawCost ?? 0) * (1 + Number(b.costMarkup ?? 0) / 100),
         SalesMargin:      Number(b.salesMargin ?? 0),
-        StockBalance:     Number(b.stockBalance ?? 0),
         ExpiryItem:       Boolean(b.expiryItem),
         Retailprice:      Number(b.retailPrice ?? 0),
         WSApp:            Boolean(b.wsApp),
@@ -68,13 +66,11 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       },
     });
 
-    // Update location details grid rows if provided
+    // Update location details (enable, salesMargin, retailPrice, wsPrice only - NOT stockBalance)
     if (Array.isArray(b.locationDetails)) {
       for (const ld of b.locationDetails) {
         const ldLocCode = ld.locCode?.trim();
         if (!ldLocCode) continue;
-        // Skip the master row (already updated above)
-        if (ldLocCode === locCode) continue;
 
         const rowExists = await prisma.tbl_ItemMaster.findUnique({
           where: { LocCode_ItemCode: { LocCode: ldLocCode, ItemCode: itemCode } },
@@ -84,12 +80,11 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         await prisma.tbl_ItemMaster.update({
           where: { LocCode_ItemCode: { LocCode: ldLocCode, ItemCode: itemCode } },
           data: {
-            Enable:       Boolean(ld.enable ?? true),
-            StockBalance: Number(ld.locStockBalance ?? 0),
-            SalesMargin:  Number(ld.salesMargin ?? 0),
-            Retailprice:  Number(ld.retailPrice ?? 0),
-            WSPrice:      Number(ld.wsPrice ?? 0),
-            UpdBy:        b.updBy?.trim() || 'ADMIN',
+            Enable:      Boolean(ld.enable ?? true),
+            SalesMargin: Number(ld.salesMargin ?? 0),
+            Retailprice: Number(ld.retailPrice ?? 0),
+            WSPrice:     Number(ld.wsPrice ?? 0),
+            UpdBy:       b.updBy?.trim() || 'ADMIN',
           },
         });
       }
