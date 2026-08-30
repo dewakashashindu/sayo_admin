@@ -1,231 +1,410 @@
-// E:\sayo_admin\sayo-admin\src\app\api\services\route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { NextRequest, NextResponse } from "next/server";
+import { PrismaClient } from "@prisma/client";
 
-const globalForPrisma = global as unknown as { prisma: PrismaClient };
-const prisma = globalForPrisma.prisma || new PrismaClient();
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
+
+const prisma = globalForPrisma.prisma ?? new PrismaClient();
+
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
 
 function bufferToDataUrl(buf: Buffer | null) {
   if (!buf) return null;
-  return `data:image/jpeg;base64,${Buffer.from(buf).toString('base64')}`;
+  return `data:image/jpeg;base64,${Buffer.from(buf).toString("base64")}`;
 }
 
-/* Raw SQL result type for tbl_itemdetail */
 interface ItemDetailRow {
-  LocCode:  string;
+  LocCode: string;
   ItemCode: string;
-  ItemQty:  number;
+  ItemQty: number;
+}
+
+interface LocationInput {
+  locCode?: string;
+  enable?: boolean;
+  salesMargin?: number;
+  retailPrice?: number;
+  wsPrice?: number;
+}
+
+function text(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
+function num(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function bool(value: unknown, fallback = false): boolean {
+  return value === undefined || value === null ? fallback : Boolean(value);
 }
 
 export async function GET() {
   try {
-    const [items, locations, units, suppliers, cat1, cat2, cat3, cat4] = await Promise.all([
-      prisma.tbl_ItemMaster.findMany({ orderBy: { ItemCode: 'asc' } }),
-      prisma.tbl_LocationMaster.findMany({ where: { Enable: true } }),
-      prisma.tbl_UnitMaster.findMany({ where: { Enable: true } }),
-      prisma.tbl_SupplierMaster.findMany({ where: { Enable: true } }),
-      prisma.tbl_ItemCategory1.findMany({ where: { Enable: true } }),
-      prisma.tbl_ItemCategory2.findMany({ where: { Enable: true } }),
-      prisma.tbl_ItemCategory3.findMany({ where: { Enable: true } }),
-      prisma.tbl_ItemCategory4.findMany({ where: { Enable: true } }),
-    ]);
+    const [items, locations, units, suppliers, cat1, cat2, cat3, cat4] =
+      await Promise.all([
+        prisma.tbl_ItemMaster.findMany({
+          orderBy: { ItemCode: "asc" },
+        }),
+        prisma.tbl_LocationMaster.findMany({
+          where: { Enable: true },
+        }),
+        prisma.tbl_UnitMaster.findMany({
+          where: { Enable: true },
+        }),
+        prisma.tbl_SupplierMaster.findMany({
+          where: { Enable: true },
+        }),
+        prisma.tbl_ItemCategory1.findMany({
+          where: { Enable: true },
+        }),
+        prisma.tbl_ItemCategory2.findMany({
+          where: { Enable: true },
+        }),
+        prisma.tbl_ItemCategory3.findMany({
+          where: { Enable: true },
+        }),
+        prisma.tbl_ItemCategory4.findMany({
+          where: { Enable: true },
+        }),
+      ]);
 
-    /* ✅ Raw SQL — works without Prisma model for tbl_itemdetail */
     let itemDetails: ItemDetailRow[] = [];
+
     try {
       itemDetails = await prisma.$queryRaw<ItemDetailRow[]>`
-        SELECT LocCode, ItemCode, SUM(ItemQty) AS ItemQty
+        SELECT
+          LocCode,
+          ItemCode,
+          SUM(ItemQty) AS ItemQty
         FROM tbl_itemdetail
         GROUP BY LocCode, ItemCode
       `;
     } catch {
-      /* table might not exist yet — silently use empty array */
+      // If the stock table is unavailable, show zero stock rather than
+      // blocking the Item Master screen.
       itemDetails = [];
     }
 
-    /* Build stock lookup map: "LocCode|ItemCode" → total qty */
     const detailMap = new Map<string, number>();
-    for (const d of itemDetails) {
-      const key = `${String(d.LocCode).trim()}|${String(d.ItemCode).trim()}`;
-      detailMap.set(key, Number(d.ItemQty) ?? 0);
+
+    for (const detail of itemDetails) {
+      const key = `${String(detail.LocCode).trim()}|${String(detail.ItemCode).trim()}`;
+      detailMap.set(key, num(detail.ItemQty));
     }
 
-    /* Group items by ItemCode */
     const itemsByCode = new Map<string, typeof items>();
-    for (const it of items) {
-      const key = it.ItemCode.trim();
-      if (!itemsByCode.has(key)) itemsByCode.set(key, []);
-      itemsByCode.get(key)!.push(it);
+
+    for (const item of items) {
+      const itemCode = item.ItemCode.trim();
+      const rows = itemsByCode.get(itemCode) ?? [];
+      rows.push(item);
+      itemsByCode.set(itemCode, rows);
     }
 
-    /* Unique items — first occurrence per ItemCode as master row */
-    const uniqueItems = new Map<string, typeof items[0]>();
-    for (const it of items) {
-      const key = it.ItemCode.trim();
-      if (!uniqueItems.has(key)) uniqueItems.set(key, it);
+    const uniqueItems = new Map<string, (typeof items)[number]>();
+
+    for (const item of items) {
+      const itemCode = item.ItemCode.trim();
+      if (!uniqueItems.has(itemCode)) {
+        uniqueItems.set(itemCode, item);
+      }
     }
 
     let idx = 1;
-    const formattedItems = Array.from(uniqueItems.values()).map(it => {
-      const locDetails = (itemsByCode.get(it.ItemCode.trim()) ?? []).map(loc => {
-        const lm = locations.find(l => l.LocCode.trim() === loc.LocCode.trim());
-        const stockKey = `${loc.LocCode.trim()}|${loc.ItemCode.trim()}`;
+
+    const formattedItems = Array.from(uniqueItems.values()).map((item) => {
+      const itemCode = item.ItemCode.trim();
+      const itemRows = itemsByCode.get(itemCode) ?? [];
+
+      /*
+       * Important:
+       * Return every active location here, even if the item row does not
+       * exist there yet. A missing row is shown as disabled and can later be
+       * enabled from Location Details; PUT will create that row.
+       */
+      const locationDetails = locations.map((location) => {
+        const locCode = location.LocCode.trim();
+        const row = itemRows.find(
+          (candidate) => candidate.LocCode.trim() === locCode,
+        );
+        const stockKey = `${locCode}|${itemCode}`;
+
         return {
-          locCode:         loc.LocCode.trim(),
-          locName:         lm?.LocDes ?? loc.LocCode.trim(),
-          enable:          loc.Enable,
-          locStockBalance: detailMap.get(stockKey) ?? 0, 
-          salesMargin:     loc.SalesMargin,
-          retailPrice:     loc.Retailprice,
-          wsPrice:         loc.WSPrice,
+          locCode,
+          locName: location.LocDes,
+          enable: row?.Enable ?? false,
+          locStockBalance: detailMap.get(stockKey) ?? 0,
+          salesMargin: num(row?.SalesMargin ?? item.SalesMargin),
+          retailPrice: num(row?.Retailprice ?? item.Retailprice),
+          wsPrice: num(row?.WSPrice ?? item.WSPrice),
         };
       });
 
       return {
-        id:               idx++,
-        locCode:          it.LocCode.trim(),
-        itemCode:         it.ItemCode.trim(),
-        serviceItem:      it.ServiceItem,
-        itemDes:          it.ItemDes,
-        itemPrintDes:     it.ItemPrintDes.trim(),
-        masterUnitID:     it.MasterUnitID.trim(),
-        category1:        it.Category1.trim() === ' ' ? '' : it.Category1.trim(),
-        category2:        it.Category2.trim() === ' ' ? '' : it.Category2.trim(),
-        category3:        it.Category3.trim() === ' ' ? '' : it.Category3.trim(),
-        category4:        it.Category4.trim() === ' ' ? '' : it.Category4.trim(),
-        supID:            it.SupID.trim() === '0' ? '' : it.SupID.trim(),
-        rol:              it.ROL,
-        roq:              it.ROQ,
-        minQty:           it.MinQty,
-        maxQty:           it.MaxQty,
-        rawCost:          it.RawCost,
-        costMarkup:       it.CostMarkup,
-        overallCost:      it.OverallCost,
-        salesMargin:      it.SalesMargin,
-        stockBalance:     it.StockBalance,
-        expiryItem:       it.ExpiryItem,
-        retailPrice:      it.Retailprice,
-        wsApp:            it.WSApp,
-        wsQty:            it.WSQty,
-        wsPrice:          it.WSPrice,
-        packedItem:       it.PackedItem,
-        packSize:         it.PackSize,
-        packPrice:        it.PackPrice,
-        semiFinishedProd: it.SemiFinishedProd,
-        itemPic:          bufferToDataUrl(it.ItemPic),
-        createDate:       it.CreateDate.toISOString().slice(0, 10),
-        createBy:         it.CreateBy.trim(),
-        updDate:          it.UpdDate.toISOString().slice(0, 10),
-        updBy:            it.UpdBy.trim(),
-        enable:           it.Enable,
-        locationDetails:  locDetails,
+        id: idx++,
+        locCode: item.LocCode.trim(),
+        itemCode,
+        serviceItem: item.ServiceItem,
+        itemDes: item.ItemDes,
+        itemPrintDes: item.ItemPrintDes.trim(),
+        masterUnitID: item.MasterUnitID.trim(),
+        category1: item.Category1.trim() === " " ? "" : item.Category1.trim(),
+        category2: item.Category2.trim() === " " ? "" : item.Category2.trim(),
+        category3: item.Category3.trim() === " " ? "" : item.Category3.trim(),
+        category4: item.Category4.trim() === " " ? "" : item.Category4.trim(),
+        supID: item.SupID.trim() === "0" ? "" : item.SupID.trim(),
+        rol: num(item.ROL),
+        roq: num(item.ROQ),
+        minQty: num(item.MinQty),
+        maxQty: num(item.MaxQty),
+        rawCost: num(item.RawCost),
+        costMarkup: num(item.CostMarkup),
+        overallCost: num(item.OverallCost),
+        salesMargin: num(item.SalesMargin),
+        stockBalance: num(item.StockBalance),
+        expiryItem: item.ExpiryItem,
+        retailPrice: num(item.Retailprice),
+        wsApp: item.WSApp,
+        wsQty: num(item.WSQty),
+        wsPrice: num(item.WSPrice),
+        packedItem: item.PackedItem,
+        packSize: num(item.PackSize),
+        packPrice: num(item.PackPrice),
+        semiFinishedProd: item.SemiFinishedProd,
+        itemPic: bufferToDataUrl(item.ItemPic),
+        createDate: item.CreateDate.toISOString().slice(0, 10),
+        createBy: item.CreateBy.trim(),
+        updDate: item.UpdDate.toISOString().slice(0, 10),
+        updBy: item.UpdBy.trim(),
+
+        // Derived value for the item list only. The editable Enable value
+        // remains inside each locationDetails row.
+        enable: locationDetails.some((location) => location.enable),
+        locationDetails,
       };
     });
 
     return NextResponse.json({
-      success:   true,
-      items:     formattedItems,
-      locations: locations.map(l => ({ code: l.LocCode.trim(), name: l.LocDes })),
-      units:     units.map(u => ({ id: u.MasterUnitID.trim(), des: u.UnitDes })),
-      suppliers: suppliers.map(s => ({ id: s.SupID.trim(), name: s.SupName })),
-      category1: cat1.map(c => ({ code: c.CatCode.trim(), des: c.CatDes })),
-      category2: cat2.map(c => ({ code: c.CatCode.trim(), des: c.CatDes })),
-      category3: cat3.map(c => ({ code: c.CatCode.trim(), des: c.CatDes })),
-      category4: cat4.map(c => ({ code: c.CatCode.trim(), des: c.CatDes })),
+      success: true,
+      items: formattedItems,
+      locations: locations.map((location) => ({
+        code: location.LocCode.trim(),
+        name: location.LocDes,
+      })),
+      units: units.map((unit) => ({
+        id: unit.MasterUnitID.trim(),
+        des: unit.UnitDes,
+      })),
+      suppliers: suppliers.map((supplier) => ({
+        id: supplier.SupID.trim(),
+        name: supplier.SupName,
+      })),
+      category1: cat1.map((category) => ({
+        code: category.CatCode.trim(),
+        des: category.CatDes,
+      })),
+      category2: cat2.map((category) => ({
+        code: category.CatCode.trim(),
+        des: category.CatDes,
+      })),
+      category3: cat3.map((category) => ({
+        code: category.CatCode.trim(),
+        des: category.CatDes,
+      })),
+      category4: cat4.map((category) => ({
+        code: category.CatCode.trim(),
+        des: category.CatDes,
+      })),
     });
-
   } catch (err) {
-    console.error('GET /api/services error:', err);
+    console.error("GET /api/services error:", err);
     return NextResponse.json(
-      { success: false, message: 'Failed to fetch items' },
-      { status: 500 }
+      { success: false, message: "Failed to fetch items" },
+      { status: 500 },
     );
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const b = await req.json();
+    const body = await req.json();
 
-    if (!b.locCode?.trim() || !b.itemCode?.trim() || !b.itemDes?.trim()) {
+    if (
+      !body.locCode?.trim() ||
+      !body.itemCode?.trim() ||
+      !body.itemDes?.trim()
+    ) {
       return NextResponse.json(
-        { success: false, message: 'LocCode, ItemCode and ItemDes are required' },
-        { status: 400 }
+        {
+          success: false,
+          message: "LocCode, ItemCode and ItemDes are required",
+        },
+        { status: 400 },
       );
     }
 
-    const locCode  = b.locCode.trim();
-    const itemCode = b.itemCode.trim().toUpperCase();
+    const itemCode = body.itemCode.trim().toUpperCase();
+    const requestedDetails: LocationInput[] = Array.isArray(
+      body.locationDetails,
+    )
+      ? body.locationDetails
+      : [];
 
-    const exists = await prisma.tbl_ItemMaster.findUnique({
-      where: { LocCode_ItemCode: { LocCode: locCode, ItemCode: itemCode } },
+    const locations = await prisma.tbl_LocationMaster.findMany({
+      where: { Enable: true },
+      select: { LocCode: true, LocDes: true },
+      orderBy: { LocCode: "asc" },
     });
-    if (exists) {
+
+    if (locations.length === 0) {
       return NextResponse.json(
-        { success: false, message: `ItemCode "${itemCode}" already exists for Location "${locCode}"` },
-        { status: 409 }
+        { success: false, message: "No enabled locations were found" },
+        { status: 422 },
+      );
+    }
+
+    const detailByLocation = new Map<string, LocationInput>();
+
+    for (const detail of requestedDetails) {
+      const code = text(detail?.locCode);
+      if (code) detailByLocation.set(code.toUpperCase(), detail);
+    }
+
+    const targetLocations = locations.map((location) => ({
+      code: location.LocCode.trim(),
+      detail: detailByLocation.get(location.LocCode.trim().toUpperCase()),
+    }));
+
+    // ItemCode is the logical item identity. A new item must not partially
+    // collide with an item that already exists in another location.
+    const existing = await prisma.$queryRaw<{ LocCode: string }[]>`
+      SELECT LocCode
+      FROM tbl_itemmaster
+      WHERE RTRIM(ItemCode) = ${itemCode}
+      LIMIT 1
+    `;
+
+    if (existing.length > 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `ItemCode "${itemCode}" already exists. Select it from Browse to edit it.`,
+        },
+        { status: 409 },
       );
     }
 
     let picBuffer: Buffer | null = null;
-    if (b.itemPic && typeof b.itemPic === 'string' && b.itemPic.startsWith('data:image')) {
-      picBuffer = Buffer.from(b.itemPic.split(',')[1], 'base64');
+
+    if (
+      body.itemPic &&
+      typeof body.itemPic === "string" &&
+      body.itemPic.startsWith("data:image")
+    ) {
+      picBuffer = Buffer.from(body.itemPic.split(",")[1], "base64");
     }
 
-    const created = await prisma.tbl_ItemMaster.create({
-      data: {
-        LocCode:          locCode,
-        ItemCode:         itemCode,
-        ServiceItem:      Boolean(b.serviceItem),
-        ItemDes:          b.itemDes.trim(),
-        ItemPrintDes:     b.itemPrintDes?.trim()  || ' ',
-        MasterUnitID:     b.masterUnitID?.trim()  || 'UNT03',
-        Category1:        b.category1?.trim()     || ' ',
-        Category2:        b.category2?.trim()     || ' ',
-        Category3:        b.category3?.trim()     || ' ',
-        Category4:        b.category4?.trim()     || ' ',
-        SupID:            b.supID?.trim()         || '0',
-        ROL:              Number(b.rol      ?? 0),
-        ROQ:              Number(b.roq      ?? 0),
-        MinQty:           Number(b.minQty   ?? 0),
-        MaxQty:           Number(b.maxQty   ?? 0),
-        RawCost:          Number(b.rawCost  ?? 0),
-        CostMarkup:       Number(b.costMarkup  ?? 0),
-        OverallCost:      Number(b.rawCost ?? 0) * (1 + Number(b.costMarkup ?? 0) / 100),
-        SalesMargin:      Number(b.salesMargin ?? 0),
-        StockBalance:     0,
-        ExpiryItem:       Boolean(b.expiryItem),
-        Retailprice:      Number(b.retailPrice ?? 0),
-        WSApp:            Boolean(b.wsApp),
-        WSQty:            Number(b.wsQty    ?? 0),
-        WSPrice:          Number(b.wsPrice  ?? 0),
-        PackedItem:       Boolean(b.packedItem),
-        PackSize:         Number(b.packSize  ?? 0),
-        PackPrice:        Number(b.packPrice ?? 0),
-        SemiFinishedProd: Boolean(b.semiFinishedProd),
-        ItemPic:          picBuffer,
-        CreateBy:         b.createBy?.trim() || 'ADMIN',
-        UpdBy:            b.updBy?.trim()    || 'ADMIN',
-        Enable:           Boolean(b.enable ?? true),
-      },
-    });
+    const created = await prisma.$transaction(
+      async (tx) => {
+        let firstCreated: any = null;
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        locCode:  created.LocCode.trim(),
-        itemCode: created.ItemCode.trim(),
-        itemDes:  created.ItemDes,
-        itemPic:  bufferToDataUrl(created.ItemPic),
-      },
-    }, { status: 201 });
+        for (const target of targetLocations) {
+          const detail = target.detail;
+          const createdRow = await tx.tbl_ItemMaster.create({
+            data: {
+              LocCode: target.code,
+              ItemCode: itemCode,
+              ServiceItem: bool(body.serviceItem),
+              ItemDes: text(body.itemDes),
+              ItemPrintDes: text(body.itemPrintDes, " "),
+              MasterUnitID: text(body.masterUnitID, "UNT03"),
+              Category1: text(body.category1),
+              Category2: text(body.category2),
+              Category3: text(body.category3),
+              Category4: text(body.category4),
+              SupID: text(body.supID, "0"),
+              ROL: num(body.rol),
+              ROQ: num(body.roq),
+              MinQty: num(body.minQty),
+              MaxQty: num(body.maxQty),
+              RawCost: num(body.rawCost),
+              CostMarkup: num(body.costMarkup),
+              OverallCost: num(body.rawCost) * (1 + num(body.costMarkup) / 100),
 
-  } catch (err) {
-    console.error('POST /api/services error:', err);
+              // New items can have location-specific prices and margins.
+              SalesMargin: num(detail?.salesMargin ?? body.salesMargin),
+              Retailprice: num(detail?.retailPrice ?? body.retailPrice),
+              WSPrice: num(detail?.wsPrice ?? body.wsPrice),
+
+              StockBalance: 0,
+              ExpiryItem: bool(body.expiryItem),
+              WSApp: bool(body.wsApp),
+              WSQty: num(body.wsQty),
+              PackedItem: bool(body.packedItem),
+              PackSize: num(body.packSize),
+              PackPrice: num(body.packPrice),
+              SemiFinishedProd: bool(body.semiFinishedProd),
+              ItemPic: picBuffer,
+              CreateBy: text(body.createBy, "ADMIN"),
+              UpdBy: text(body.updBy, "ADMIN"),
+
+              // Enable is per location, never a global Flags value.
+              Enable: bool(detail?.enable, true),
+            },
+          });
+
+          if (!firstCreated) firstCreated = createdRow;
+        }
+
+        return firstCreated;
+      },
+      {
+        // One item is inserted once per enabled location. Increase Prisma's
+        // default 5-second interactive transaction limit for that loop.
+        maxWait: 10000,
+        timeout: 30000,
+      },
+    );
+
     return NextResponse.json(
-      { success: false, message: 'Failed to create item' },
-      { status: 500 }
+      {
+        success: true,
+        message: `Item created for ${targetLocations.length} location(s)`,
+        data: {
+          locCode: created.LocCode.trim(),
+          itemCode: created.ItemCode.trim(),
+          itemDes: created.ItemDes,
+          itemPic: bufferToDataUrl(created.ItemPic),
+          locationCount: targetLocations.length,
+        },
+      },
+      { status: 201 },
+    );
+  } catch (err: any) {
+    console.error("POST /api/services error:", err);
+
+    if (err?.code === "P2002") {
+      return NextResponse.json(
+        { success: false, message: "This ItemCode already exists" },
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Failed to create item",
+        detail: err?.message,
+      },
+      { status: 500 },
     );
   }
 }
