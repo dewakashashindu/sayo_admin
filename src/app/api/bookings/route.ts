@@ -34,27 +34,198 @@ interface BookingRequestBody {
   notes?:        string;
 }
 
-/* ─────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────────────────────
+   SMS — TEXT.LK
+─────────────────────────────────────────────────────────────────────────────── */
+const TEXTLK_ENDPOINT = 'https://app.text.lk/api/v3/sms/send';
+
+function maskEmail(email: string): string {
+  const [localPart, domain] = String(email || '').split('@');
+  if (!domain || !localPart) return email;
+  const len = localPart.length;
+  if (len <= 2) return `${localPart[0]}*@${domain}`;
+  if (len <= 4) {
+    return `${localPart[0]}${'*'.repeat(len - 2)}${localPart[len - 1]}@${domain}`;
+  }
+  const visibleFront = Math.min(6, Math.floor(len / 3));
+  const visibleBack  = 3;
+  if (len <= visibleFront + visibleBack) {
+    return `${localPart.slice(0, 2)}${'*'.repeat(Math.max(0, len - 4))}${localPart.slice(-2)}@${domain}`;
+  }
+  return `${localPart.slice(0, visibleFront)}${'*'.repeat(len - (visibleFront + visibleBack))}${localPart.slice(-visibleBack)}@${domain}`;
+}
+
+function maskPhone(phone: string): string {
+  const cleaned = phone.trim().replace(/\s+/g, '').replace(/^\+/, '');
+  if (cleaned.length < 7) return cleaned;
+  return `${cleaned.slice(0, 3)}${'*'.repeat(cleaned.length - 6)}${cleaned.slice(-3)}`;
+}
+
+function normalizeSmsPhone(phone: string): string {
+  const digits    = String(phone || '').replace(/\D/g, '');
+  if (!digits) return '';
+  const without00 = digits.startsWith('00') ? digits.slice(2) : digits;
+  if (/^0?7\d{8}$/.test(without00)) return `94${without00.replace(/^0/, '')}`;
+  if (/^947\d{8}$/.test(without00))  return without00;
+  return without00;
+}
+
+function smsText(value: string | undefined, fallback: string): string {
+  const cleaned = String(value || '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || fallback;
+}
+
+function formatSmsDate(dateValue: string): string {
+  const match = String(dateValue || '').trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  if (!match) return smsText(dateValue, 'the selected date');
+  const date = new Date(`${match[1]}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return match[1];
+  return new Intl.DateTimeFormat('en-GB', {
+    day:      '2-digit',
+    month:    'short',
+    year:     'numeric',
+    timeZone: 'UTC',
+  }).format(date);
+}
+
+type AppointmentSMSEvent = 'booked' | 'confirmed' | 'cancelled' | 'rescheduled';
+
+interface AppointmentSMSProps {
+  event:             AppointmentSMSEvent;
+  phone:             string;
+  name:              string;
+  bookingId:         string;
+  branch?:           string;
+  date:              string;
+  timeSlot:          string;
+  previousDate?:     string;
+  previousTimeSlot?: string;
+}
+
+interface RegistrationSMSProps {
+  name:  string;
+  email: string;
+  phone: string;
+}
+
+interface TextLkResult {
+  success: boolean;
+  data?:   unknown;
+  error?:  string;
+}
+
+function buildAppointmentSMS({
+  event,
+  name,
+  bookingId,
+  branch,
+  date,
+  timeSlot,
+  previousDate,
+  previousTimeSlot,
+}: AppointmentSMSProps): string {
+  const customerName = smsText(name,      'Customer');
+  const reference    = smsText(bookingId, 'your booking');
+  const branchLine   = branch ? `\nBranch: ${smsText(branch, 'SAYO Beauty')}` : '';
+
+  if (event === 'rescheduled') {
+    const previousSchedule = `${formatSmsDate(previousDate || date)}, ${smsText(previousTimeSlot, 'the previous time')}`;
+    const newSchedule      = `${formatSmsDate(date)}, ${smsText(timeSlot, 'the new time')}`;
+    return `SAYO Beauty: Hi ${customerName}, your appointment ${reference} has been rescheduled.\nPrevious: ${previousSchedule}\nNew: ${newSchedule}${branchLine}`;
+  }
+
+  const schedule = `Date: ${formatSmsDate(date)}\nTime: ${smsText(timeSlot, 'the selected time')}`;
+
+  if (event === 'confirmed') {
+    return `SAYO Beauty: Hi ${customerName}, your appointment ${reference} is confirmed.\n${schedule}${branchLine}`;
+  }
+  if (event === 'cancelled') {
+    return `SAYO Beauty: Hi ${customerName}, your appointment ${reference} has been cancelled.\n${schedule}${branchLine}`;
+  }
+  return `SAYO Beauty: Hi ${customerName}, your appointment ${reference} has been booked successfully.\n${schedule}${branchLine}`;
+}
+
+async function sendTextLkSMS(recipient: string, message: string): Promise<TextLkResult> {
+  const apiToken = process.env.TEXTLK_API_TOKEN;
+  const senderId = process.env.TEXTLK_SENDER_ID;
+
+  if (!apiToken || !senderId) {
+    console.error('[SMS] TEXTLK_API_TOKEN or TEXTLK_SENDER_ID missing in .env.local');
+    return { success: false, error: 'SMS configuration missing' };
+  }
+
+  try {
+    const response = await fetch(TEXTLK_ENDPOINT, {
+      method:  'POST',
+      headers: {
+        Authorization:  `Bearer ${apiToken}`,
+        'Content-Type': 'application/json',
+        Accept:         'application/json',
+      },
+      body: JSON.stringify({ recipient, sender_id: senderId, message }),
+    });
+
+    const responseText = await response.text();
+    let data: Record<string, unknown> = {};
+    try { data = responseText ? JSON.parse(responseText) : {}; }
+    catch { data = { message: responseText }; }
+
+    if (!response.ok) {
+      console.error('[Text.lk SMS Error]', data);
+      return { success: false, error: (data?.message as string) || 'Failed to send SMS' };
+    }
+    return { success: true, data };
+  } catch (error) {
+    console.error('[Text.lk SMS Fetch Error]', error);
+    return { success: false, error: 'Internal server error while sending SMS' };
+  }
+}
+
+async function sendAppointmentSMS(props: AppointmentSMSProps): Promise<TextLkResult> {
+  const recipient = normalizeSmsPhone(props.phone);
+  if (!recipient) return { success: false, error: 'Customer phone number is empty' };
+
+  const message = buildAppointmentSMS(props);
+  const result  = await sendTextLkSMS(recipient, message);
+
+  if (result.success) {
+    console.log(`[SMS_SENT] event=${props.event} booking=${smsText(props.bookingId, 'unknown')}`);
+  }
+  return result;
+}
+
+async function sendRegistrationSMS({ name, email, phone }: RegistrationSMSProps): Promise<TextLkResult> {
+  const formattedPhone  = normalizeSmsPhone(phone);
+  const maskedEmail     = maskEmail(email);
+  const maskedPhoneNum  = maskPhone(formattedPhone);
+  const smsMessage      = `Welcome to Sayo, ${name}!\nYour account has been successfully created.\nRegistered Email: ${maskedEmail}\nPhone: ${maskedPhoneNum}`;
+  return sendTextLkSMS(formattedPhone, smsMessage);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
    NODEMAILER TRANSPORTER
-───────────────────────────────────────── */
+─────────────────────────────────────────────────────────────────────────────── */
 const transporter = nodemailer.createTransport({
-  host:   process.env.SMTP_HOST   || 'smtp.gmail.com',
+  host:   process.env.SMTP_HOST || 'smtp.gmail.com',
   port:   Number(process.env.SMTP_PORT || 587),
   secure: process.env.SMTP_SECURE === 'true',
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
-  tls: { rejectUnauthorized: false },
+  tls:            { rejectUnauthorized: false },
   pool:           true,
   maxConnections: 5,
   rateDelta:      1000,
   rateLimit:      5,
 });
 
-/* ─────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────────────────────
    HELPERS
-───────────────────────────────────────── */
+─────────────────────────────────────────────────────────────────────────────── */
 function formatDate(iso: string) {
   return new Date(iso + 'T00:00').toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -79,17 +250,13 @@ function escapeHtml(str: string): string {
 
 /* ─────────────────────────────────────────────────────────────────────────────
    CUSTOMER CODE GENERATOR
-   Tbl_CustomerMaster uses CusCode String @id @db.Char(10)
-   Generates zero-padded codes: "CUS0000001"
 ─────────────────────────────────────────────────────────────────────────────── */
 async function generateCusCode(): Promise<string> {
   const last = await prisma.tbl_CustomerMaster.findFirst({
     orderBy: { CreateDateTime: 'desc' },
     select:  { CusCode: true },
   });
-
   if (!last) return 'CUS0000001';
-
   const num  = parseInt(last.CusCode.replace(/\D/g, ''), 10) || 0;
   const next = num + 1;
   return `CUS${String(next).padStart(7, '0')}`;
@@ -114,9 +281,7 @@ function validateBookingBody(body: Partial<BookingRequestBody>): string | null {
   if (isWalkin && (!Array.isArray(body.providers) || body.providers.length === 0)) {
     return 'At least one provider is required.';
   }
-  if (!Array.isArray(body.providers)) {
-    return 'Invalid providers format.';
-  }
+  if (!Array.isArray(body.providers)) return 'Invalid providers format.';
 
   return null;
 }
@@ -127,16 +292,14 @@ function resolveGender(raw: string | undefined): string {
 }
 
 function resolveCategories(raw: string | string[] | undefined): string {
-  if (Array.isArray(raw)) {
-    return raw.join(',').slice(0, 255) || 'General';
-  }
+  if (Array.isArray(raw)) return raw.join(',').slice(0, 255) || 'General';
   const val = (raw ?? '').trim().slice(0, 255);
   return val.length > 0 ? val : 'General';
 }
 
-/* ─────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────────────────────
    buildPlainText
-───────────────────────────────────────── */
+─────────────────────────────────────────────────────────────────────────────── */
 function buildPlainText(data: {
   name:          string;
   bookingId:     number;
@@ -189,9 +352,9 @@ function buildPlainText(data: {
   return lines.join('\n');
 }
 
-/* ─────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────────────────────
    buildConfirmedEmail
-───────────────────────────────────────── */
+─────────────────────────────────────────────────────────────────────────────── */
 function buildConfirmedEmail(data: {
   name:          string;
   email:         string;
@@ -438,8 +601,7 @@ function buildConfirmedEmail(data: {
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                       <tr>
                         <td style="padding:4px 0;vertical-align:top;width:22px;">
-                          <span style="color:#7a4f00;font-size:13px;
-                                       font-family:Arial,sans-serif;">1.</span>
+                          <span style="color:#7a4f00;font-size:13px;font-family:Arial,sans-serif;">1.</span>
                         </td>
                         <td style="padding:4px 0;color:#6b5a30;font-size:12px;
                                    line-height:1.6;font-family:Arial,sans-serif;">
@@ -450,8 +612,7 @@ function buildConfirmedEmail(data: {
                       </tr>
                       <tr>
                         <td style="padding:4px 0;vertical-align:top;">
-                          <span style="color:#7a4f00;font-size:13px;
-                                       font-family:Arial,sans-serif;">2.</span>
+                          <span style="color:#7a4f00;font-size:13px;font-family:Arial,sans-serif;">2.</span>
                         </td>
                         <td style="padding:4px 0;color:#6b5a30;font-size:12px;
                                    line-height:1.6;font-family:Arial,sans-serif;">
@@ -460,8 +621,7 @@ function buildConfirmedEmail(data: {
                       </tr>
                       <tr>
                         <td style="padding:4px 0;vertical-align:top;">
-                          <span style="color:#7a4f00;font-size:13px;
-                                       font-family:Arial,sans-serif;">3.</span>
+                          <span style="color:#7a4f00;font-size:13px;font-family:Arial,sans-serif;">3.</span>
                         </td>
                         <td style="padding:4px 0;color:#6b5a30;font-size:12px;
                                    line-height:1.6;font-family:Arial,sans-serif;">
@@ -470,8 +630,7 @@ function buildConfirmedEmail(data: {
                       </tr>
                       <tr>
                         <td style="padding:4px 0;vertical-align:top;">
-                          <span style="color:#7a4f00;font-size:13px;
-                                       font-family:Arial,sans-serif;">4.</span>
+                          <span style="color:#7a4f00;font-size:13px;font-family:Arial,sans-serif;">4.</span>
                         </td>
                         <td style="padding:4px 0;color:#6b5a30;font-size:12px;
                                    line-height:1.6;font-family:Arial,sans-serif;">
@@ -513,9 +672,9 @@ function buildConfirmedEmail(data: {
   return { subject, html };
 }
 
-/* ─────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────────────────────
    buildWithoutConfirmationEmail
-───────────────────────────────────────── */
+─────────────────────────────────────────────────────────────────────────────── */
 function buildWithoutConfirmationEmail(data: {
   name:          string;
   email:         string;
@@ -661,9 +820,7 @@ function buildWithoutConfirmationEmail(data: {
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                       <tr>
                         <td width="38%" style="padding:6px 0;color:#6a8a6a;
-                                               font-size:12px;font-family:Arial,sans-serif;">
-                          Date
-                        </td>
+                                               font-size:12px;font-family:Arial,sans-serif;">Date</td>
                         <td style="padding:6px 0;color:#0a200a;font-size:13px;
                                    font-weight:bold;font-family:Arial,sans-serif;">
                           ${formatDate(data.date)}
@@ -687,9 +844,7 @@ function buildWithoutConfirmationEmail(data: {
                       </tr>
                       <tr>
                         <td style="padding:6px 0;color:#6a8a6a;
-                                   font-size:12px;font-family:Arial,sans-serif;">
-                          Provider(s)
-                        </td>
+                                   font-size:12px;font-family:Arial,sans-serif;">Provider(s)</td>
                         <td style="padding:6px 0;color:#0a200a;font-size:13px;
                                    font-family:Arial,sans-serif;">
                           ${providerNames}
@@ -802,9 +957,9 @@ function buildWithoutConfirmationEmail(data: {
   return { subject, html };
 }
 
-/* ─────────────────────────────────────────
-   SEND HELPER
-───────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────────
+   SEND EMAIL HELPER
+─────────────────────────────────────────────────────────────────────────────── */
 async function sendBookingEmail(
   to:        string,
   subject:   string,
@@ -877,7 +1032,7 @@ export async function POST(req: NextRequest) {
     const resolvedGender     = resolveGender(gender);
     const resolvedCategories = resolveCategories(categories);
 
-    // ── 2. Upsert customer (Tbl_CustomerMaster) ───────────────────────────────
+    // ── 2. Upsert customer ────────────────────────────────────────────────────
     let customer = await prisma.tbl_CustomerMaster.findFirst({
       where: { CusEmail: email.trim().toLowerCase() },
     });
@@ -909,7 +1064,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ── 3. Duplicate check (provider-aware) ───────────────────────────────────
+    // ── 3. Duplicate check ────────────────────────────────────────────────────
     const requestedProviderNames = new Set(
       providers.map(p => p.name.trim().toLowerCase())
     );
@@ -921,10 +1076,7 @@ export async function POST(req: NextRequest) {
         TimeSlot:    timeSlot,
         Status:      { not: 'cancelled' },
       },
-      select: {
-        Providers: true,
-        BookingId: true,
-      },
+      select: { Providers: true, BookingId: true },
     });
 
     for (const existing of sameSlotBookings) {
@@ -978,7 +1130,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // ── 5. Send email ─────────────────────────────────────────────────────────
+    // ── 5. Build shared payload ───────────────────────────────────────────────
     const emailPayload = {
       name,
       email:         email.trim().toLowerCase(),
@@ -995,6 +1147,7 @@ export async function POST(req: NextRequest) {
 
     const plainText = buildPlainText({ ...emailPayload, mode });
 
+    // ── 5a. Email (fire and forget) ───────────────────────────────────────────
     if (mode === 'without_confirmation') {
       const { subject, html } = buildWithoutConfirmationEmail(emailPayload);
       sendBookingEmail(
@@ -1006,6 +1159,25 @@ export async function POST(req: NextRequest) {
         emailPayload.email, subject, html, plainText, booking.BookingId
       );
     }
+
+    // ── 5b. SMS (fire and forget) ─────────────────────────────────────────────
+    sendAppointmentSMS({
+      event:     'booked',
+      phone:     phone.trim(),
+      name:      name.trim(),
+      bookingId: `Ref #${booking.BookingId}`,
+      branch:    location,
+      date,
+      timeSlot,
+    }).then(result => {
+      if (!result.success) {
+        console.error(
+          `[SMS_FAILED] BookingId=${booking.BookingId} error=${result.error}`
+        );
+      }
+    }).catch(err => {
+      console.error('[SMS_UNHANDLED_ERROR]', err);
+    });
 
     // ── 6. Respond ────────────────────────────────────────────────────────────
     return NextResponse.json({
@@ -1026,9 +1198,9 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/* ─────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────────────────────
    GET — fetch bookings by email
-───────────────────────────────────────── */
+─────────────────────────────────────────────────────────────────────────────── */
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);

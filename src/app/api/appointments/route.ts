@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { sendAppointmentSMS } from "@/lib/sms";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +46,70 @@ function dateTimeIso(value: unknown): string | null {
   const parsed = new Date(value as any);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString();
+}
+
+function timeLabelFromDateTime(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+
+  if (typeof value === "string") {
+    const match = value.match(/[ T](\d{1,2}):(\d{2})(?::\d{2})?/);
+    if (match) {
+      let hour = Number(match[1]);
+      const minute = Number(match[2]);
+      if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+        const period = hour >= 12 ? "PM" : "AM";
+        hour %= 12;
+        if (hour === 0) hour = 12;
+        return `${hour}:${String(minute).padStart(2, "0")} ${period}`;
+      }
+    }
+  }
+
+  const parsed = new Date(value as any);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  const period = parsed.getHours() >= 12 ? "PM" : "AM";
+  let hour = parsed.getHours() % 12;
+  if (hour === 0) hour = 12;
+  return `${hour}:${String(parsed.getMinutes()).padStart(2, "0")} ${period}`;
+}
+
+function toBookingDateTime(
+  dateValue: string,
+  timeValue: string,
+): string | null {
+  const dateMatch = String(dateValue || "")
+    .trim()
+    .match(/^(\d{4}-\d{2}-\d{2})$/);
+  const timeMatch = String(timeValue || "")
+    .trim()
+    .match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+
+  if (!dateMatch || !timeMatch) return null;
+
+  const [year, month, day] = dateMatch[1].split("-").map(Number);
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendarDate.getUTCFullYear() !== year ||
+    calendarDate.getUTCMonth() !== month - 1 ||
+    calendarDate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  let hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+  const period = timeMatch[3].toUpperCase();
+
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
+
+  if (period === "PM" && hour !== 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+
+  return `${dateMatch[1]} ${String(hour).padStart(2, "0")}:${String(
+    minute,
+  ).padStart(2, "0")}:00`;
 }
 
 function mapStatus(
@@ -94,6 +159,20 @@ function extractTimeFromRemarks(remarks: string | null): string | null {
   if (!remarks) return null;
   const match = remarks.match(/Time:([\d:]+\s*[AaPp][Mm])/i);
   return match ? match[1].trim() : null;
+}
+
+function appointmentTimeLabel(
+  bookingDate: unknown,
+  remarks: string | null,
+): string {
+  const storedTime = timeLabelFromDateTime(bookingDate);
+  const legacyTime = extractTimeFromRemarks(remarks);
+
+  // A DATE column upgraded to DATETIME reads as midnight until its legacy
+  // Remarks time is backfilled. Prefer BookingDate for all real DATETIME
+  // values, while keeping that one compatibility case during migration.
+  if (storedTime && storedTime !== "12:00 AM") return storedTime;
+  return legacyTime || storedTime || "9:00 AM";
 }
 
 function extractNotes(remarks: string | null): string {
@@ -154,6 +233,10 @@ interface RawItem {
   ItemCode: string;
   ItemDes: string;
   ItemPrintDes: string | null;
+  Category1: string | null;
+  Category2: string | null;
+  Category3: string | null;
+  Category4: string | null;
 }
 
 interface RawTechnician {
@@ -177,6 +260,14 @@ interface RawBookingType {
   BookingTypeDes: string;
 }
 
+interface RawSMSBooking {
+  CusName: string | null;
+  RegTel: string | null;
+  LocDes: string | null;
+  BookingDate: Date | string | null;
+  Remarks: string | null;
+}
+
 async function readHeaders(locCode?: string | null): Promise<RawHeader[]> {
   if (locCode && locCode !== "ALL") {
     return prisma.$queryRaw<RawHeader[]>`
@@ -184,7 +275,7 @@ async function readHeaders(locCode?: string | null): Promise<RawHeader[]> {
         RTRIM(BookingID)        AS BookingID,
         RTRIM(LocCode)          AS LocCode,
         RTRIM(CusCode)          AS CusCode,
-        BookingDate,
+        DATE_FORMAT(BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
         TxnDateTime,
         RTRIM(BookingTypeID)    AS BookingTypeID,
         RTRIM(Status)           AS Status,
@@ -213,7 +304,7 @@ async function readHeaders(locCode?: string | null): Promise<RawHeader[]> {
       RTRIM(BookingID)        AS BookingID,
       RTRIM(LocCode)          AS LocCode,
       RTRIM(CusCode)          AS CusCode,
-      BookingDate,
+      DATE_FORMAT(BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
       TxnDateTime,
       RTRIM(BookingTypeID)    AS BookingTypeID,
       RTRIM(Status)           AS Status,
@@ -363,7 +454,11 @@ export async function GET(req: NextRequest) {
         SELECT
           RTRIM(ItemCode)     AS ItemCode,
           RTRIM(ItemDes)      AS ItemDes,
-          RTRIM(ItemPrintDes) AS ItemPrintDes
+          RTRIM(ItemPrintDes) AS ItemPrintDes,
+          RTRIM(Category1)    AS Category1,
+          RTRIM(Category2)    AS Category2,
+          RTRIM(Category3)    AS Category3,
+          RTRIM(Category4)    AS Category4
         FROM tbl_itemmaster
         WHERE RTRIM(ItemCode) IN (${quotedList(itemCodeList)})
           AND RTRIM(LocCode)  IN (${locIn})
@@ -402,6 +497,19 @@ export async function GET(req: NextRequest) {
         trimValue(item.ItemPrintDes) || trimValue(item.ItemDes),
       ),
     );
+
+    const itemCategoryMap = new Map<string, string[]>();
+    items.forEach((item) => {
+      const codes = [
+        item.Category1,
+        item.Category2,
+        item.Category3,
+        item.Category4,
+      ]
+        .map((code) => trimValue(code))
+        .filter(Boolean);
+      itemCategoryMap.set(trimValue(item.ItemCode), codes);
+    });
 
     const technicianMap = new Map<string, string>();
     technicians.forEach((technician) =>
@@ -447,14 +555,33 @@ export async function GET(req: NextRequest) {
       const guests = [
         ...new Set(bookingDetails.map((detail) => trimValue(detail.GuessID))),
       ];
+      const techIDs = [
+        ...new Set(
+          bookingDetails
+            .map((detail) => trimValue(detail.TechID))
+            .filter((techID) => techID && techID !== "0"),
+        ),
+      ];
+      const categoryCodes = [
+        ...new Set(
+          bookingDetails.flatMap(
+            (detail) =>
+              itemCategoryMap.get(trimValue(detail.ServiceItemID)) ?? [],
+          ),
+        ),
+      ];
 
       const appointmentDate =
         dateOnly(header.BookingDate) ||
         extractDateFromRemarks(header.Remarks) ||
         dateOnly(header.TxnDateTime) ||
         "";
-      const appointmentTime =
-        extractTimeFromRemarks(header.Remarks) || "9:00 AM";
+      // New rows read the time from BookingDate. Old rows may still have the
+      // time prefix in Remarks, so keep the migration fallback.
+      const appointmentTime = appointmentTimeLabel(
+        header.BookingDate,
+        header.Remarks,
+      );
 
       return {
         id: bookingID,
@@ -474,6 +601,9 @@ export async function GET(req: NextRequest) {
         timeSlot: appointmentTime,
         status: mapStatus(trimValue(header.Status)),
         mode: mapMode(trimValue(header.ConfirmationType)),
+        bookingTypeID: trimValue(header.BookingTypeID),
+        categoryCodes,
+        techIDs,
         location: branchCode,
         duration: Math.max(30, 30 * bookingDetails.length),
         price: totalPrice,
@@ -519,6 +649,11 @@ export async function PATCH(req: NextRequest) {
 
     const actor = toChar(body.userID || body.updatedBy || "ADMIN", 10);
     const status = body.status ? mapStatusToDb(body.status) : null;
+    const hasScheduleChange = Boolean(body.date || body.timeSlot);
+    let previousDate: string | null = null;
+    let previousTimeSlot: string | null = null;
+    let rescheduledDate: string | null = null;
+    let rescheduledTimeSlot: string | null = null;
 
     if (status) {
       if (status === "CONFIRMED") {
@@ -561,11 +696,13 @@ export async function PATCH(req: NextRequest) {
       }
     }
 
-    if (body.date || body.timeSlot) {
+    if (hasScheduleChange) {
       const rows = await prisma.$queryRaw<
         { Remarks: string | null; BookingDate: Date | string | null }[]
       >`
-        SELECT Remarks, BookingDate
+        SELECT
+          Remarks,
+          DATE_FORMAT(BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate
         FROM tbl_bookingheder
         WHERE BookingID = ${bookingID}
           AND LocCode = ${locCode}
@@ -582,30 +719,38 @@ export async function PATCH(req: NextRequest) {
       const currentRemarks = rows[0].Remarks || "";
       const currentDate =
         dateOnly(rows[0].BookingDate) || extractDateFromRemarks(currentRemarks);
-      const newDate = trimValue(body.date) || currentDate || "";
-      const newTime =
-        trimValue(body.timeSlot) ||
-        extractTimeFromRemarks(currentRemarks) ||
-        "9:00 AM";
-      const notes = extractNotes(currentRemarks);
+      const currentTime = appointmentTimeLabel(
+        rows[0].BookingDate,
+        currentRemarks,
+      );
+      previousDate = currentDate;
+      previousTimeSlot = currentTime;
 
-      if (!newDate) {
+      const newDate = trimValue(body.date) || currentDate || "";
+      const newTime = trimValue(body.timeSlot) || currentTime;
+      const bookingDateTime = toBookingDateTime(newDate, newTime);
+      const notes = extractNotes(currentRemarks);
+      const newRemarks = notes.substring(0, 500) || " ";
+
+      if (!bookingDateTime) {
         return NextResponse.json(
-          { success: false, error: "A valid booking date is required" },
+          {
+            success: false,
+            error: "A valid booking date and time are required",
+          },
           { status: 422 },
         );
       }
 
-      const newRemarks = `Date:${newDate} Time:${newTime} ${notes}`
-        .trim()
-        .substring(0, 500);
+      rescheduledDate = newDate;
+      rescheduledTimeSlot = newTime;
 
-      // BookingDate is the real date field. Remarks is retained only for the
-      // legacy time-slot and notes format used by the current application.
+      // BookingDate stores the complete schedule date and time. Remarks now
+      // contains notes only; old Date:/Time: prefixes are removed on edit.
       await prisma.$executeRaw`
         UPDATE tbl_bookingheder
         SET
-          BookingDate = ${newDate},
+          BookingDate = ${bookingDateTime},
           Remarks = ${newRemarks}
         WHERE BookingID = ${bookingID}
           AND LocCode = ${locCode}
@@ -621,6 +766,75 @@ export async function PATCH(req: NextRequest) {
         WHERE BookingID = ${bookingID}
           AND LocCode = ${locCode}
       `;
+    }
+
+    const smsEvent: "confirmed" | "cancelled" | "rescheduled" | null =
+      status === "CONFIRMED"
+        ? "confirmed"
+        : status === "CANCELLED"
+          ? "cancelled"
+          : hasScheduleChange
+            ? "rescheduled"
+            : null;
+
+    if (smsEvent) {
+      const smsRows = await prisma.$queryRaw<RawSMSBooking[]>`
+        SELECT
+          RTRIM(c.CusName) AS CusName,
+          RTRIM(c.RegTel) AS RegTel,
+          RTRIM(l.LocDes) AS LocDes,
+          DATE_FORMAT(h.BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
+          h.Remarks AS Remarks
+        FROM tbl_bookingheder AS h
+        LEFT JOIN tbl_customermaster AS c
+          ON RTRIM(c.CusCode) = RTRIM(h.CusCode)
+        LEFT JOIN tbl_locationmaster AS l
+          ON RTRIM(l.LocCode) = RTRIM(h.LocCode)
+        WHERE RTRIM(h.BookingID) = ${bookingID}
+          AND RTRIM(h.LocCode) = ${locCode}
+        LIMIT 1
+      `;
+
+      const smsBooking = smsRows[0];
+      if (!smsBooking?.RegTel?.trim()) {
+        console.warn(
+          `[BOOKING] No customer phone found for ${bookingID}; skipping ${smsEvent} SMS.`,
+        );
+      } else {
+        const smsDate =
+          dateOnly(smsBooking.BookingDate) ||
+          rescheduledDate ||
+          previousDate ||
+          extractDateFromRemarks(smsBooking.Remarks) ||
+          "";
+        const smsTime = appointmentTimeLabel(
+          smsBooking.BookingDate,
+          smsBooking.Remarks,
+        );
+        const smsResult = await sendAppointmentSMS({
+          event: smsEvent,
+          phone: smsBooking.RegTel,
+          name: smsBooking.CusName || "Customer",
+          bookingId: bookingID,
+          branch: smsBooking.LocDes || locCode,
+          date: smsDate,
+          timeSlot: smsTime,
+          ...(smsEvent === "rescheduled"
+            ? {
+                previousDate: previousDate || undefined,
+                previousTimeSlot: previousTimeSlot || undefined,
+              }
+            : {}),
+        });
+
+        if (!smsResult.success) {
+          // The database update is already complete. SMS failure must not make
+          // the status/reschedule request look unsuccessful.
+          console.error(
+            `[BOOKING] SMS was not sent for ${bookingID}: ${smsResult.error}`,
+          );
+        }
+      }
     }
 
     return NextResponse.json({

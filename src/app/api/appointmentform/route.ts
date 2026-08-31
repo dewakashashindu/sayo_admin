@@ -1,10 +1,10 @@
 // src/app/api/appointmentform/route.ts
-// Sayo Beauty — Walk-in Booking API
-// Handles: branch fetch, service fetch, customer lookup/upsert, booking creation + email
+
 
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient, Prisma } from "@prisma/client";
 import nodemailer from "nodemailer";
+import { sendAppointmentSMS } from "@/lib/sms";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -205,6 +205,49 @@ function formatDateLong(iso: string): string {
     month: "long",
     year: "numeric",
   });
+}
+
+/**
+ * Preserve the appointment's wall-clock time in a MySQL DATETIME value.
+ * A DATETIME has no timezone, so a SQL string is safer than passing a JS Date
+ * that could be shifted by the server timezone.
+ */
+function toBookingDateTime(
+  dateValue: string,
+  timeValue: string,
+): string | null {
+  const dateMatch = String(dateValue || "")
+    .trim()
+    .match(/^(\d{4}-\d{2}-\d{2})$/);
+  const timeMatch = String(timeValue || "")
+    .trim()
+    .match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+
+  if (!dateMatch || !timeMatch) return null;
+
+  const [year, month, day] = dateMatch[1].split("-").map(Number);
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendarDate.getUTCFullYear() !== year ||
+    calendarDate.getUTCMonth() !== month - 1 ||
+    calendarDate.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  let hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+  const period = timeMatch[3].toUpperCase();
+
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
+
+  if (period === "PM" && hour !== 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+
+  return `${dateMatch[1]} ${String(hour).padStart(2, "0")}:${String(
+    minute,
+  ).padStart(2, "0")}:00`;
 }
 
 function escapeHtml(str: string): string {
@@ -708,6 +751,31 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const mainGuest =
+    body.guests.find((g) => g.guessID === "MAIN") ?? body.guests[0];
+  const appointmentTime = mainGuest?.timeSlot?.trim() || "";
+  const bookingDateTime = toBookingDateTime(
+    body.appointmentDate,
+    appointmentTime,
+  );
+
+  if (!bookingDateTime) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "A valid appointment date and time are required",
+      },
+      { status: 422 },
+    );
+  }
+
+  // BookingDate stores the complete schedule date and time. Remarks now
+  // contains notes only; old Date:/Time: prefixes are not written anymore.
+  const appointmentRemarks =
+    String(body.remarks || "")
+      .trim()
+      .substring(0, 500) || " ";
+
   try {
     const locCode = body.locCode.trim();
     const phone = normalizePhoneForStorage(body.regTel.trim());
@@ -767,7 +835,7 @@ export async function POST(req: NextRequest) {
           RegTel = ${toChar(phone, 15)},
           CusName = ${cusName.substring(0, 200)},
           CusEmail = ${body.cusEmail?.trim()?.substring(0, 200) || " "},
-          Gender = ${body.gender || null}
+          Gender = ${body.gender?.trim() || " "}
         WHERE RTRIM(CusCode) = ${cusCode}
       `;
     } else {
@@ -786,26 +854,12 @@ export async function POST(req: NextRequest) {
           ${body.cusEmail?.trim()?.substring(0, 200) || " "},
           ${" "},
           ${" "},
-          ${body.gender || null},
+          ${body.gender?.trim() || " "},
           ${body.userID || "0"},
           ${new Date()}
         )
       `;
     }
-
-    const mainGuest =
-      body.guests.find((g) => g.guessID === "MAIN") ?? body.guests[0];
-
-    const apptNote =
-      [
-        `Date:${body.appointmentDate}`,
-        mainGuest?.timeSlot ? `Time:${mainGuest.timeSlot}` : "",
-        body.remarks || "",
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .trim()
-        .substring(0, 500) || " ";
 
     const allItemCodes = [
       ...new Set(
@@ -866,7 +920,8 @@ export async function POST(req: NextRequest) {
             const initiallyOngoing =
               requestedStatus === "ONGOING" ||
               requestedStatus === "IN PROGRESS";
-            const actor = toChar(body.userID || "0", 10);
+            const userID = toChar(body.userID?.trim() || "0", 10);
+            const eventActor = toChar(body.userID?.trim() || " ", 10);
 
             await tx.$executeRaw`
               INSERT INTO tbl_bookingheder (
@@ -894,20 +949,20 @@ export async function POST(req: NextRequest) {
                 ${toChar(locCode, 10)},
                 ${toChar(bookingID, 10)},
                 ${toChar(cusCode, 10)},
-                ${body.appointmentDate.trim()},
+                ${bookingDateTime},
                 ${createdAt},
                 ${toChar(body.bookingTypeID, 10)},
                 ${toChar(body.status, 10)},
                 ${toChar(body.confirmationType, 2)},
                 ${body.advBookingPayMode?.trim() || " "},
                 ${body.advBookingAmount ?? 0},
-                ${apptNote},
-                ${actor},
+                ${appointmentRemarks},
+                ${userID},
                 ${initiallyCancelled ? createdAt : null},
-                ${initiallyCancelled ? actor : " "},
+                ${initiallyCancelled ? eventActor : " "},
                 ${body.guests.length},
                 ${initiallyConfirmed ? 1 : 0},
-                ${initiallyConfirmed ? actor : " "},
+                ${initiallyConfirmed ? eventActor : " "},
                 ${initiallyConfirmed ? createdAt : null},
                 ${initiallyOngoing ? createdAt : null},
                 ${null}
@@ -964,6 +1019,24 @@ export async function POST(req: NextRequest) {
     }
 
     if (lastErr) throw lastErr;
+
+    const smsResult = await sendAppointmentSMS({
+      event: "booked",
+      phone,
+      name: cusName,
+      bookingId: bookingID.trim(),
+      branch: branchLabel,
+      date: body.appointmentDate,
+      timeSlot: appointmentTime,
+    });
+
+    if (!smsResult.success) {
+      // The booking is already saved. An SMS provider/configuration problem
+      // must not turn a successful booking into a failed request.
+      console.error(
+        `[BOOKING] SMS was not sent for ${bookingID.trim()}: ${smsResult.error}`,
+      );
+    }
 
     const customerEmail = body.cusEmail?.trim();
 

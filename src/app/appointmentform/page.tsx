@@ -1,6 +1,7 @@
+//E:\sayo_admin\sayo-admin\src\app\appointmentform\page.tsx
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
 
@@ -25,6 +26,16 @@ interface ServiceItem {
   category4Label: string;
 }
 
+interface ExistingAppointment {
+  bookingID?: string;
+  date?: string;
+  timeSlot?: string;
+  duration?: number;
+  status?: string;
+  categoryCodes?: string[];
+  techIDs?: string[];
+}
+
 interface CustomerSuggestion {
   cusCode: string;
   cusName: string;
@@ -44,6 +55,14 @@ interface GuestProvider {
   techID: string;
   techName: string;
   categoryCode: string;
+}
+
+interface AvailabilityRequirement {
+  id: string;
+  timeSlot: string;
+  categories: string[];
+  selectedProviders: GuestProvider[];
+  preferredTechID: string;
 }
 
 interface SubClient {
@@ -190,6 +209,15 @@ function getBaseSlot(selected: string): string | null {
   return best;
 }
 
+const ALL_TIME_SLOTS = Array.from(
+  new Set(
+    MAIN_TIME_SLOTS.flatMap((base) => [
+      base,
+      ...TIME_OFFSETS.map((offset) => minsToSlot(slotToMins(base) + offset)),
+    ]),
+  ),
+);
+
 function fmtDateLong(iso: string): string {
   if (!iso) return "";
   return new Date(`${iso}T00:00`).toLocaleDateString("en-US", {
@@ -237,6 +265,252 @@ function normalizeSriLankanPhone(value: string): string {
   }
 
   return raw;
+}
+
+function normalizedCode(value: string | undefined | null): string {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function resolveTechnicianId(
+  value: string | undefined,
+  technicians: Technician[],
+): string {
+  const target = normalizedCode(value);
+  if (!target || target === "0") return target;
+
+  const found = technicians.find(
+    (technician) =>
+      normalizedCode(technician.UserId) === target ||
+      normalizedCode(technician.UserName) === target,
+  );
+
+  return found?.UserId?.trim() || String(value || "").trim();
+}
+
+function getBranchTechnicianIds(
+  branch: string,
+  technicians: Technician[],
+): string[] {
+  const branchCode = normalizedCode(branch);
+
+  return [
+    ...new Set(
+      technicians
+        .filter((technician) => {
+          const workingLocations = String(technician.WorkingLocID || "")
+            .split(",")
+            .map(normalizedCode)
+            .filter(Boolean);
+          return (
+            workingLocations.includes(branchCode) ||
+            workingLocations.includes("ALL")
+          );
+        })
+        .map((technician) => normalizedCode(technician.UserId))
+        .filter((technicianId) => technicianId && technicianId !== "0"),
+    ),
+  ];
+}
+
+function isAppointmentBusyAt(
+  appointment: ExistingAppointment,
+  slotMinutes: number,
+  currentBookingID: string,
+): boolean {
+  if (
+    currentBookingID &&
+    normalizedCode(appointment.bookingID) === normalizedCode(currentBookingID)
+  ) {
+    return false;
+  }
+
+  if (normalizedCode(appointment.status) === "CANCELLED") return false;
+
+  const startMinutes = slotToMins(appointment.timeSlot || "");
+  if (startMinutes < 0) return false;
+
+  const categoryCount = new Set(
+    (appointment.categoryCodes || []).map(normalizedCode).filter(Boolean),
+  ).size;
+  // Different service categories can run in parallel when they have
+  // different technicians (for example Hair + Nail). Same-category service
+  // rows retain the recorded duration because they may be sequential.
+  const duration =
+    categoryCount > 1 ? 30 : Math.max(30, Number(appointment.duration) || 30);
+  const endMinutes = startMinutes + duration;
+  const candidateEnd = slotMinutes + 30;
+
+  return slotMinutes < endMinutes && candidateEnd > startMinutes;
+}
+
+function calculateSlotAvailability({
+  slot,
+  categories,
+  selectedProviders,
+  preferredTechID,
+  branch,
+  technicians,
+  appointments,
+  currentBookingID,
+  additionalRequirements = [],
+}: {
+  slot: string;
+  categories: string[];
+  selectedProviders: GuestProvider[];
+  preferredTechID: string;
+  branch: string;
+  technicians: Technician[];
+  appointments: ExistingAppointment[];
+  currentBookingID: string;
+  additionalRequirements?: AvailabilityRequirement[];
+}): boolean {
+  const slotMinutes = slotToMins(slot);
+  if (slotMinutes < 0) return false;
+
+  const requirementGroups = [
+    {
+      categories,
+      selectedProviders,
+      preferredTechID,
+    },
+    ...additionalRequirements
+      .filter((requirement) => slotToMins(requirement.timeSlot) === slotMinutes)
+      .map((requirement) => ({
+        categories: requirement.categories,
+        selectedProviders: requirement.selectedProviders,
+        preferredTechID: requirement.preferredTechID,
+      })),
+  ];
+  const categoryRequirements = requirementGroups.flatMap((group) =>
+    [...new Set(group.categories.map(normalizedCode).filter(Boolean))].map(
+      (category) => ({
+        category,
+        selectedProviders: group.selectedProviders,
+        preferredTechID: group.preferredTechID,
+      }),
+    ),
+  );
+
+  // Before a service is selected there is no technician requirement to test.
+  if (categoryRequirements.length === 0) return true;
+
+  const busyTechnicianIds = new Set<string>();
+  const unassignedBookingCategories: string[] = [];
+
+  appointments.forEach((appointment) => {
+    if (!isAppointmentBusyAt(appointment, slotMinutes, currentBookingID)) {
+      return;
+    }
+
+    const appointmentTechIDs = [
+      ...new Set(
+        (appointment.techIDs || [])
+          .map(normalizedCode)
+          .filter((techID) => techID && techID !== "0"),
+      ),
+    ];
+
+    if (appointmentTechIDs.length > 0) {
+      appointmentTechIDs.forEach((techID) => busyTechnicianIds.add(techID));
+      return;
+    }
+
+    const appointmentCategories = [
+      ...new Set(
+        (appointment.categoryCodes || []).map(normalizedCode).filter(Boolean),
+      ),
+    ];
+
+    if (appointmentCategories.length === 0) {
+      // The booking has no assignment information. Count it as one
+      // technician demand rather than incorrectly making every slot red.
+      unassignedBookingCategories.push("__UNKNOWN_BOOKING__");
+    } else {
+      // Without a selected provider, an existing booking consumes one
+      // technician who could otherwise be available for a service.
+      unassignedBookingCategories.push(...appointmentCategories);
+    }
+  });
+
+  const branchTechnicianIds = getBranchTechnicianIds(branch, technicians);
+  const allRequirements = [
+    ...categoryRequirements,
+    ...unassignedBookingCategories.map((category) => ({
+      category,
+      selectedProviders: [] as GuestProvider[],
+      preferredTechID: "",
+    })),
+  ];
+
+  const possibleTechnicians = allRequirements.map(
+    ({
+      category,
+      selectedProviders: groupProviders,
+      preferredTechID: groupPreferredTechID,
+    }) => {
+      const assignedProvider = groupProviders.find(
+        (provider) => normalizedCode(provider.categoryCode) === category,
+      );
+      const assignedTechID = resolveTechnicianId(
+        assignedProvider?.techID || groupPreferredTechID,
+        technicians,
+      );
+
+      const candidates = assignedTechID
+        ? [assignedTechID]
+        : branchTechnicianIds;
+
+      return [
+        ...new Set(
+          candidates
+            .map(normalizedCode)
+            .filter((techID) => techID && techID !== "0")
+            .filter((techID) => !busyTechnicianIds.has(techID)),
+        ),
+      ];
+    },
+  );
+
+  if (possibleTechnicians.some((candidates) => candidates.length === 0)) {
+    return false;
+  }
+
+  // A booking with two categories, for example Hair + Nail, needs two
+  // available technicians at the same time. Find a distinct technician for
+  // every category instead of incorrectly reusing one person twice.
+  const ordered = possibleTechnicians
+    .map((candidates) => ({ candidates }))
+    .sort((a, b) => a.candidates.length - b.candidates.length);
+  const matched = new Map<string, number>();
+
+  function assignCategory(orderIndex: number, seen: Set<string>): boolean {
+    if (orderIndex >= ordered.length) return true;
+
+    const category = ordered[orderIndex];
+    for (const technicianId of category.candidates) {
+      if (seen.has(technicianId)) continue;
+      seen.add(technicianId);
+
+      const previousCategory = matched.get(technicianId);
+      if (
+        previousCategory === undefined ||
+        assignCategory(previousCategory, seen)
+      ) {
+        matched.set(technicianId, orderIndex);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    if (!assignCategory(index, new Set<string>())) return false;
+  }
+
+  return true;
 }
 
 function getSubCat2(services: ServiceItem[], cat1: string): string[] {
@@ -409,7 +683,7 @@ html,body{height:100%;font-family:'Inter',sans-serif;overflow:hidden;}
 .subcat-bar{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;align-items:center}.subcat-btn{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;border:1.5px solid transparent;background:#c8dde3;cursor:pointer;font-family:'Inter',sans-serif;font-size:11px;font-weight:700;color:#1e3a40;white-space:nowrap;flex-shrink:0;transition:all .15s}.subcat-btn:hover:not(.sub-active){background:#bdd5da;border-color:rgba(30,58,64,.2)}.subcat-btn.sub-active{background:#1e3a40;color:#fff;border-color:#1e3a40}.subcat-sep{color:#9ca3af;font-size:14px;flex-shrink:0;user-select:none}
 .svc-card{background:#d0e3e7;border-radius:10px;padding:13px 15px;cursor:pointer;border:2px solid transparent;transition:all .15s;display:flex;flex-direction:column;gap:4px;position:relative;overflow:hidden;text-align:left;font-family:'Inter',sans-serif}.svc-card:hover:not(.sel-s){background:#c8dde3;transform:translateY(-1px);box-shadow:0 3px 10px rgba(0,0,0,.08)}.svc-card.sel-s{background:linear-gradient(135deg,#c4dce1,#b8d4da);border-color:#1e3a40;box-shadow:0 0 0 3px rgba(30,58,64,.12);animation:popIn .2s ease}.svc-card.err-s{border-color:#e53e3e!important}.svc-chk{width:20px;height:20px;border-radius:50%;border:2px solid rgba(30,58,64,.3);background:#deeaea;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;position:absolute;top:11px;right:11px}.svc-chk.on{background:#1e3a40;border-color:#1e3a40}
 .breadcrumb-wrap{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px}.bc-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;font-family:'Inter',sans-serif;background:rgba(30,58,64,.08);color:#1e3a40;white-space:nowrap}.bc-sep{color:#9ca3af;font-size:11px}
-.ts-section{display:flex;flex-direction:column;gap:16px}.just-now-btn{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;border-radius:10px;border:none;background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;cursor:pointer;transition:all .18s;white-space:nowrap;flex-shrink:0;animation:nowPulse 2s ease-in-out infinite;box-shadow:0 2px 10px rgba(239,68,68,.35)}.just-now-btn:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(239,68,68,.45)}.just-now-btn.selected{background:linear-gradient(135deg,#15803d,#22c55e);animation:none;box-shadow:0 2px 10px rgba(34,197,94,.35)}.ts-main-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:7px}.ts-btn{background:#d0e3e7;border-radius:8px;padding:10px 4px;text-align:center;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;border:2px solid transparent;transition:all .15s;color:#1e3a40;min-height:40px;display:flex;align-items:center;justify-content:center}.ts-btn:hover:not(.sel-t):not(.base-active){background:#b8d0d5}.ts-btn.sel-t{background:#1e3a40;color:#fff;border-color:#1e3a40;transform:scale(1.04)}.ts-btn.base-active{background:#c4dce1;border-color:#1e3a40;color:#1e3a40;box-shadow:0 0 0 2px rgba(30,58,64,.2)}.ts-btn.err-t{border-color:#e53e3e}.ts-offset-wrap{background:rgba(30,58,64,.06);border-radius:12px;padding:14px 16px;border:1.5px solid rgba(30,58,64,.15);animation:slideDown .18s ease both}.ts-offset-label{font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;display:flex;align-items:center;gap:6px}.ts-offset-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.ts-off-btn{background:#d0e3e7;border-radius:8px;padding:8px 4px;text-align:center;font-family:'Inter',sans-serif;cursor:pointer;border:2px solid transparent;transition:all .15s;color:#1e3a40;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:46px;justify-content:center}.ts-off-btn:hover:not(.sel-t){background:#b8d0d5}.ts-off-btn.sel-t{background:#1e3a40;color:#fff;border-color:#1e3a40}.ts-off-btn .off-delta{font-size:10px;font-weight:700;opacity:.7;line-height:1}.ts-off-btn .off-time{font-size:12px;font-weight:800;line-height:1.3}.sel-time-badge{display:inline-flex;align-items:center;gap:10px;background:linear-gradient(135deg,#1e3a40,#2a5060);border-radius:10px;padding:10px 16px}.sel-time-badge .stb-label{font-size:10px;color:rgba(255,255,255,.55);font-weight:700;text-transform:uppercase;letter-spacing:.05em}.sel-time-badge .stb-time{font-size:18px;font-weight:800;color:#4ade80;letter-spacing:.02em}.tech-prefill-badge{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1.5px solid rgba(34,197,94,.35);border-radius:10px;padding:10px 14px;margin-bottom:4px}
+.ts-section{display:flex;flex-direction:column;gap:16px}.just-now-btn{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;border-radius:10px;border:none;background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;cursor:pointer;transition:all .18s;white-space:nowrap;flex-shrink:0;animation:nowPulse 2s ease-in-out infinite;box-shadow:0 2px 10px rgba(239,68,68,.35)}.just-now-btn:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(239,68,68,.45)}.just-now-btn.selected{background:linear-gradient(135deg,#15803d,#22c55e);animation:none;box-shadow:0 2px 10px rgba(34,197,94,.35)}.ts-main-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:7px}.ts-btn{background:#d0e3e7;border-radius:8px;padding:10px 4px;text-align:center;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;border:2px solid transparent;transition:all .15s;color:#1e3a40;min-height:40px;display:flex;align-items:center;justify-content:center}.ts-btn:hover:not(.sel-t):not(.base-active){background:#b8d0d5}.ts-btn.base-active{background:#c4dce1;border-color:#1e3a40;color:#1e3a40;box-shadow:0 0 0 2px rgba(30,58,64,.2)}.ts-btn.available{background:#dcfce7;border-color:#86efac;color:#166534}.ts-btn.unavailable{background:#fee2e2;border-color:#fca5a5;color:#b91c1c;cursor:not-allowed}.ts-btn.available:hover:not(.sel-t){background:#bbf7d0}.ts-btn.unavailable:hover{background:#fecaca}.ts-btn.sel-t{background:#1e3a40;color:#fff;border-color:#1e3a40;transform:scale(1.04)}.ts-btn.err-t{border-color:#e53e3e}.ts-offset-wrap{background:rgba(30,58,64,.06);border-radius:12px;padding:14px 16px;border:1.5px solid rgba(30,58,64,.15);animation:slideDown .18s ease both}.ts-offset-label{font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;display:flex;align-items:center;gap:6px}.ts-offset-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.ts-off-btn{background:#d0e3e7;border-radius:8px;padding:8px 4px;text-align:center;font-family:'Inter',sans-serif;cursor:pointer;border:2px solid transparent;transition:all .15s;color:#1e3a40;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:46px;justify-content:center}.ts-off-btn.available{background:#dcfce7;border-color:#86efac;color:#166534}.ts-off-btn.unavailable{background:#fee2e2;border-color:#fca5a5;color:#b91c1c;cursor:not-allowed}.ts-off-btn.available:hover:not(.sel-t){background:#bbf7d0}.ts-off-btn.unavailable:hover{background:#fecaca}.ts-off-btn:disabled{opacity:1}.ts-off-btn:hover:not(.sel-t){background:#b8d0d5}.ts-off-btn.unavailable:hover:not(.sel-t){background:#fecaca}.ts-off-btn.sel-t{background:#1e3a40;color:#fff;border-color:#1e3a40}.ts-off-btn .off-delta{font-size:10px;font-weight:700;opacity:.7;line-height:1}.ts-off-btn .off-time{font-size:12px;font-weight:800;line-height:1.3}.slot-availability-legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:11px;font-weight:700;color:#6b7280}.slot-availability-legend span{display:inline-flex;align-items:center;gap:5px}.slot-legend-dot{display:inline-block;width:9px;height:9px;border-radius:50%}.available-dot{background:#22c55e}.unavailable-dot{background:#ef4444}.slot-availability-note{display:flex;align-items:center;gap:7px;border-radius:8px;padding:8px 10px;font-size:11px;font-weight:600}.slot-availability-note.checking{background:#f0fdf4;color:#166534}.slot-availability-note.failed{background:#fee2e2;color:#b91c1c}.slot-availability-dot{width:8px;height:8px;border-radius:50%;background:#22c55e;animation:nowPulse 1.2s ease-in-out infinite}.sel-time-badge{display:inline-flex;align-items:center;gap:10px;background:linear-gradient(135deg,#1e3a40,#2a5060);border-radius:10px;padding:10px 16px}.sel-time-badge .stb-label{font-size:10px;color:rgba(255,255,255,.55);font-weight:700;text-transform:uppercase;letter-spacing:.05em}.sel-time-badge .stb-time{font-size:18px;font-weight:800;color:#4ade80;letter-spacing:.02em}.tech-prefill-badge{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1.5px solid rgba(34,197,94,.35);border-radius:10px;padding:10px 14px;margin-bottom:4px}
 .chip-bar{background:#1e3a40;border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.chip{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.14);border-radius:20px;padding:4px 9px;font-size:11px;font-weight:600;color:#fff;white-space:nowrap;animation:chipIn .2s ease both}.chip-x{width:14px;height:14px;border-radius:50%;background:rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:9px;color:#fff;font-weight:700;transition:background .15s;border:none;line-height:1}.chip-x:hover{background:rgba(255,255,255,.42)}
 .prov-card{background:#d0e3e7;border-radius:11px;padding:12px 14px;cursor:pointer;border:2px solid transparent;transition:all .17s;display:flex;align-items:center;gap:12px;font-family:'Inter',sans-serif;animation:rowIn .18s ease both}.prov-card:hover:not(.sel-p){background:#c8dde3;transform:translateY(-1px)}.prov-card.sel-p{background:linear-gradient(135deg,#c4dce1,#b6d2d9);border-color:#1e3a40;box-shadow:0 0 0 3px rgba(30,58,64,.13)}.prov-av{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#5a8a92,#3a6a72);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px;flex-shrink:0;box-shadow:0 2px 6px rgba(0,0,0,.15)}.prov-card.sel-p .prov-av{background:linear-gradient(135deg,#1e3a40,#2a5060)}
 .sum-card{background:#deeaea;border-radius:16px;padding:20px 20px 24px;display:flex;flex-direction:column;gap:0;box-shadow:0 1px 6px rgba(0,0,0,.07);flex:1;min-height:0;overflow-y:auto}.sum-div{height:1px;background:rgba(30,58,64,.15);margin:10px 0 14px}.sum-dot{border-top:1px dashed rgba(30,58,64,.22);margin:10px 0}.confirm-btn{background:#1e3a40;color:#fff;border:none;border-radius:11px;width:100%;height:50px;font-family:'Inter',sans-serif;font-size:15px;font-weight:700;cursor:pointer;transition:all .18s;display:flex;align-items:center;justify-content:center;gap:10px;flex-shrink:0}.confirm-btn:hover:not(:disabled){background:#2a5060;transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.18)}.confirm-btn:disabled{background:#6b8e96;cursor:not-allowed;opacity:.8}.spinner{width:18px;height:18px;border-radius:50%;border:2.5px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite;flex-shrink:0}
@@ -1535,11 +1809,15 @@ function TimeSlotPicker({
   onSelect,
   hasError,
   clientLabel,
+  availability,
+  availabilityStatus = "idle",
 }: {
   selectedSlot: string;
   onSelect: (slot: string) => void;
   hasError?: boolean;
   clientLabel?: string;
+  availability?: Record<string, boolean>;
+  availabilityStatus?: "idle" | "loading" | "ready" | "error";
 }) {
   const [liveTime, setLiveTime] = useState(nowSlot());
   const [openBase, setOpenBase] = useState<string | null>(() =>
@@ -1555,12 +1833,42 @@ function TimeSlotPicker({
     if (!selectedSlot) setOpenBase(null);
   }, [selectedSlot]);
 
+  useEffect(() => {
+    if (
+      selectedSlot &&
+      availabilityStatus === "ready" &&
+      availability?.[selectedSlot] !== true
+    ) {
+      onSelect("");
+    }
+  }, [availability, availabilityStatus, onSelect, selectedSlot]);
+
   const selectedBase = getBaseSlot(selectedSlot);
+  const isSlotSelectable = (slot: string): boolean => {
+    if (availabilityStatus === "loading" || availabilityStatus === "error") {
+      return false;
+    }
+    if (availabilityStatus === "ready") {
+      return availability?.[slot] === true;
+    }
+    return true;
+  };
+  const availabilityClass = (slot: string): string => {
+    if (availabilityStatus !== "ready" || !availability) return "";
+    return availability[slot] === true ? " available" : " unavailable";
+  };
   const isJustNow =
     !!selectedSlot &&
     Math.abs(slotToMins(selectedSlot) - slotToMins(liveTime)) <= 1;
 
   function handleMainSlot(slot: string) {
+    // A red 30-minute anchor can still be opened so the user can inspect
+    // available +5/+10/... offsets inside that window.
+    if (!isSlotSelectable(slot)) {
+      setOpenBase(slot);
+      return;
+    }
+
     if (openBase === slot && selectedSlot === slot) {
       onSelect("");
       setOpenBase(null);
@@ -1574,11 +1882,18 @@ function TimeSlotPicker({
 
   function handleOffset(base: string, off: number) {
     const computed = minsToSlot(slotToMins(base) + off);
-    onSelect(selectedSlot === computed ? base : computed);
+    if (!isSlotSelectable(computed)) return;
+    const nextSlot =
+      selectedSlot === computed && isSlotSelectable(base) ? base : computed;
+    onSelect(nextSlot);
   }
 
   function handleJustNow() {
     const now = nowSlot();
+    if (!isSlotSelectable(now)) {
+      setOpenBase(getBaseSlot(now));
+      return;
+    }
     onSelect(now);
     setOpenBase(getBaseSlot(now));
   }
@@ -1624,6 +1939,29 @@ function TimeSlotPicker({
           Just Now · {liveTime}
         </button>
       </div>
+
+      {availabilityStatus === "loading" && (
+        <div className="slot-availability-note checking">
+          <span className="slot-availability-dot" /> Checking technician
+          availability...
+        </div>
+      )}
+      {availabilityStatus === "error" && (
+        <div className="slot-availability-note failed">
+          Could not check technician availability. Please try again after
+          choosing the date again.
+        </div>
+      )}
+      {availabilityStatus === "ready" && availability && (
+        <div className="slot-availability-legend">
+          <span>
+            <i className="slot-legend-dot available-dot" /> Available
+          </span>
+          <span>
+            <i className="slot-legend-dot unavailable-dot" /> Fully booked
+          </span>
+        </div>
+      )}
 
       {selectedSlot && (
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1673,12 +2011,19 @@ function TimeSlotPicker({
           {MAIN_TIME_SLOTS.map((slot) => {
             const isExact = selectedSlot === slot;
             const isParent = !isExact && selectedBase === slot;
+            const unavailable =
+              availabilityStatus === "ready" && availability?.[slot] === false;
             return (
               <button
                 type="button"
                 key={slot}
-                className={`ts-btn${isExact ? " sel-t" : isParent ? " base-active" : ""}`}
+                className={`ts-btn${availabilityClass(slot)}${isExact ? " sel-t" : isParent ? " base-active" : ""}`}
                 onClick={() => handleMainSlot(slot)}
+                title={
+                  unavailable
+                    ? "All suitable technicians are booked at this time"
+                    : undefined
+                }
               >
                 {slot}
               </button>
@@ -1707,13 +2052,25 @@ function TimeSlotPicker({
           <div className="ts-offset-grid">
             {TIME_OFFSETS.map((off) => {
               const computed = minsToSlot(slotToMins(openBase) + off);
+              const unavailable =
+                availabilityStatus === "ready" &&
+                availability?.[computed] === false;
+              const unavailableOrChecking =
+                availabilityStatus === "loading" ||
+                availabilityStatus === "error" ||
+                unavailable;
               return (
                 <button
                   type="button"
                   key={off}
-                  className={`ts-off-btn${selectedSlot === computed ? " sel-t" : ""}`}
+                  className={`ts-off-btn${availabilityClass(computed)}${selectedSlot === computed ? " sel-t" : ""}`}
                   onClick={() => handleOffset(openBase, off)}
-                  title={computed}
+                  disabled={unavailableOrChecking}
+                  title={
+                    unavailable
+                      ? "All suitable technicians are booked at this time"
+                      : computed
+                  }
                 >
                   <span className="off-delta">+{off}m</span>
                   <span className="off-time">{computed}</span>
@@ -3132,7 +3489,7 @@ function ProviderPicker({
   );
 }
 
-export default function WalkInPage() {
+function WalkInPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [navKey, setNavKey] = useState("calendar");
@@ -3143,6 +3500,14 @@ export default function WalkInPage() {
   const [servicesLoading, setServicesLoading] = useState(false);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [techniciansLoading, setTechniciansLoading] = useState(false);
+  const [existingAppointments, setExistingAppointments] = useState<
+    ExistingAppointment[]
+  >([]);
+  const [rescheduleBooking, setRescheduleBooking] =
+    useState<ExistingAppointment | null>(null);
+  const [availabilityStatus, setAvailabilityStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
   const [showPreview, setShowPreview] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -3263,6 +3628,56 @@ export default function WalkInPage() {
   }, []);
 
   useEffect(() => {
+    if (!form.branch || !form.date) {
+      setExistingAppointments([]);
+      setAvailabilityStatus("idle");
+      if (!form.isReschedule) setRescheduleBooking(null);
+      return;
+    }
+
+    let active = true;
+    setAvailabilityStatus("loading");
+    setExistingAppointments([]);
+
+    fetch(
+      `/api/appointments?date=${encodeURIComponent(form.date)}&locCode=${encodeURIComponent(form.branch)}`,
+    )
+      .then(async (response) => {
+        const json = await response.json();
+        if (!response.ok || !json.success) {
+          throw new Error(json.error || "Availability lookup failed");
+        }
+        return json;
+      })
+      .then((json) => {
+        if (!active) return;
+
+        const rows = Array.isArray(json.data) ? json.data : [];
+        setExistingAppointments(rows);
+
+        if (form.isReschedule && form.bookingID) {
+          const currentBooking = rows.find(
+            (appointment: ExistingAppointment) =>
+              normalizedCode(appointment.bookingID) ===
+              normalizedCode(form.bookingID),
+          );
+          if (currentBooking) setRescheduleBooking(currentBooking);
+        }
+
+        setAvailabilityStatus("ready");
+      })
+      .catch(() => {
+        if (!active) return;
+        setExistingAppointments([]);
+        setAvailabilityStatus("error");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [form.branch, form.date, form.bookingID, form.isReschedule]);
+
+  useEffect(() => {
     if (!form.branch) {
       setServices([]);
       return;
@@ -3339,6 +3754,99 @@ export default function WalkInPage() {
         .map((s) => s.category1?.trim()),
     ),
   ].filter(Boolean) as string[];
+  const tabServiceCategories = [
+    ...new Set(
+      services
+        .filter((service) => tabSelSvcs.includes(service.itemCode))
+        .map((service) => service.category1?.trim())
+        .filter(Boolean),
+    ),
+  ] as string[];
+  const rescheduleCategories =
+    rescheduleBooking?.categoryCodes?.filter(Boolean) || [];
+  const tabAvailabilityCategories = form.isReschedule
+    ? rescheduleCategories.length > 0
+      ? rescheduleCategories
+      : ["__BOOKING__"]
+    : tabServiceCategories;
+  const tabSelectedProviders = isMain
+    ? form.providers
+    : (activeSub?.providers ?? []);
+  const availabilityRequirements: AvailabilityRequirement[] = [
+    {
+      id: "main",
+      timeSlot: form.timeSlot,
+      categories: form.isReschedule
+        ? rescheduleCategories.length > 0
+          ? rescheduleCategories
+          : ["__BOOKING__"]
+        : services
+            .filter((service) =>
+              form.selectedServices.includes(service.itemCode),
+            )
+            .map((service) => service.category1?.trim())
+            .filter((category): category is string => Boolean(category)),
+      selectedProviders: form.providers,
+      preferredTechID: form.isReschedule ? "" : form.prefilledTechID,
+    },
+    ...form.subClients.map((subClient) => ({
+      id: subClient.id,
+      timeSlot: subClient.timeSlot,
+      categories: services
+        .filter((service) =>
+          subClient.selectedServices.includes(service.itemCode),
+        )
+        .map((service) => service.category1?.trim())
+        .filter((category): category is string => Boolean(category)),
+      selectedProviders: subClient.providers,
+      preferredTechID: "",
+    })),
+  ];
+  const additionalAvailabilityRequirements = availabilityRequirements.filter(
+    (requirement) => requirement.id !== activeTab,
+  );
+  const tabAvailabilityStatus =
+    tabAvailabilityCategories.length === 0
+      ? "idle"
+      : availabilityStatus === "ready" && techniciansLoading
+        ? "loading"
+        : availabilityStatus;
+  const tabAvailability = useMemo(() => {
+    if (
+      tabAvailabilityCategories.length === 0 ||
+      tabAvailabilityStatus !== "ready"
+    ) {
+      return undefined;
+    }
+
+    return Object.fromEntries(
+      ALL_TIME_SLOTS.map((slot) => [
+        slot,
+        calculateSlotAvailability({
+          slot,
+          categories: tabAvailabilityCategories,
+          selectedProviders: tabSelectedProviders,
+          preferredTechID: form.isReschedule ? "" : form.prefilledTechID,
+          branch: form.branch,
+          technicians,
+          appointments: existingAppointments,
+          currentBookingID: form.isReschedule ? form.bookingID : "",
+          additionalRequirements: additionalAvailabilityRequirements,
+        }),
+      ]),
+    ) as Record<string, boolean>;
+  }, [
+    tabAvailabilityCategories,
+    tabAvailabilityStatus,
+    tabSelectedProviders,
+    form.prefilledTechID,
+    form.branch,
+    form.isReschedule,
+    form.bookingID,
+    technicians,
+    existingAppointments,
+    additionalAvailabilityRequirements,
+  ]);
   const mainTotal = services
     .filter((s) => form.selectedServices.includes(s.itemCode))
     .reduce((a, s) => a + s.price, 0);
@@ -3513,6 +4021,11 @@ export default function WalkInPage() {
   async function handleFinalSubmit() {
     setIsLoading(true);
     try {
+      const resolvedPrefilledTechID = resolveTechnicianId(
+        form.prefilledTechID,
+        technicians,
+      );
+
       if (form.isReschedule) {
         const res = await fetch("/api/appointments", {
           method: "PATCH",
@@ -3522,7 +4035,9 @@ export default function WalkInPage() {
             locCode: form.locCode || form.branch,
             date: form.date,
             timeSlot: form.timeSlot,
-            ...(form.prefilledTechID ? { techID: form.prefilledTechID } : {}),
+            ...(resolvedPrefilledTechID
+              ? { techID: resolvedPrefilledTechID }
+              : {}),
           }),
         });
         const json = await res.json();
@@ -3558,7 +4073,7 @@ export default function WalkInPage() {
                         gp.guessID === "MAIN" &&
                         s.category1?.trim() === gp.categoryCode,
                     )?.techID ||
-                    form.prefilledTechID ||
+                    resolvedPrefilledTechID ||
                     "0",
                 })),
             },
@@ -4547,6 +5062,8 @@ export default function WalkInPage() {
                           clientLabel={
                             isMain ? "Main Client" : (activeSub?.label ?? "")
                           }
+                          availability={tabAvailability}
+                          availabilityStatus={tabAvailabilityStatus}
                         />
                         {isMain && <ErrMsg msg={errors.timeSlot} />}
                       </div>
@@ -4613,5 +5130,26 @@ export default function WalkInPage() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function WalkInPageWrapper() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          style={{
+            padding: 40,
+            textAlign: "center",
+            color: "#6b7280",
+            fontFamily: "'Inter',sans-serif",
+          }}
+        >
+          Loading…
+        </div>
+      }
+    >
+      <WalkInPage />
+    </Suspense>
   );
 }

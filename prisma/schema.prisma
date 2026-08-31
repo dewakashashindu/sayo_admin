@@ -434,26 +434,28 @@ model tbl_bookingdetail {
 }
 
 model tbl_bookingheder {
-  LocCode           String    @db.Char(10)
-  BookingID         String    @db.Char(10)
-  CusCode           String    @db.Char(10)
-  BookingDate       DateTime  @db.Date
-  TxnDateTime       DateTime  @default(now()) @db.DateTime(0)
-  BookingTypeID     String    @db.Char(10)
-  Status            String    @db.Char(10)
-  ConfirmationType  String    @db.Char(2)
-  AdvBookingPayMode String    @default(" ") @db.VarChar(50)
-  AdvBookingAmount  Float     @default(0)
-  Remarks           String    @default(" ") @db.VarChar(500)
-  UserID            String    @default("0") @db.Char(10)
-  CancelledDate     DateTime? @db.DateTime(0)
-  CancelledBy       String    @db.VarChar(10)
+  LocCode           String   @db.Char(10)
+  BookingID         String   @db.Char(10)
+  CusCode           String   @db.Char(10)
+  BookingDate       DateTime @db.DateTime(0)
+  BookingTypeID     String   @db.Char(10)
+  Status            String   @db.Char(10)
+  ConfirmationType  String   @db.Char(2)
+  AdvBookingPayMode String   @default(" ") @db.VarChar(50)
+  AdvBookingAmount  Float    @default(0)
+  Remarks           String   @default(" ") @db.VarChar(500)
+  UserID            String   @default("0") @db.Char(10)
+  TxnDateTime       DateTime @default(now()) @db.DateTime(0)
+
+
+  CancelledDate     DateTime?
+  CancelledBy       String   @default(" ") @db.VarChar(10)
   Pax               Int
   Confirmed         Boolean
-  ConfirmedBy       String    @db.Char(10)
-  ConfirmedDate     DateTime? @db.DateTime(0)
-  CheckInTime       DateTime? @db.DateTime(0)
-  BillingTime       DateTime? @db.DateTime(0)
+  ConfirmedBy       String   @default(" ") @db.Char(10)
+  ConfirmedDate     DateTime?
+  CheckInTime       DateTime?
+  BillingTime       DateTime?
 
   @@id([LocCode, BookingID])
 }

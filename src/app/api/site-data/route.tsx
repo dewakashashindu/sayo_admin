@@ -174,13 +174,6 @@ const GALLERY_DEFAULTS = {
 /* ─────────────────────────────────────────
    HELPERS
 ───────────────────────────────────────── */
-function getFulfilledResult<T>(results: PromiseSettledResult<T>[]): T | null {
-  for (const res of results) {
-    if (res.status === 'fulfilled' && res.value) return res.value;
-  }
-  return null;
-}
-
 function getErrorMessage(err: unknown): string {
   if (!err) return 'Unknown error';
   if (err instanceof Error) {
@@ -198,33 +191,50 @@ export async function GET(req: NextRequest) {
 
   try {
 
+    /* ── nav ── */
     if (section === 'nav') {
-      const data = await prisma.navConfig.findUnique({ where: { id: 1 } });
+      const data = await prisma.navconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(NAV_DEFAULTS);
-      return NextResponse.json({ ...data, nav_items: Array.isArray(data.nav_items) ? data.nav_items : NAV_DEFAULTS.nav_items });
+      return NextResponse.json({
+        ...data,
+        nav_items: Array.isArray(data.nav_items) ? data.nav_items : NAV_DEFAULTS.nav_items,
+      });
     }
 
+    /* ── home ── */
     if (section === 'home') {
-      const data = await prisma.homeConfig.findUnique({ where: { id: 1 } });
+      const data = await prisma.homeconfig.findUnique({ where: { id: 1 } });
       return NextResponse.json(data ?? HOME_DEFAULTS);
     }
 
+    /* ── footer ── */
     if (section === 'footer') {
-      const data = await prisma.footerConfig.findUnique({ where: { id: 1 } });
+      const data = await prisma.footerconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(FOOTER_DEFAULTS);
-      return NextResponse.json({ ...data, locations: Array.isArray(data.locations) ? data.locations : FOOTER_DEFAULTS.locations, quick_links: Array.isArray(data.quick_links) ? data.quick_links : FOOTER_DEFAULTS.quick_links });
+      return NextResponse.json({
+        ...data,
+        locations:   Array.isArray(data.locations)   ? data.locations   : FOOTER_DEFAULTS.locations,
+        quick_links: Array.isArray(data.quick_links) ? data.quick_links : FOOTER_DEFAULTS.quick_links,
+      });
     }
 
+    /* ── about ── */
     if (section === 'about') {
-      const data = await prisma.aboutConfig.findUnique({ where: { id: 1 } });
+      const data = await prisma.aboutconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(ABOUT_DEFAULTS);
 
-      const rawStaff = Array.isArray(data.staff) && (data.staff as unknown[]).length > 0
-        ? data.staff as { name: string; role: string; experience: string; bio: string; specialties: string; photo?: string | null; image?: string | null }[]
-        : ABOUT_DEFAULTS.staff;
+      const rawStaff =
+        Array.isArray(data.staff) && (data.staff as unknown[]).length > 0
+          ? (data.staff as { name: string; role: string; experience: string; bio: string; specialties: string; photo?: string | null; image?: string | null }[])
+          : ABOUT_DEFAULTS.staff;
+
       const normalizedStaff = rawStaff.map(member => {
         const m = member as Record<string, unknown>;
-        return { ...member, photo: typeof m.photo === 'string' ? m.photo.trim() : '', image: typeof m.image === 'string' ? m.image.trim() : '' };
+        return {
+          ...member,
+          photo: typeof m.photo === 'string' ? m.photo.trim() : '',
+          image: typeof m.image === 'string' ? m.image.trim() : '',
+        };
       });
 
       return NextResponse.json({
@@ -235,29 +245,60 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    /* ── services ── */
     if (section === 'services') {
-      const data = await prisma.servicesConfig.findUnique({ where: { id: 1 } });
+      const data = await prisma.servicesconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(SERVICES_DEFAULTS);
-      const rawCats = Array.isArray(data.categories) && (data.categories as unknown[]).length > 0 ? data.categories : SERVICES_DEFAULTS.categories;
+
+      const rawCats =
+        Array.isArray(data.categories) && (data.categories as unknown[]).length > 0
+          ? data.categories
+          : SERVICES_DEFAULTS.categories;
+
       const fixedCats = (rawCats as { key: string; label: string; image?: string }[]).map(cat => {
         const def = SERVICES_CATEGORIES_DEFAULT.find(d => d.key === cat.key);
-        return { ...cat, image: cat.image && cat.image.startsWith('http') ? cat.image : (def?.image ?? '') };
+        return {
+          ...cat,
+          image: cat.image && cat.image.startsWith('http') ? cat.image : (def?.image ?? ''),
+        };
       });
-      return NextResponse.json({ hero_heading: data.hero_heading || SERVICES_DEFAULTS.hero_heading, hero_subtitle: data.hero_subtitle || SERVICES_DEFAULTS.hero_subtitle, categories: fixedCats, price_list: data.price_list && typeof data.price_list === 'object' ? data.price_list : SERVICES_DEFAULTS.price_list });
+
+      return NextResponse.json({
+        hero_heading:  data.hero_heading  || SERVICES_DEFAULTS.hero_heading,
+        hero_subtitle: data.hero_subtitle || SERVICES_DEFAULTS.hero_subtitle,
+        categories:    fixedCats,
+        price_list:    data.price_list && typeof data.price_list === 'object'
+                         ? data.price_list
+                         : SERVICES_DEFAULTS.price_list,
+      });
     }
 
+    /* ── contact ── */
     if (section === 'contact') {
-      const data = await prisma.contactConfig.findUnique({ where: { id: 1 } });
+      const data = await prisma.contactconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(CONTACT_DEFAULTS);
-      return NextResponse.json({ ...data, stats: Array.isArray(data.stats) && (data.stats as unknown[]).length > 0 ? data.stats : CONTACT_DEFAULTS.stats, branches: Array.isArray(data.branches) && (data.branches as unknown[]).length > 0 ? data.branches : CONTACT_DEFAULTS.branches });
+      return NextResponse.json({
+        ...data,
+        stats:    Array.isArray(data.stats)    && (data.stats    as unknown[]).length > 0 ? data.stats    : CONTACT_DEFAULTS.stats,
+        branches: Array.isArray(data.branches) && (data.branches as unknown[]).length > 0 ? data.branches : CONTACT_DEFAULTS.branches,
+      });
     }
 
+    /* ── gallery ── */
     if (section === 'gallery') {
-      const cloudOk = typeof prisma.galleryConfig === 'object';
-      let data: { [k: string]: unknown } | null = null;
-      if (cloudOk) data = (await prisma.galleryConfig.findUnique({ where: { id: 1 } })) ?? data;
+      const data = await prisma.galleryconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(GALLERY_DEFAULTS);
-      return NextResponse.json({ ...data, hero_eyebrow: data.hero_eyebrow ?? GALLERY_DEFAULTS.hero_eyebrow, hero_title: data.hero_title ?? GALLERY_DEFAULTS.hero_title, hero_subtitle: data.hero_subtitle ?? GALLERY_DEFAULTS.hero_subtitle, section_title: data.section_title ?? GALLERY_DEFAULTS.section_title, section_subtitle: data.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle, items: Array.isArray(data.items) && (data.items as unknown[]).length > 0 ? data.items : GALLERY_DEFAULTS.items });
+      return NextResponse.json({
+        ...data,
+        hero_eyebrow:     data.hero_eyebrow     ?? GALLERY_DEFAULTS.hero_eyebrow,
+        hero_title:       data.hero_title       ?? GALLERY_DEFAULTS.hero_title,
+        hero_subtitle:    data.hero_subtitle    ?? GALLERY_DEFAULTS.hero_subtitle,
+        section_title:    data.section_title    ?? GALLERY_DEFAULTS.section_title,
+        section_subtitle: data.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle,
+        items: Array.isArray(data.items) && (data.items as unknown[]).length > 0
+          ? data.items
+          : GALLERY_DEFAULTS.items,
+      });
     }
 
     /* ── feedback — full list for admin (published + unpublished) ── */
@@ -269,47 +310,119 @@ export async function GET(req: NextRequest) {
       const limit            = Math.min(500, parseInt(req.nextUrl.searchParams.get('limit') ?? '20', 10));
       const skip             = (page - 1) * limit;
 
-      const where: { cusLocation?: string; cusRating?: number; isPublished?: boolean } = {};
+      const where: {
+        cusLocation?: string;
+        cusRating?:   number;
+        isPublished?: boolean;
+      } = {};
+
       if (location)              where.cusLocation = location;
       if (rating)                where.cusRating   = parseInt(rating, 10);
       if (isPublishedParam !== null) {
         where.isPublished = isPublishedParam === '1' || isPublishedParam === 'true';
       }
 
-      let rows: unknown[] = [];
-      let total = 0;
-      [rows, total] = await Promise.all([
-        prisma.tbl_Feedback.findMany({ where, orderBy: { submittedAt: 'desc' }, skip, take: limit }),
-        prisma.tbl_Feedback.count({ where }),
+      const [rows, total] = await Promise.all([
+        prisma.tbl_feedback.findMany({
+          where,
+          orderBy: { submittedAt: 'desc' },
+          skip,
+          take: limit,
+        }),
+        prisma.tbl_feedback.count({ where }),
       ]);
 
-      return NextResponse.json({ data: rows, total, page, limit, totalPages: Math.ceil(total / limit), source: 'cloud' });
+      return NextResponse.json({
+        data:       rows,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        source:     'cloud',
+      });
     }
 
     /* ── all sections fallback ── */
     const [nav, home, footer, about, services, contact, gallery] = await Promise.all([
-      prisma.navConfig.findUnique({      where: { id: 1 } }),
-      prisma.homeConfig.findUnique({     where: { id: 1 } }),
-      prisma.footerConfig.findUnique({   where: { id: 1 } }),
-      prisma.aboutConfig.findUnique({    where: { id: 1 } }),
-      prisma.servicesConfig.findUnique({ where: { id: 1 } }),
-      prisma.contactConfig.findUnique({  where: { id: 1 } }),
-      prisma.galleryConfig?.findUnique?.({ where: { id: 1 } }),
+      prisma.navconfig.findUnique({      where: { id: 1 } }),
+      prisma.homeconfig.findUnique({     where: { id: 1 } }),
+      prisma.footerconfig.findUnique({   where: { id: 1 } }),
+      prisma.aboutconfig.findUnique({    where: { id: 1 } }),
+      prisma.servicesconfig.findUnique({ where: { id: 1 } }),
+      prisma.contactconfig.findUnique({  where: { id: 1 } }),
+      prisma.galleryconfig.findUnique({  where: { id: 1 } }),
     ]);
 
     return NextResponse.json({
-      nav:      nav      ? { ...nav,      nav_items: Array.isArray(nav.nav_items) ? nav.nav_items : NAV_DEFAULTS.nav_items }                                                                                                                                                                                                                                                                                                                                            : NAV_DEFAULTS,
-      home:     home     ?? HOME_DEFAULTS,
-      footer:   footer   ? { ...footer,   locations:  Array.isArray(footer.locations)   ? footer.locations   : FOOTER_DEFAULTS.locations,   quick_links: Array.isArray(footer.quick_links) ? footer.quick_links : FOOTER_DEFAULTS.quick_links }                                                                                                                                                                                                                       : FOOTER_DEFAULTS,
-      about:    about    ? { ...about,    staff:       Array.isArray(about.staff)    && (about.staff    as unknown[]).length > 0 ? about.staff    : ABOUT_DEFAULTS.staff,    reviews: Array.isArray(about.reviews)   && (about.reviews   as unknown[]).length > 0 ? about.reviews   : ABOUT_DEFAULTS.reviews }                                                                                                                                                       : ABOUT_DEFAULTS,
-      services: services ? { hero_heading: services.hero_heading || SERVICES_DEFAULTS.hero_heading, hero_subtitle: services.hero_subtitle || SERVICES_DEFAULTS.hero_subtitle, categories: (Array.isArray(services.categories) && (services.categories as unknown[]).length > 0 ? services.categories : SERVICES_DEFAULTS.categories) as typeof SERVICES_DEFAULTS.categories, price_list: services.price_list && typeof services.price_list === 'object' ? services.price_list : SERVICES_DEFAULTS.price_list } : SERVICES_DEFAULTS,
-      contact:  contact  ? { ...contact,  stats:       Array.isArray(contact.stats)    && (contact.stats    as unknown[]).length > 0 ? contact.stats    : CONTACT_DEFAULTS.stats,    branches: Array.isArray(contact.branches) && (contact.branches as unknown[]).length > 0 ? contact.branches : CONTACT_DEFAULTS.branches }                                                                                                                                        : CONTACT_DEFAULTS,
-      gallery:  gallery  ? { ...gallery,  hero_eyebrow: gallery.hero_eyebrow ?? GALLERY_DEFAULTS.hero_eyebrow, hero_title: gallery.hero_title ?? GALLERY_DEFAULTS.hero_title, hero_subtitle: gallery.hero_subtitle ?? GALLERY_DEFAULTS.hero_subtitle, section_title: gallery.section_title ?? GALLERY_DEFAULTS.section_title, section_subtitle: gallery.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle, items: Array.isArray(gallery.items) && (gallery.items as unknown[]).length > 0 ? gallery.items : GALLERY_DEFAULTS.items } : GALLERY_DEFAULTS,
+      nav: nav
+        ? { ...nav, nav_items: Array.isArray(nav.nav_items) ? nav.nav_items : NAV_DEFAULTS.nav_items }
+        : NAV_DEFAULTS,
+
+      home: home ?? HOME_DEFAULTS,
+
+      footer: footer
+        ? {
+            ...footer,
+            locations:   Array.isArray(footer.locations)   ? footer.locations   : FOOTER_DEFAULTS.locations,
+            quick_links: Array.isArray(footer.quick_links) ? footer.quick_links : FOOTER_DEFAULTS.quick_links,
+          }
+        : FOOTER_DEFAULTS,
+
+      about: about
+        ? {
+            ...about,
+            staff:   Array.isArray(about.staff)   && (about.staff   as unknown[]).length > 0 ? about.staff   : ABOUT_DEFAULTS.staff,
+            reviews: Array.isArray(about.reviews) && (about.reviews as unknown[]).length > 0 ? about.reviews : ABOUT_DEFAULTS.reviews,
+          }
+        : ABOUT_DEFAULTS,
+
+      services: services
+        ? {
+            hero_heading:  services.hero_heading  || SERVICES_DEFAULTS.hero_heading,
+            hero_subtitle: services.hero_subtitle || SERVICES_DEFAULTS.hero_subtitle,
+            categories:    Array.isArray(services.categories) && (services.categories as unknown[]).length > 0
+                             ? services.categories
+                             : SERVICES_DEFAULTS.categories,
+            price_list:    services.price_list && typeof services.price_list === 'object'
+                             ? services.price_list
+                             : SERVICES_DEFAULTS.price_list,
+          }
+        : SERVICES_DEFAULTS,
+
+      contact: contact
+        ? {
+            ...contact,
+            stats:    Array.isArray(contact.stats)    && (contact.stats    as unknown[]).length > 0 ? contact.stats    : CONTACT_DEFAULTS.stats,
+            branches: Array.isArray(contact.branches) && (contact.branches as unknown[]).length > 0 ? contact.branches : CONTACT_DEFAULTS.branches,
+          }
+        : CONTACT_DEFAULTS,
+
+      gallery: gallery
+        ? {
+            ...gallery,
+            hero_eyebrow:     gallery.hero_eyebrow     ?? GALLERY_DEFAULTS.hero_eyebrow,
+            hero_title:       gallery.hero_title       ?? GALLERY_DEFAULTS.hero_title,
+            hero_subtitle:    gallery.hero_subtitle    ?? GALLERY_DEFAULTS.hero_subtitle,
+            section_title:    gallery.section_title    ?? GALLERY_DEFAULTS.section_title,
+            section_subtitle: gallery.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle,
+            items: Array.isArray(gallery.items) && (gallery.items as unknown[]).length > 0
+              ? gallery.items
+              : GALLERY_DEFAULTS.items,
+          }
+        : GALLERY_DEFAULTS,
     });
 
   } catch (err) {
     console.error('[site-data GET]', err);
-    return NextResponse.json({ nav: NAV_DEFAULTS, home: HOME_DEFAULTS, footer: FOOTER_DEFAULTS, about: ABOUT_DEFAULTS, services: SERVICES_DEFAULTS, contact: CONTACT_DEFAULTS, gallery: GALLERY_DEFAULTS });
+    return NextResponse.json({
+      nav:      NAV_DEFAULTS,
+      home:     HOME_DEFAULTS,
+      footer:   FOOTER_DEFAULTS,
+      about:    ABOUT_DEFAULTS,
+      services: SERVICES_DEFAULTS,
+      contact:  CONTACT_DEFAULTS,
+      gallery:  GALLERY_DEFAULTS,
+    });
   }
 }
 
@@ -322,77 +435,224 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
+    /* ── nav ── */
     if (section === 'nav') {
-      const payload = {
+      const result = await prisma.navconfig.upsert({
         where:  { id: 1 },
-        update: { logo_text: body.logo_text ?? NAV_DEFAULTS.logo_text, contact_btn_text: body.contact_btn_text ?? NAV_DEFAULTS.contact_btn_text, contact_btn_link: body.contact_btn_link ?? NAV_DEFAULTS.contact_btn_link, nav_items: body.nav_items ?? NAV_DEFAULTS.nav_items, updated_by: 'admin' },
-        create: { id: 1, logo_text: body.logo_text ?? NAV_DEFAULTS.logo_text, contact_btn_text: body.contact_btn_text ?? NAV_DEFAULTS.contact_btn_text, contact_btn_link: body.contact_btn_link ?? NAV_DEFAULTS.contact_btn_link, nav_items: body.nav_items ?? NAV_DEFAULTS.nav_items, updated_by: 'admin' },
-      };
-      const result = await prisma.navConfig.upsert(payload);
+        update: {
+          logo_text:        body.logo_text        ?? NAV_DEFAULTS.logo_text,
+          contact_btn_text: body.contact_btn_text ?? NAV_DEFAULTS.contact_btn_text,
+          contact_btn_link: body.contact_btn_link ?? NAV_DEFAULTS.contact_btn_link,
+          nav_items:        body.nav_items        ?? NAV_DEFAULTS.nav_items,
+          updated_by:       'admin',
+        },
+        create: {
+          id:               1,
+          logo_text:        body.logo_text        ?? NAV_DEFAULTS.logo_text,
+          contact_btn_text: body.contact_btn_text ?? NAV_DEFAULTS.contact_btn_text,
+          contact_btn_link: body.contact_btn_link ?? NAV_DEFAULTS.contact_btn_link,
+          nav_items:        body.nav_items        ?? NAV_DEFAULTS.nav_items,
+          updated_by:       'admin',
+          updated_at:       new Date(),
+        },
+      });
       return NextResponse.json(result ?? { success: true });
     }
 
+    /* ── home ── */
     if (section === 'home') {
-      const payload = {
+      const result = await prisma.homeconfig.upsert({
         where:  { id: 1 },
-        update: { hero_eyebrow: body.hero_eyebrow ?? HOME_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? HOME_DEFAULTS.hero_heading, hero_body: body.hero_body ?? HOME_DEFAULTS.hero_body, hero_cta_text: body.hero_cta_text ?? HOME_DEFAULTS.hero_cta_text, hero_cta_link: body.hero_cta_link ?? HOME_DEFAULTS.hero_cta_link, updated_by: 'admin' },
-        create: { id: 1, hero_eyebrow: body.hero_eyebrow ?? HOME_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? HOME_DEFAULTS.hero_heading, hero_body: body.hero_body ?? HOME_DEFAULTS.hero_body, hero_cta_text: body.hero_cta_text ?? HOME_DEFAULTS.hero_cta_text, hero_cta_link: body.hero_cta_link ?? HOME_DEFAULTS.hero_cta_link, updated_by: 'admin' },
-      };
-      const result = await prisma.homeConfig.upsert(payload);
+        update: {
+          hero_eyebrow:  body.hero_eyebrow  ?? HOME_DEFAULTS.hero_eyebrow,
+          hero_heading:  body.hero_heading  ?? HOME_DEFAULTS.hero_heading,
+          hero_body:     body.hero_body     ?? HOME_DEFAULTS.hero_body,
+          hero_cta_text: body.hero_cta_text ?? HOME_DEFAULTS.hero_cta_text,
+          hero_cta_link: body.hero_cta_link ?? HOME_DEFAULTS.hero_cta_link,
+          updated_by:    'admin',
+        },
+        create: {
+          id:            1,
+          hero_eyebrow:  body.hero_eyebrow  ?? HOME_DEFAULTS.hero_eyebrow,
+          hero_heading:  body.hero_heading  ?? HOME_DEFAULTS.hero_heading,
+          hero_body:     body.hero_body     ?? HOME_DEFAULTS.hero_body,
+          hero_cta_text: body.hero_cta_text ?? HOME_DEFAULTS.hero_cta_text,
+          hero_cta_link: body.hero_cta_link ?? HOME_DEFAULTS.hero_cta_link,
+          updated_by:    'admin',
+          updated_at:    new Date(),
+        },
+      });
       return NextResponse.json(result ?? { success: true });
     }
 
+    /* ── footer ── */
     if (section === 'footer') {
-      const payload = {
+      const result = await prisma.footerconfig.upsert({
         where:  { id: 1 },
-        update: { brand_name: body.brand_name ?? FOOTER_DEFAULTS.brand_name, brand_tagline: body.brand_tagline ?? FOOTER_DEFAULTS.brand_tagline, contact_phone: body.contact_phone ?? FOOTER_DEFAULTS.contact_phone, contact_email: body.contact_email ?? FOOTER_DEFAULTS.contact_email, contact_address: body.contact_address ?? FOOTER_DEFAULTS.contact_address, copyright_text: body.copyright_text ?? FOOTER_DEFAULTS.copyright_text, locations: body.locations ?? FOOTER_DEFAULTS.locations, quick_links: body.quick_links ?? FOOTER_DEFAULTS.quick_links, social_whatsapp: body.social_whatsapp ?? '', social_facebook: body.social_facebook ?? '', social_instagram: body.social_instagram ?? '', updated_by: 'admin' },
-        create: { id: 1, brand_name: body.brand_name ?? FOOTER_DEFAULTS.brand_name, brand_tagline: body.brand_tagline ?? FOOTER_DEFAULTS.brand_tagline, contact_phone: body.contact_phone ?? FOOTER_DEFAULTS.contact_phone, contact_email: body.contact_email ?? FOOTER_DEFAULTS.contact_email, contact_address: body.contact_address ?? FOOTER_DEFAULTS.contact_address, copyright_text: body.copyright_text ?? FOOTER_DEFAULTS.copyright_text, locations: body.locations ?? FOOTER_DEFAULTS.locations, quick_links: body.quick_links ?? FOOTER_DEFAULTS.quick_links, social_whatsapp: body.social_whatsapp ?? '', social_facebook: body.social_facebook ?? '', social_instagram: body.social_instagram ?? '', updated_by: 'admin' },
-      };
-      const result = await prisma.footerConfig.upsert(payload);
+        update: {
+          brand_name:      body.brand_name      ?? FOOTER_DEFAULTS.brand_name,
+          brand_tagline:   body.brand_tagline   ?? FOOTER_DEFAULTS.brand_tagline,
+          contact_phone:   body.contact_phone   ?? FOOTER_DEFAULTS.contact_phone,
+          contact_email:   body.contact_email   ?? FOOTER_DEFAULTS.contact_email,
+          contact_address: body.contact_address ?? FOOTER_DEFAULTS.contact_address,
+          copyright_text:  body.copyright_text  ?? FOOTER_DEFAULTS.copyright_text,
+          locations:       body.locations       ?? FOOTER_DEFAULTS.locations,
+          quick_links:     body.quick_links     ?? FOOTER_DEFAULTS.quick_links,
+          social_whatsapp:  body.social_whatsapp  ?? '',
+          social_facebook:  body.social_facebook  ?? '',
+          social_instagram: body.social_instagram ?? '',
+          updated_by:      'admin',
+        },
+        create: {
+          id:              1,
+          brand_name:      body.brand_name      ?? FOOTER_DEFAULTS.brand_name,
+          brand_tagline:   body.brand_tagline   ?? FOOTER_DEFAULTS.brand_tagline,
+          contact_phone:   body.contact_phone   ?? FOOTER_DEFAULTS.contact_phone,
+          contact_email:   body.contact_email   ?? FOOTER_DEFAULTS.contact_email,
+          contact_address: body.contact_address ?? FOOTER_DEFAULTS.contact_address,
+          copyright_text:  body.copyright_text  ?? FOOTER_DEFAULTS.copyright_text,
+          locations:       body.locations       ?? FOOTER_DEFAULTS.locations,
+          quick_links:     body.quick_links     ?? FOOTER_DEFAULTS.quick_links,
+          social_whatsapp:  body.social_whatsapp  ?? '',
+          social_facebook:  body.social_facebook  ?? '',
+          social_instagram: body.social_instagram ?? '',
+          updated_by:      'admin',
+          updated_at:      new Date(),
+        },
+      });
       return NextResponse.json(result ?? { success: true });
     }
 
+    /* ── about ── */
     if (section === 'about') {
-      const payload = {
+      const result = await prisma.aboutconfig.upsert({
         where:  { id: 1 },
-        update: { hero_eyebrow: body.hero_eyebrow ?? ABOUT_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? ABOUT_DEFAULTS.hero_heading, hero_body: body.hero_body ?? ABOUT_DEFAULTS.hero_body, team_section_title: body.team_section_title ?? ABOUT_DEFAULTS.team_section_title, staff: body.staff ?? ABOUT_DEFAULTS.staff, gallery_section_title: body.gallery_section_title ?? ABOUT_DEFAULTS.gallery_section_title, gallery_description: body.gallery_description ?? ABOUT_DEFAULTS.gallery_description, gallery_images: body.gallery_images ?? ABOUT_DEFAULTS.gallery_images, review_section_title: body.review_section_title ?? ABOUT_DEFAULTS.review_section_title, reviews: body.reviews ?? ABOUT_DEFAULTS.reviews, updated_by: 'admin' },
-        create: { id: 1, hero_eyebrow: body.hero_eyebrow ?? ABOUT_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? ABOUT_DEFAULTS.hero_heading, hero_body: body.hero_body ?? ABOUT_DEFAULTS.hero_body, team_section_title: body.team_section_title ?? ABOUT_DEFAULTS.team_section_title, staff: body.staff ?? ABOUT_DEFAULTS.staff, gallery_section_title: body.gallery_section_title ?? ABOUT_DEFAULTS.gallery_section_title, gallery_description: body.gallery_description ?? ABOUT_DEFAULTS.gallery_description, gallery_images: body.gallery_images ?? ABOUT_DEFAULTS.gallery_images, review_section_title: body.review_section_title ?? ABOUT_DEFAULTS.review_section_title, reviews: body.reviews ?? ABOUT_DEFAULTS.reviews, updated_by: 'admin' },
-      };
-      const result = await prisma.aboutConfig.upsert(payload);
+        update: {
+          hero_eyebrow:          body.hero_eyebrow          ?? ABOUT_DEFAULTS.hero_eyebrow,
+          hero_heading:          body.hero_heading          ?? ABOUT_DEFAULTS.hero_heading,
+          hero_body:             body.hero_body             ?? ABOUT_DEFAULTS.hero_body,
+          team_section_title:    body.team_section_title    ?? ABOUT_DEFAULTS.team_section_title,
+          staff:                 body.staff                 ?? ABOUT_DEFAULTS.staff,
+          gallery_section_title: body.gallery_section_title ?? ABOUT_DEFAULTS.gallery_section_title,
+          gallery_description:   body.gallery_description   ?? ABOUT_DEFAULTS.gallery_description,
+          gallery_images:        body.gallery_images        ?? ABOUT_DEFAULTS.gallery_images,
+          review_section_title:  body.review_section_title  ?? ABOUT_DEFAULTS.review_section_title,
+          reviews:               body.reviews               ?? ABOUT_DEFAULTS.reviews,
+          updated_by:            'admin',
+        },
+        create: {
+          id:                    1,
+          hero_eyebrow:          body.hero_eyebrow          ?? ABOUT_DEFAULTS.hero_eyebrow,
+          hero_heading:          body.hero_heading          ?? ABOUT_DEFAULTS.hero_heading,
+          hero_body:             body.hero_body             ?? ABOUT_DEFAULTS.hero_body,
+          team_section_title:    body.team_section_title    ?? ABOUT_DEFAULTS.team_section_title,
+          staff:                 body.staff                 ?? ABOUT_DEFAULTS.staff,
+          gallery_section_title: body.gallery_section_title ?? ABOUT_DEFAULTS.gallery_section_title,
+          gallery_description:   body.gallery_description   ?? ABOUT_DEFAULTS.gallery_description,
+          gallery_images:        body.gallery_images        ?? ABOUT_DEFAULTS.gallery_images,
+          review_section_title:  body.review_section_title  ?? ABOUT_DEFAULTS.review_section_title,
+          reviews:               body.reviews               ?? ABOUT_DEFAULTS.reviews,
+          updated_by:            'admin',
+          updated_at:            new Date(),
+        },
+      });
       return NextResponse.json(result ?? { success: true });
     }
 
+    /* ── services ── */
     if (section === 'services') {
-      const payload = {
+      const result = await prisma.servicesconfig.upsert({
         where:  { id: 1 },
-        update: { hero_heading: body.hero_heading ?? SERVICES_DEFAULTS.hero_heading, hero_subtitle: body.hero_subtitle ?? SERVICES_DEFAULTS.hero_subtitle, categories: body.categories ?? SERVICES_DEFAULTS.categories, price_list: body.price_list ?? SERVICES_DEFAULTS.price_list, updated_by: 'admin' },
-        create: { id: 1, hero_heading: body.hero_heading ?? SERVICES_DEFAULTS.hero_heading, hero_subtitle: body.hero_subtitle ?? SERVICES_DEFAULTS.hero_subtitle, categories: body.categories ?? SERVICES_DEFAULTS.categories, price_list: body.price_list ?? SERVICES_DEFAULTS.price_list, updated_by: 'admin' },
-      };
-      const result = await prisma.servicesConfig.upsert(payload);
+        update: {
+          hero_heading:  body.hero_heading  ?? SERVICES_DEFAULTS.hero_heading,
+          hero_subtitle: body.hero_subtitle ?? SERVICES_DEFAULTS.hero_subtitle,
+          categories:    body.categories    ?? SERVICES_DEFAULTS.categories,
+          price_list:    body.price_list    ?? SERVICES_DEFAULTS.price_list,
+          updated_by:    'admin',
+        },
+        create: {
+          id:            1,
+          hero_heading:  body.hero_heading  ?? SERVICES_DEFAULTS.hero_heading,
+          hero_subtitle: body.hero_subtitle ?? SERVICES_DEFAULTS.hero_subtitle,
+          categories:    body.categories    ?? SERVICES_DEFAULTS.categories,
+          price_list:    body.price_list    ?? SERVICES_DEFAULTS.price_list,
+          updated_by:    'admin',
+          updated_at:    new Date(),
+        },
+      });
       return NextResponse.json(result ?? { success: true });
     }
 
+    /* ── contact ── */
     if (section === 'contact') {
-      const payload = {
+      const result = await prisma.contactconfig.upsert({
         where:  { id: 1 },
-        update: { hero_eyebrow: body.hero_eyebrow ?? CONTACT_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? CONTACT_DEFAULTS.hero_heading, hero_subtitle: body.hero_subtitle ?? CONTACT_DEFAULTS.hero_subtitle, cta_primary_text: body.cta_primary_text ?? CONTACT_DEFAULTS.cta_primary_text, cta_secondary_text: body.cta_secondary_text ?? CONTACT_DEFAULTS.cta_secondary_text, phone_number: body.phone_number ?? CONTACT_DEFAULTS.phone_number, email_address: body.email_address ?? CONTACT_DEFAULTS.email_address, stats: body.stats ?? CONTACT_DEFAULTS.stats, map_embed_src: body.map_embed_src ?? CONTACT_DEFAULTS.map_embed_src, map_address: body.map_address ?? CONTACT_DEFAULTS.map_address, map_open_href: body.map_open_href ?? CONTACT_DEFAULTS.map_open_href, social_instagram: body.social_instagram ?? '', social_facebook: body.social_facebook ?? '', social_whatsapp: body.social_whatsapp ?? '', branches: body.branches ?? CONTACT_DEFAULTS.branches, updated_by: 'admin' },
-        create: { id: 1, hero_eyebrow: body.hero_eyebrow ?? CONTACT_DEFAULTS.hero_eyebrow, hero_heading: body.hero_heading ?? CONTACT_DEFAULTS.hero_heading, hero_subtitle: body.hero_subtitle ?? CONTACT_DEFAULTS.hero_subtitle, cta_primary_text: body.cta_primary_text ?? CONTACT_DEFAULTS.cta_primary_text, cta_secondary_text: body.cta_secondary_text ?? CONTACT_DEFAULTS.cta_secondary_text, phone_number: body.phone_number ?? CONTACT_DEFAULTS.phone_number, email_address: body.email_address ?? CONTACT_DEFAULTS.email_address, stats: body.stats ?? CONTACT_DEFAULTS.stats, map_embed_src: body.map_embed_src ?? CONTACT_DEFAULTS.map_embed_src, map_address: body.map_address ?? CONTACT_DEFAULTS.map_address, map_open_href: body.map_open_href ?? CONTACT_DEFAULTS.map_open_href, social_instagram: body.social_instagram ?? '', social_facebook: body.social_facebook ?? '', social_whatsapp: body.social_whatsapp ?? '', branches: body.branches ?? CONTACT_DEFAULTS.branches, updated_by: 'admin' },
-      };
-      const result = await prisma.contactConfig.upsert(payload);
+        update: {
+          hero_eyebrow:       body.hero_eyebrow       ?? CONTACT_DEFAULTS.hero_eyebrow,
+          hero_heading:       body.hero_heading       ?? CONTACT_DEFAULTS.hero_heading,
+          hero_subtitle:      body.hero_subtitle      ?? CONTACT_DEFAULTS.hero_subtitle,
+          cta_primary_text:   body.cta_primary_text   ?? CONTACT_DEFAULTS.cta_primary_text,
+          cta_secondary_text: body.cta_secondary_text ?? CONTACT_DEFAULTS.cta_secondary_text,
+          phone_number:       body.phone_number       ?? CONTACT_DEFAULTS.phone_number,
+          email_address:      body.email_address      ?? CONTACT_DEFAULTS.email_address,
+          stats:              body.stats              ?? CONTACT_DEFAULTS.stats,
+          map_embed_src:      body.map_embed_src      ?? CONTACT_DEFAULTS.map_embed_src,
+          map_address:        body.map_address        ?? CONTACT_DEFAULTS.map_address,
+          map_open_href:      body.map_open_href      ?? CONTACT_DEFAULTS.map_open_href,
+          social_instagram:   body.social_instagram   ?? '',
+          social_facebook:    body.social_facebook    ?? '',
+          social_whatsapp:    body.social_whatsapp    ?? '',
+          branches:           body.branches           ?? CONTACT_DEFAULTS.branches,
+          updated_by:         'admin',
+        },
+        create: {
+          id:                 1,
+          hero_eyebrow:       body.hero_eyebrow       ?? CONTACT_DEFAULTS.hero_eyebrow,
+          hero_heading:       body.hero_heading       ?? CONTACT_DEFAULTS.hero_heading,
+          hero_subtitle:      body.hero_subtitle      ?? CONTACT_DEFAULTS.hero_subtitle,
+          cta_primary_text:   body.cta_primary_text   ?? CONTACT_DEFAULTS.cta_primary_text,
+          cta_secondary_text: body.cta_secondary_text ?? CONTACT_DEFAULTS.cta_secondary_text,
+          phone_number:       body.phone_number       ?? CONTACT_DEFAULTS.phone_number,
+          email_address:      body.email_address      ?? CONTACT_DEFAULTS.email_address,
+          stats:              body.stats              ?? CONTACT_DEFAULTS.stats,
+          map_embed_src:      body.map_embed_src      ?? CONTACT_DEFAULTS.map_embed_src,
+          map_address:        body.map_address        ?? CONTACT_DEFAULTS.map_address,
+          map_open_href:      body.map_open_href      ?? CONTACT_DEFAULTS.map_open_href,
+          social_instagram:   body.social_instagram   ?? '',
+          social_facebook:    body.social_facebook    ?? '',
+          social_whatsapp:    body.social_whatsapp    ?? '',
+          branches:           body.branches           ?? CONTACT_DEFAULTS.branches,
+          updated_by:         'admin',
+          updated_at:         new Date(),
+        },
+      });
       return NextResponse.json(result ?? { success: true });
     }
 
+    /* ── gallery ── */
     if (section === 'gallery') {
-      const cloudOk = typeof prisma.galleryConfig === 'object';
-      if (!cloudOk) {
-        return NextResponse.json({ error: 'GalleryConfig model not found in Prisma. Run: npx prisma generate && npx prisma db push' }, { status: 500 });
-      }
-      const payload = {
+      const result = await prisma.galleryconfig.upsert({
         where:  { id: 1 },
-        update: { hero_eyebrow: body.hero_eyebrow ?? GALLERY_DEFAULTS.hero_eyebrow, hero_title: body.hero_title ?? GALLERY_DEFAULTS.hero_title, hero_subtitle: body.hero_subtitle ?? GALLERY_DEFAULTS.hero_subtitle, section_title: body.section_title ?? GALLERY_DEFAULTS.section_title, section_subtitle: body.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle, items: Array.isArray(body.items) ? body.items : GALLERY_DEFAULTS.items, updated_by: 'admin' },
-        create: { id: 1, hero_eyebrow: body.hero_eyebrow ?? GALLERY_DEFAULTS.hero_eyebrow, hero_title: body.hero_title ?? GALLERY_DEFAULTS.hero_title, hero_subtitle: body.hero_subtitle ?? GALLERY_DEFAULTS.hero_subtitle, section_title: body.section_title ?? GALLERY_DEFAULTS.section_title, section_subtitle: body.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle, items: Array.isArray(body.items) ? body.items : GALLERY_DEFAULTS.items, updated_by: 'admin' },
-      };
-      const result = await prisma.galleryConfig.upsert(payload);
+        update: {
+          hero_eyebrow:     body.hero_eyebrow     ?? GALLERY_DEFAULTS.hero_eyebrow,
+          hero_title:       body.hero_title       ?? GALLERY_DEFAULTS.hero_title,
+          hero_subtitle:    body.hero_subtitle    ?? GALLERY_DEFAULTS.hero_subtitle,
+          section_title:    body.section_title    ?? GALLERY_DEFAULTS.section_title,
+          section_subtitle: body.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle,
+          items:            Array.isArray(body.items) ? body.items : GALLERY_DEFAULTS.items,
+          updated_by:       'admin',
+        },
+        create: {
+          hero_eyebrow:     body.hero_eyebrow     ?? GALLERY_DEFAULTS.hero_eyebrow,
+          hero_title:       body.hero_title       ?? GALLERY_DEFAULTS.hero_title,
+          hero_subtitle:    body.hero_subtitle    ?? GALLERY_DEFAULTS.hero_subtitle,
+          section_title:    body.section_title    ?? GALLERY_DEFAULTS.section_title,
+          section_subtitle: body.section_subtitle ?? GALLERY_DEFAULTS.section_subtitle,
+          items:            Array.isArray(body.items) ? body.items : GALLERY_DEFAULTS.items,
+          updated_by:       'admin',
+          updatedAt:        new Date(),
+        },
+      });
       return NextResponse.json(result ?? { success: true });
     }
 
@@ -411,8 +671,10 @@ export async function PATCH(req: NextRequest) {
   const section = req.nextUrl.searchParams.get('section');
   const idParam = req.nextUrl.searchParams.get('id');
 
-  if (section !== 'feedback') return NextResponse.json({ error: 'Invalid section' }, { status: 400 });
-  if (!idParam || isNaN(Number(idParam))) return NextResponse.json({ error: 'Valid id is required' }, { status: 400 });
+  if (section !== 'feedback')
+    return NextResponse.json({ error: 'Invalid section' }, { status: 400 });
+  if (!idParam || isNaN(Number(idParam)))
+    return NextResponse.json({ error: 'Valid id is required' }, { status: 400 });
 
   const id = parseInt(idParam, 10);
 
@@ -421,12 +683,17 @@ export async function PATCH(req: NextRequest) {
     const isPublished = Boolean(body.isPublished);
 
     try {
-      await prisma.tbl_Feedback.update({ where: { id }, data: { isPublished } });
+      await prisma.tbl_feedback.update({
+        where: { id },
+        data:  { isPublished },
+      });
       return NextResponse.json({ success: true, id, isPublished, source: 'cloud' });
     } catch (err) {
-      return NextResponse.json({ error: 'Update failed.', details: { cloud: getErrorMessage(err) } }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Update failed.', details: { cloud: getErrorMessage(err) } },
+        { status: 500 },
+      );
     }
-
   } catch (err) {
     console.error('[site-data PATCH]', err);
     return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
@@ -440,19 +707,23 @@ export async function DELETE(req: NextRequest) {
   const section = req.nextUrl.searchParams.get('section');
   const idParam = req.nextUrl.searchParams.get('id');
 
-  if (section !== 'feedback') return NextResponse.json({ error: 'Invalid section' }, { status: 400 });
-  if (!idParam || isNaN(Number(idParam))) return NextResponse.json({ error: 'Valid id is required' }, { status: 400 });
+  if (section !== 'feedback')
+    return NextResponse.json({ error: 'Invalid section' }, { status: 400 });
+  if (!idParam || isNaN(Number(idParam)))
+    return NextResponse.json({ error: 'Valid id is required' }, { status: 400 });
 
   const id = parseInt(idParam, 10);
 
   try {
     try {
-      await prisma.tbl_Feedback.delete({ where: { id } });
+      await prisma.tbl_feedback.delete({ where: { id } });
       return NextResponse.json({ success: true, id, source: 'cloud' });
     } catch (err) {
-      return NextResponse.json({ error: 'Delete failed.', details: { cloud: getErrorMessage(err) } }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Delete failed.', details: { cloud: getErrorMessage(err) } },
+        { status: 500 },
+      );
     }
-
   } catch (err) {
     console.error('[site-data DELETE]', err);
     return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
