@@ -185,6 +185,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
           PackSize: num(body.packSize),
           PackPrice: num(body.packPrice),
           SemiFinishedProd: bool(body.semiFinishedProd),
+          DurationMin: num(body.durationMin) || 30,
           UpdBy: text(body.updBy, "ADMIN"),
           ...(picBuffer !== undefined ? { ItemPic: picBuffer } : {}),
         };

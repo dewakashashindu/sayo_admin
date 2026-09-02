@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, type Dispatch, type SetStateAction } from 'react';
 import { useRouter } from 'next/navigation';
 import ConflictModal, {
   ConflictModalData,
@@ -418,6 +418,38 @@ const globalCss = `
     .loc-cards-wrap{flex-direction:column !important;}
     .time-section-header{flex-direction:column;align-items:flex-start;}
   }
+
+  /* ── Multi-booking tab ── */
+  .btype-tabs{display:flex;justify-content:center;gap:0.6rem;margin-bottom:1.4rem;flex-wrap:wrap;}
+  .btype-tab{display:inline-flex;align-items:center;gap:0.5rem;padding:0.68rem 1.5rem;border-radius:999px;border:1.5px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.04);color:rgba(255,255,255,0.65);font-size:0.82rem;font-weight:600;cursor:pointer;transition:all .18s;font-family:var(--app-font);}
+  .btype-tab:hover{border-color:rgba(184,134,11,0.45);color:#fff;}
+  .btype-tab-active{background:linear-gradient(135deg,rgba(184,134,11,0.28),rgba(184,134,11,0.12));border-color:rgba(184,134,11,0.65);color:#f5d67a !important;}
+  .mg-card{border:1.5px solid rgba(255,255,255,0.1);border-radius:1rem;background:rgba(255,255,255,0.03);overflow:hidden;margin-bottom:1rem;}
+  .mg-head{display:flex;align-items:center;gap:0.6rem;padding:0.8rem 1rem;cursor:pointer;user-select:none;}
+  .mg-head:hover{background:rgba(255,255,255,0.03);}
+  .mg-badge{width:1.9rem;height:1.9rem;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:700;background:rgba(184,134,11,0.22);color:#f5d67a;border:1px solid rgba(184,134,11,0.4);}
+  .mg-body{padding:1rem;border-top:1px solid rgba(255,255,255,0.07);animation:slideDown .25s ease both;}
+  .mg-remove{background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);color:#f87171;border-radius:999px;width:1.8rem;height:1.8rem;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .15s;flex-shrink:0;}
+  .mg-remove:hover{background:rgba(239,68,68,0.28);}
+  .mg-slot-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:0.45rem;}
+  .mg-slot{background:rgba(255,255,255,0.05);border:1.5px solid rgba(255,255,255,0.1);border-radius:0.55rem;padding:0.5rem 0.25rem;text-align:center;font-size:0.72rem;font-weight:600;color:rgba(255,255,255,0.75);cursor:pointer;transition:all .15s;font-family:var(--app-font);}
+  .mg-slot:hover:not(:disabled){border-color:rgba(184,134,11,0.5);color:#fff;}
+  .mg-slot.sel{background:linear-gradient(135deg,#b8860b,#d4a017);border-color:#d4a017;color:#fff !important;}
+  .mg-slot.busy{opacity:0.38;cursor:not-allowed;background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.3);color:#f87171;text-decoration:line-through;}
+  .mg-slot:disabled{cursor:not-allowed;}
+  .mg-add{display:flex;align-items:center;justify-content:center;gap:0.5rem;width:100%;padding:0.85rem;border-radius:0.75rem;border:1.5px dashed rgba(184,134,11,0.4);background:rgba(184,134,11,0.06);color:#f5d67a;font-size:0.85rem;font-weight:600;cursor:pointer;transition:all .18s;font-family:var(--app-font);}
+  .mg-add:hover{background:rgba(184,134,11,0.14);border-color:#d4a017;}
+  .mg-totalbar{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;background:rgba(184,134,11,0.1);border:1px solid rgba(184,134,11,0.28);border-radius:0.75rem;padding:0.85rem 1.1rem;margin:1.1rem 0;}
+
+  /* ── Multi-booking refresh (ME + Guest cards) ── */
+  .mg-me-card{border-color:rgba(184,134,11,0.55) !important;background:linear-gradient(180deg,rgba(184,134,11,0.12),rgba(255,255,255,0.02)) !important;}
+  .mg-badge-me{background:linear-gradient(135deg,#b8860b,#e8b93c) !important;color:#1a1408 !important;border-color:#e8b93c !important;font-size:0.66rem !important;letter-spacing:0.06em;}
+  .mg-section-title{display:flex;align-items:center;gap:0.45rem;font-size:0.7rem;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:rgba(255,255,255,0.5);margin-bottom:0.55rem;font-family:var(--app-font);}
+  .mg-date-hint{display:flex;align-items:center;gap:0.3rem;font-size:0.68rem;font-weight:600;color:#4ade80;margin-top:0.4rem;}
+  .mg-contact-card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.09);border-radius:0.9rem;padding:1rem 1.05rem;margin-bottom:1.1rem;}
+  .mg-big-cta{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;background:linear-gradient(135deg,rgba(184,134,11,0.18),rgba(184,134,11,0.05));border:1px solid rgba(184,134,11,0.35);border-radius:1rem;padding:1.05rem 1.2rem;margin-top:1.2rem;}
+  .mg-me-pill{font-size:0.66rem;font-weight:700;letter-spacing:0.07em;border-radius:999px;padding:0.14rem 0.6rem;background:rgba(184,134,11,0.18);border:1px solid rgba(184,134,11,0.5);color:#f5d67a;font-family:var(--app-font);}
+  .mg-no-name{font-size:0.66rem;font-weight:600;color:rgba(255,255,255,0.4);font-style:italic;}
 `;
 
 /* ─────────────────────────────────────────
@@ -441,6 +473,7 @@ const Ico = {
   MaleSymbol:   ({ s=22,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="10" cy="14" r="6"/><line x1="14.5" y1="9.5" x2="20" y2="4"/><polyline points="14 4 20 4 20 10"/></svg>,
   FemaleSymbol: ({ s=22,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="9" r="6"/><line x1="12" y1="15" x2="12" y2="22"/><line x1="8.5" y1="18.5" x2="15.5" y2="18.5"/></svg>,
   GenderN:      ({ s=22,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="11" r="5"/><line x1="12" y1="16" x2="12" y2="22"/><line x1="9" y1="19" x2="15" y2="19"/><line x1="16" y1="7" x2="20" y2="3"/><polyline points="16 3 20 3 20 7"/></svg>,
+  Users:        ({ s=14,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
   ChevDown:     ({ s=13,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>,
   X:            ({ s=12,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
 };
@@ -1044,12 +1077,757 @@ function WalkinSlots({
 /* ═══════════════════════════════════════════
    MAIN PAGE
 ═══════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════════
+   MULTI-BOOKING — separate tab
+   The main client is always "ME" (the logged-in user). Every additional
+   client is added as "Guest 1", "Guest 2", … with no name field — they are
+   labelled automatically. Guests inherit ME's selected date (auto-fill),
+   but each person keeps their own services, provider and time slot. One
+   booking is created per person via POST /api/bookings (the server's
+   race-safe conflict guard still protects every slot).
+═══════════════════════════════════════════════════════════════════════ */
+
+interface MultiGuest {
+  id: string;
+  gender: GenderValue | '';
+  activeCat: string;
+  services: ServiceItem[];
+  providers: Provider[];
+  date: string;
+  timeSlot: string;
+}
+
+let multiGuestSeq = 0;
+function newMultiGuest(): MultiGuest {
+  multiGuestSeq += 1;
+  return {
+    id: `mg_${Date.now()}_${multiGuestSeq}`,
+    gender: '',
+    activeCat: 'HAIR',
+    services: [],
+    providers: [],
+    date: '',
+    timeSlot: '',
+  };
+}
+
+/** "ME" for the main client, "Guest 1", "Guest 2", … for everyone else. */
+function guestLabel(index: number, lang: Lang): string {
+  return index === 0 ? t(lang, 'multi.me') : t(lang, 'multi.guest', { n: index });
+}
+
+/** Busy slots for the selected providers from /api/bookings/availability */
+function busySlotsFor(
+  providerSlots: Record<string, string[]> | undefined,
+  providers: Provider[],
+): Set<string> {
+  const out = new Set<string>();
+  if (!providerSlots) return out;
+  for (const p of providers) {
+    for (const s of providerSlots[p.name] ?? []) out.add(s);
+  }
+  return out;
+}
+
+function MultiGuestEditor({
+  guest, index, total, mode, location, lang, contactName, meDate, otherBusy, onPatch, onRemove,
+}: {
+  guest: MultiGuest;
+  index: number;
+  total: number;
+  mode: BookingMode;
+  location: string;
+  lang: Lang;
+  contactName: string;
+  meDate: string;
+  otherBusy: { provider: string; startMin: number; endMin: number; label: string }[];
+  onPatch: (patch: Partial<MultiGuest>) => void;
+  onRemove: () => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const today = new Date().toISOString().split('T')[0];
+
+  const isMe          = index === 0;
+  const label         = guestLabel(index, lang);
+  const serviceList   = ALL_SERVICES[guest.activeCat] ?? [];
+  const guestCats     = Array.from(new Set(guest.services.map(s => s.category)));
+  const catFilter     = guestCats.length > 0 ? guestCats : [guest.activeCat];
+  const branchProvs   = location ? (PROVIDERS[location] ?? []) : [];
+  const filteredProvs = branchProvs.filter(p => p.expertise.some(e => catFilter.includes(e)));
+  const isMultiCat    = guestCats.length > 1;
+  const maxProvs      = isMultiCat ? guestCats.length : 1;
+  const dateAuto      = !isMe && !!meDate && guest.date === meDate;
+
+  const mins  = guest.services.reduce((a, s) => a + parseMins(s.duration), 0);
+  const price = guest.services.reduce((a, s) => a + parseLKR(s.price), 0);
+  const provKey = guest.providers.map(p => p.name).sort().join(',');
+
+  /* per-guest live availability (walk-in mode only) */
+  const [slots, setSlots] = useState<{
+    status: 'idle' | 'loading' | 'ready' | 'error';
+    busy: Set<string>;
+  }>({ status: 'idle', busy: new Set() });
+
+  useEffect(() => {
+    if (mode !== 'without_confirmation' || !guest.date || guest.providers.length === 0) {
+      setSlots({ status: 'idle', busy: new Set() });
+      return;
+    }
+    let active = true;
+    const ctrl = new AbortController();
+    setSlots(s => ({ ...s, status: 'loading' }));
+    (async () => {
+      try {
+        const p = new URLSearchParams({ date: guest.date });
+        if (location) p.set('location', location);
+        p.set('providers', provKey);
+        const res = await fetch(`/api/bookings/availability?${p}`, { signal: ctrl.signal });
+        const d   = await res.json();
+        if (!active) return;
+        if (d.success) setSlots({ status: 'ready', busy: busySlotsFor(d.providerSlots, guest.providers) });
+        else setSlots({ status: 'error', busy: new Set() });
+      } catch (e) {
+        if (active && (e as Error).name !== 'AbortError') setSlots({ status: 'error', busy: new Set() });
+      }
+    })();
+    return () => { active = false; ctrl.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, guest.date, location, provKey]);
+
+  function toggleSvc(svc: ServiceItem) {
+    const on = guest.services.some(x => x.name === svc.name && x.price === svc.price);
+    onPatch({
+      services: on
+        ? guest.services.filter(x => !(x.name === svc.name && x.price === svc.price))
+        : [...guest.services, svc],
+      timeSlot: '',
+    });
+  }
+
+  function toggleProv(p: Provider) {
+    const already = guest.providers.some(x => x.name === p.name);
+    let next: Provider[];
+    if (already) {
+      next = guest.providers.filter(x => x.name !== p.name);
+    } else if (!isMultiCat) {
+      next = [p];
+    } else {
+      const provCats = p.expertise.filter(e => guestCats.includes(e));
+      if (provCats.length === 0) return;
+      const targetCat =
+        provCats.find(cat => !guest.providers.some(x => x.expertise.includes(cat))) ??
+        provCats[0];
+      const without = guest.providers.filter(x => !x.expertise.includes(targetCat));
+      next = [...without, p].slice(0, maxProvs);
+    }
+    onPatch({ providers: next, timeSlot: '' });
+  }
+
+  /* ── Same-technician conflict guard ──────────────────────────────────────
+     If another person in this group (ME or a Guest) already selected one of
+     this guest's technicians with an overlapping time window, those slots
+     must be disabled — two guests can never pick the same technician at the
+     same time. The window is [start, start + that guest's total service
+     duration] so overlapping slots (e.g. 10:00 + 10:30 for a 60-min
+     service) are blocked too. */
+  const crossBusy = useMemo(() => {
+    const set = new Set<string>();
+    if (!guest.date || guest.providers.length === 0 || otherBusy.length === 0) return set;
+    for (const w of otherBusy) {
+      if (!guest.providers.some(p => p.name === w.provider)) continue;
+      for (const slot of TIME_SLOTS) {
+        const sm = timeToMinutes(slot);
+        if (sm < w.endMin && sm + 30 > w.startMin) set.add(slot);
+      }
+    }
+    return set;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otherBusy, guest.providers, guest.date]);
+
+  const crossBusyKey = [...crossBusy].sort().join(',');
+
+  /* If the currently selected slot was just claimed by another guest (or the
+     live availability fetch says it is gone), clear it so the review step can
+     never contain a conflicting selection. */
+  useEffect(() => {
+    if (!guest.timeSlot) return;
+    const busyNow =
+      (slots.status === 'ready' && slots.busy.has(guest.timeSlot)) ||
+      crossBusy.has(guest.timeSlot);
+    if (busyNow) onPatch({ timeSlot: '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guest.timeSlot, slots.status, crossBusyKey]);
+
+  const isBusy = (slot: string) =>
+    (slots.status === 'ready' && slots.busy.has(slot)) || crossBusy.has(slot);
+
+  const takenByLabel = (slot: string): string | undefined => {
+    if (!crossBusy.has(slot)) return undefined;
+    const sm = timeToMinutes(slot);
+    const w = otherBusy.find(
+      w => guest.providers.some(p => p.name === w.provider) &&
+        sm < w.endMin && sm + 30 > w.startMin,
+    );
+    return w?.label;
+  };
+
+  return (
+    <div className={`mg-card${isMe ? ' mg-me-card' : ''}`}>
+      {/* header */}
+      <div className="mg-head" onClick={() => setCollapsed(c => !c)}>
+        <div className={`mg-badge${isMe ? ' mg-badge-me' : ''}`}>
+          {isMe ? <Ico.User s={13} /> : index}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ color: tokens.color.white, fontSize: '0.92rem', fontWeight: 700, fontFamily: tokens.font.family, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {label}
+            {isMe && contactName.trim() && (
+              <span className="mg-me-pill">{contactName.trim()}</span>
+            )}
+          </p>
+          <p style={{ color: tokens.color.whiteFaint, fontSize: '0.7rem', marginTop: '0.15rem', fontFamily: tokens.font.family }}>
+            {isMe ? t(lang, 'multi.meSub') : t(lang, 'multi.guestSub')}
+            {' · '}
+            {guest.services.length > 0
+              ? `${guest.services.length} svc · LKR ${price.toLocaleString()}`
+              : t(lang, 'multi.servicesFor')}
+            {guest.timeSlot ? ` · ${guest.timeSlot}` : ''}
+            {!isMe && <span className="mg-no-name"> · {t(lang, 'multi.noNameNeeded')}</span>}
+          </p>
+        </div>
+        {!isMe && total > 1 && (
+          <button
+            type="button"
+            className="mg-remove"
+            title={t(lang, 'multi.remove')}
+            onClick={e => { e.stopPropagation(); onRemove(); }}
+          >
+            <Ico.X s={12} c="#f87171" />
+          </button>
+        )}
+        <Ico.ChevDown s={14} c={tokens.color.whiteFaint} />
+      </div>
+
+      {!collapsed && (
+        <div className="mg-body">
+          {/* gender */}
+          <div style={{ marginBottom: '1rem' }}>
+            <div className="mg-section-title"><Ico.GenderN s={12} /> {t(lang, 'gp.gender')}</div>
+            <GenderInline value={guest.gender} onChange={v => onPatch({ gender: v })} lang={lang} />
+          </div>
+
+          {/* services */}
+          <div style={{ marginBottom: '0.6rem' }}>
+            <div className="mg-section-title"><Ico.Scissors s={12} /> {t(lang, 'multi.servicesFor')}</div>
+            <div className="cat-tabs-wrap" style={{ margin: '0.35rem 0 0.75rem' }}>
+              {CATEGORIES.map(catSel => {
+                const has = guestCats.includes(catSel);
+                return (
+                  <button key={catSel} type="button" className={`cat-tab ${guest.activeCat === catSel ? 'cat-tab-active' : 'cat-tab-inactive'}`} onClick={() => onPatch({ activeCat: catSel })}>
+                    {catName(lang, catSel)}{has && <span className="cat-tab-dot" />}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.9rem' }}>
+              {serviceList.map(s => {
+                const active = guest.services.some(x => x.name === s.name && x.price === s.price);
+                return (
+                  <div key={`${guest.id}-${s.name}`} className={`svc-card${active ? ' svc-card-active' : ''}`} onClick={() => toggleSvc(s)} role="button" aria-pressed={active}>
+                    <div>
+                      <p style={{ color: tokens.color.whiteMuted, fontSize: '0.85rem', fontWeight: 500, fontFamily: tokens.font.family }}>{svcName(lang, s.name)}</p>
+                      <p style={{ color: tokens.color.whiteFaint, fontSize: '0.71rem', marginTop: '0.12rem', display: 'flex', alignItems: 'center', gap: '0.25rem', fontFamily: tokens.font.family }}><Ico.Clock s={11} />{durStr(lang, s.duration)}</p>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                      <span style={{ color: tokens.color.gold, fontSize: '0.85rem', fontWeight: 700, fontFamily: tokens.font.family }}>{s.price}</span>
+                      <CircleCheck active={active} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* providers */}
+          <div style={{ marginBottom: '0.9rem' }}>
+            <div className="mg-section-title"><Ico.User s={12} /> {t(lang, 's1.serviceProvider')}</div>
+            {!location ? (
+              <div className="info-box" style={{ marginBottom: '0.8rem', display: 'flex', gap: '0.5rem' }}><Ico.Info s={13} /><span>{t(lang, 's1.selectBranchFirst')}</span></div>
+            ) : filteredProvs.length === 0 ? (
+              <p style={{ color: tokens.color.whiteFaint, fontSize: '0.8rem', marginBottom: '0.8rem', fontFamily: tokens.font.family }}>
+                {t(lang, 's1.noProvidersFor', { cats: catFilter.map(c => catName(lang, c)).join(', '), loc: locName(lang, location) })}
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.6rem' }}>
+                {filteredProvs.map(p => {
+                  const active = guest.providers.some(x => x.name === p.name);
+                  return (
+                    <div key={p.name} className={`prov-card${active ? ' prov-card-active' : ''}`} onClick={() => toggleProv(p)} role="button" aria-pressed={active}>
+                      <div className="prov-avatar">{p.avatar}</div>
+                      <div style={{ flex: 1 }}>
+                        <p style={{ color: tokens.color.whiteMuted, fontSize: '0.85rem', fontWeight: 600, fontFamily: tokens.font.family }}>{p.name}</p>
+                        <p style={{ color: tokens.color.whiteFaint, fontSize: '0.71rem', marginTop: '0.1rem', fontFamily: tokens.font.family }}>{roleName(lang, p.role)}</p>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.28rem', marginTop: '0.32rem' }}>
+                          {p.expertise.map(e => {
+                            const m = catFilter.includes(e);
+                            return <span key={e} style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.07em', borderRadius: '999px', padding: '0.12rem 0.45rem', fontFamily: tokens.font.family, background: m ? 'rgba(184,134,11,0.25)' : 'rgba(255,255,255,0.06)', color: m ? tokens.color.gold : tokens.color.whiteFaint, border: `1px solid ${m ? 'rgba(184,134,11,0.5)' : 'rgba(255,255,255,0.12)'}` }}>{catName(lang, e)}</span>;
+                          })}
+                        </div>
+                      </div>
+                      <CircleCheck active={active} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* date — guests auto-inherit ME's date */}
+          <div style={{ marginBottom: '0.9rem' }}>
+            <div className="mg-section-title"><Ico.Calendar s={12} /> {t(lang, 's1.preferredDate')}</div>
+            <DatePickerField value={guest.date} minDate={today} onChange={iso => onPatch({ date: iso, timeSlot: '' })} lang={lang} />
+            {dateAuto && <p className="mg-date-hint">✓ {t(lang, 'multi.autoDate')}</p>}
+          </div>
+
+          {/* time */}
+          {guest.date && (
+            <div>
+              <div className="mg-section-title"><Ico.Clock s={12} /> {t(lang, 'multi.timeFor')}</div>
+              {crossBusy.size > 0 && (
+                <p style={{ fontSize: '0.68rem', color: '#fbbf24', marginBottom: '0.55rem', fontFamily: tokens.font.family }}>
+                  ⚠ {t(lang, 'multi.groupConflictNote')}
+                </p>
+              )}
+              {mode === 'without_confirmation' && guest.providers.length === 0 ? (
+                <div className="info-box" style={{ marginBottom: '0.8rem', display: 'flex', gap: '0.5rem' }}><Ico.Info s={13} /><span>{t(lang, 'time.needProvider')}</span></div>
+              ) : slots.status === 'loading' ? (
+                <p style={{ color: tokens.color.whiteFaint, fontSize: '0.75rem', marginBottom: '0.6rem', fontFamily: tokens.font.family }}>{t(lang, 'time.checking')}</p>
+              ) : slots.status === 'error' ? (
+                <p style={{ color: '#f87171', fontSize: '0.75rem', marginBottom: '0.6rem', fontFamily: tokens.font.family }}>{t(lang, 'time.loadError')}</p>
+              ) : null}
+              <div className="mg-slot-grid">
+                {TIME_SLOTS.map(slot => {
+                  const busy = isBusy(slot);
+                  const sel  = guest.timeSlot === slot;
+                  const takenBy = takenByLabel(slot);
+                  return (
+                    <button
+                      key={slot}
+                      type="button"
+                      className={`mg-slot${sel ? ' sel' : ''}${busy ? ' busy' : ''}`}
+                      disabled={busy}
+                      title={takenBy ? t(lang, 'multi.conflictBy', { name: takenBy }) : undefined}
+                      onClick={() => onPatch({ timeSlot: slot })}
+                    >
+                      {slot}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MultiBookingPanel({
+  lang, contactName, setName, contactPhone, setPhone, contactEmail, setEmail,
+}: {
+  lang: Lang;
+  contactName: string;
+  setName: Dispatch<SetStateAction<string>>;
+  contactPhone: string;
+  setPhone: Dispatch<SetStateAction<string>>;
+  contactEmail: string;
+  setEmail: Dispatch<SetStateAction<string>>;
+}) {
+  const [mode, setMode] = useState<BookingMode>('confirmed');
+  const [location, setLocation] = useState('');
+  const [guests, setGuests] = useState<MultiGuest[]>([newMultiGuest()]);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [reviewing, setReviewing] = useState(false);
+  const [completed, setCompleted] = useState<{ label: string; bookingId: number }[] | null>(null);
+
+  const accentColor = mode === 'without_confirmation' ? tokens.color.green : tokens.color.gold;
+  const btnClass    = mode === 'without_confirmation' ? 'btn-green' : 'btn-gold';
+  const meDate      = guests[0]?.date || '';
+
+  function patchGuest(id: string, patch: Partial<MultiGuest>) {
+    // If a previous attempt failed part-way, editing invalidates the
+    // partial references (retry would otherwise skip the wrong prefix).
+    if (submitError) setCompleted(null);
+    setGuests(prev => {
+      const isMe = prev[0]?.id === id;
+      return prev.map(g => {
+        if (g.id !== id) {
+          // Guests automatically inherit ME's selected date.
+          if (isMe && patch.date) return { ...g, date: patch.date as string };
+          return g;
+        }
+        return { ...g, ...patch };
+      });
+    });
+  }
+
+  function addGuest() {
+    if (submitError) setCompleted(null);
+    setGuests(prev => [...prev, { ...newMultiGuest(), date: prev[0]?.date || '' }]);
+  }
+  function removeGuest(id: string) {
+    if (submitError) setCompleted(null);
+    setGuests(prev => (prev.length > 1 ? prev.filter(g => g.id !== id) : prev));
+  }
+
+  const totalMins  = guests.reduce((a, g) => a + g.services.reduce((b, s) => b + parseMins(s.duration), 0), 0);
+  const totalPrice = guests.reduce((a, g) => a + g.services.reduce((b, s) => b + parseLKR(s.price), 0), 0);
+
+  /* Per-guest technician occupancy windows, used to disable time slots that
+     another person in the group already claimed (same technician overlap). */
+  const guestWindows = useMemo(() => {
+    const map = new Map<string, { provider: string; startMin: number; endMin: number; label: string }[]>();
+    guests.forEach((g, i) => {
+      if (!g.timeSlot || g.providers.length === 0) return;
+      const startMin = timeToMinutes(g.timeSlot);
+      const total = g.services.reduce((a, s) => a + parseMins(s.duration), 0);
+      const endMin = startMin + Math.max(30, total);
+      const label  = guestLabel(i, lang);
+      map.set(g.id, g.providers.map(p => ({ provider: p.name, startMin, endMin, label })));
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guests, lang]);
+
+  const otherBusyFor = (id: string) =>
+    [...guestWindows.entries()]
+      .filter(([gid]) => gid !== id)
+      .flatMap(([, windows]) => windows);
+
+  function validateGuest(g: MultiGuest, i: number): string | null {
+    if (i === 0 && !contactName.trim()) return t(lang, 'multi.errName');
+    if (g.services.length === 0) return t(lang, 'multi.errServices');
+    if (mode === 'without_confirmation' && g.providers.length === 0) return t(lang, 'multi.errProvider');
+    if (!g.date) return t(lang, 'multi.errDate');
+    if (!g.timeSlot) return t(lang, 'multi.errTime');
+    return null;
+  }
+
+  /* Step 1 → Step 2: validate everything, then show the review screen. */
+  function handleReview() {
+    setSubmitError('');
+    if (!location.trim()) { setSubmitError(t(lang, 's1.missingBranch')); return; }
+    if (!contactPhone.trim()) { setSubmitError(t(lang, 's1.missingPhone')); return; }
+
+    for (let i = 0; i < guests.length; i++) {
+      const err = validateGuest(guests[i], i);
+      if (err) {
+        setSubmitError(`${t(lang, 'multi.fillGuest', { name: guestLabel(i, lang) })} — ${err}`);
+        return;
+      }
+    }
+    setReviewing(true);
+  }
+
+  async function handleSubmitAll() {
+    setSubmitError('');
+    if (!location.trim()) { setSubmitError(t(lang, 's1.missingBranch')); return; }
+    if (!contactPhone.trim()) { setSubmitError(t(lang, 's1.missingPhone')); return; }
+
+    for (let i = 0; i < guests.length; i++) {
+      const err = validateGuest(guests[i], i);
+      if (err) {
+        setSubmitError(`${t(lang, 'multi.fillGuest', { name: guestLabel(i, lang) })} — ${err}`);
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    const done: { label: string; bookingId: number }[] = [];
+    let stoppedByError = '';
+
+    try {
+      // A previous attempt may have created a prefix of the guest list
+      // before failing — skip those so a retry does not duplicate them.
+      const startIdx = completed?.length ?? 0;
+      for (let i = startIdx; i < guests.length; i++) {
+        const g = guests[i];
+        const displayName = i === 0 ? (contactName.trim() || t(lang, 'multi.me')) : guestLabel(i, lang);
+        const cats = Array.from(new Set(g.services.map(s => s.category)));
+        const mins = g.services.reduce((a, s) => a + parseMins(s.duration), 0);
+        const price = g.services.reduce((a, s) => a + parseLKR(s.price), 0);
+        const payload = {
+          name: displayName,
+          email: contactEmail.trim().toLowerCase(),
+          phone: contactPhone.trim(),
+          gender: genderLabelEn(g.gender as GenderValue),
+          location, mode,
+          services: g.services.map(s => ({ name: s.name, price: s.price, duration: s.duration, category: s.category })),
+          categories: cats,
+          totalDuration: mins,
+          totalPrice: price,
+          providers: g.providers.map(p => ({ name: p.name, role: p.role })),
+          date: g.date,
+          timeSlot: g.timeSlot,
+          notes: null,
+        };
+        const res = await fetch('/api/bookings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const d = await res.json();
+        if (!res.ok || !d.success) {
+          if (res.status === 409) {
+            stoppedByError = t(lang, 'multi.conflictAt', { name: guestLabel(i, lang) });
+          } else {
+            stoppedByError = d.message || t(lang, 'err.generic');
+          }
+          break;
+        }
+        done.push({ label: displayName, bookingId: d.bookingId });
+      }
+    } catch {
+      stoppedByError = t(lang, 'err.network');
+    }
+
+    setSubmitting(false);
+    if (stoppedByError) {
+      setSubmitError(stoppedByError);
+      setCompleted(done.length > 0 ? done : null); // partial success — show refs
+      setReviewing(false); // send the user back so they can fix the conflict
+    } else {
+      setCompleted(done);
+    }
+  }
+
+  function resetAll() {
+    setGuests([newMultiGuest()]);
+    setCompleted(null);
+    setSubmitError('');
+    setReviewing(false);
+    setLocation('');
+  }
+
+  /* ── success screen ── */
+  if (completed && completed.length > 0 && !submitError) {
+    return (
+      <div style={{ maxWidth: '720px', margin: '0 auto' }}>
+        <Card mode={mode}>
+          <div style={{ textAlign: 'center', padding: '0.75rem 0 0.25rem' }}>
+            <div className="check-pop" style={{ width: '4.4rem', height: '4.4rem', borderRadius: '50%', background: mode === 'without_confirmation' ? 'rgba(34,197,94,0.15)' : 'rgba(184,134,11,0.15)', border: `2px solid ${accentColor}`, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.25rem' }}>
+              <Ico.Check s={26} c={accentColor} />
+            </div>
+            <p style={{ color: accentColor, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.26em', textTransform: 'uppercase', marginBottom: '0.5rem', fontFamily: tokens.font.family }}>{t(lang, 'multi.successTitle')}</p>
+            <h2 style={{ color: tokens.color.white, fontSize: '1.4rem', fontWeight: 600, marginBottom: '0.4rem', fontFamily: tokens.font.family }}>{t(lang, 'multi.successSub', { n: completed.length })}</h2>
+            <p style={{ color: tokens.color.whiteFaint, fontSize: '0.78rem', marginBottom: '1.4rem', fontFamily: tokens.font.family }}>
+              {locName(lang, location)} · {meDate ? formatDate(meDate, lang) : ''}
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
+              {completed.map((r, i) => (
+                <div key={r.bookingId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '0.6rem', padding: '0.6rem 0.9rem' }}>
+                  <span style={{ color: tokens.color.whiteMuted, fontSize: '0.82rem', fontWeight: 600, fontFamily: tokens.font.family }}>
+                    <span style={{ color: tokens.color.whiteFaint, fontSize: '0.7rem', marginRight: '0.4rem' }}>#{i + 1}</span>{r.label}
+                  </span>
+                  <span style={{ color: accentColor, fontSize: '0.8rem', fontWeight: 700, fontFamily: tokens.font.family }}>#{r.bookingId}</span>
+                </div>
+              ))}
+            </div>
+
+            <button className={btnClass} onClick={resetAll} style={{ padding: '0.85rem 2.4rem', fontSize: '0.9rem' }}>{t(lang, 'multi.doneAnother')}</button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  /* ── review screen (step 2) ── */
+  if (reviewing) {
+    return (
+      <div style={{ maxWidth: '720px', margin: '0 auto' }}>
+        <Card mode={mode}>
+          <div style={{ marginBottom: '1.25rem' }}>
+            <span className={`mode-badge ${mode === 'without_confirmation' ? 'mode-badge-walkin' : 'mode-badge-confirmed'}`}>
+              {mode === 'without_confirmation' ? <><Ico.Walk s={11} /> {t(lang, 'mode.without')}</> : <><Ico.CalCheck s={11} /> {t(lang, 'mode.with')}</>}
+            </span>
+            <h2 style={{ color: tokens.color.white, fontSize: '1.25rem', fontWeight: 600, fontFamily: tokens.font.family, marginBottom: '0.2rem' }}>{t(lang, 'multi.reviewTitle')}</h2>
+            <p style={{ color: tokens.color.whiteFaint, fontSize: '0.78rem', fontFamily: tokens.font.family }}>{t(lang, 'multi.reviewSub')}</p>
+          </div>
+
+          {guests.map((g, i) => {
+            const mins  = g.services.reduce((a, s) => a + parseMins(s.duration), 0);
+            const price = g.services.reduce((a, s) => a + parseLKR(s.price), 0);
+            return (
+              <div key={g.id} className={`mg-card${i === 0 ? ' mg-me-card' : ''}`} style={{ marginBottom: '0.9rem' }}>
+                <div className="mg-head" style={{ cursor: 'default' }}>
+                  <div className={`mg-badge${i === 0 ? ' mg-badge-me' : ''}`}>{i === 0 ? <Ico.User s={13} /> : i}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ color: tokens.color.white, fontSize: '0.9rem', fontWeight: 700, fontFamily: tokens.font.family, display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      {guestLabel(i, lang)}
+                      {i === 0 && contactName.trim() && <span className="mg-me-pill">{contactName.trim()}</span>}
+                    </p>
+                    <p style={{ color: tokens.color.whiteFaint, fontSize: '0.7rem', marginTop: '0.1rem', fontFamily: tokens.font.family }}>
+                      {locName(lang, location)} · {g.date ? formatDate(g.date, lang) : '—'} · {g.timeSlot || '—'}
+                    </p>
+                  </div>
+                  <span style={{ color: tokens.color.gold, fontSize: '0.95rem', fontWeight: 700, fontFamily: tokens.font.family, flexShrink: 0 }}>LKR {price.toLocaleString()}</span>
+                </div>
+                <div className="mg-body" style={{ borderTop: 'none', paddingTop: 0 }}>
+                  {g.services.map(s => (
+                    <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.35rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem' }}>
+                      <span style={{ color: tokens.color.whiteMuted, fontFamily: tokens.font.family }}>{svcName(lang, s.name)}</span>
+                      <span style={{ color: tokens.color.whiteFaint, fontFamily: tokens.font.family, flexShrink: 0 }}>{durStr(lang, s.duration)} · {s.price}</span>
+                    </div>
+                  ))}
+                  <p style={{ marginTop: '0.55rem', fontSize: '0.73rem', color: tokens.color.whiteFaint, fontFamily: tokens.font.family }}>
+                    <Ico.User s={10} /> {t(lang, 'sum.providers')}: {g.providers.map(p => p.name).join(', ') || '—'} · {t(lang, 'sum.duration')}: {fmtDur(lang, mins)}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+
+          {submitError && <div className="api-error" style={{ marginBottom: '1rem' }}>⚠ {submitError}</div>}
+
+          <div className="mg-totalbar" style={{ marginTop: '0.5rem' }}>
+            <div>
+              <p style={{ color: tokens.color.whiteMuted, fontSize: '0.8rem', fontWeight: 600, fontFamily: tokens.font.family }}>{t(lang, 'multi.total', { n: guests.length })} · {fmtDur(lang, totalMins)}</p>
+              <p style={{ color: tokens.color.whiteFaint, fontSize: '0.68rem', fontFamily: tokens.font.family }}>{locName(lang, location)} · {guests[0]?.date ? formatDate(guests[0].date, lang) : ''}</p>
+            </div>
+            <span style={{ color: tokens.color.gold, fontSize: '1.2rem', fontWeight: 700, fontFamily: tokens.font.family }}>LKR {totalPrice.toLocaleString()}</span>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+            <button className="btn-ghost" type="button" disabled={submitting} onClick={() => setReviewing(false)} style={{ padding: '0.75rem 1.5rem', fontSize: '0.85rem' }}>{t(lang, 's2.back')}</button>
+            <button className={btnClass} type="button" disabled={submitting} onClick={handleSubmitAll} style={{ padding: '0.8rem 2rem', fontSize: '0.87rem', minWidth: '210px' }}>
+              {submitting
+                ? <><span style={{ width: '0.85rem', height: '0.85rem', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />{t(lang, 'multi.confirming')}</>
+                : t(lang, 'multi.confirmAll', { n: guests.length })}
+            </button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  /* ── form ── */
+  return (
+    <div style={{ maxWidth: '720px', margin: '0 auto' }}>
+      <Card mode={mode}>
+        <div style={{ marginBottom: '1.1rem' }}>
+          <ModeToggle mode={mode} onChange={m => { setMode(m); setSubmitError(''); }} lang={lang} />
+        </div>
+
+        {/* header */}
+        <div className="appt-header-row">
+          <div style={{ display: 'flex', gap: '0.7rem', alignItems: 'center' }}>
+            <div style={{ width: '2.6rem', height: '2.6rem', borderRadius: '50%', flexShrink: 0, background: `${accentColor}22`, border: `1px solid ${accentColor}66`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Ico.Users s={16} c={accentColor} />
+            </div>
+            <div>
+              <h2 style={{ color: tokens.color.white, fontSize: '1.25rem', fontWeight: 600, fontFamily: tokens.font.family, marginBottom: '0.25rem' }}>{t(lang, 'multi.title')}</h2>
+              <p style={{ color: tokens.color.whiteFaint, fontSize: '0.78rem', fontFamily: tokens.font.family, lineHeight: 1.55 }}>{t(lang, 'multi.intro')}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="divider" style={{ margin: '0.9rem 0 1.2rem' }} />
+
+        {/* branch */}
+        <Label text={t(lang, 's1.branchLocation')} />
+        <div className="loc-cards-wrap" style={{ display: 'flex', gap: '0.65rem', marginBottom: '1.2rem', flexWrap: 'wrap' }}>
+          {LOCATIONS.map(locSel => (
+            <div key={locSel} className={`loc-card${location === locSel ? ' loc-card-active' : ''}`} onClick={() => setLocation(locSel)} role="button" aria-pressed={location === locSel}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div style={{ width: '2rem', height: '2rem', borderRadius: '50%', flexShrink: 0, background: location === locSel ? 'rgba(184,134,11,0.2)' : 'rgba(255,255,255,0.06)', border: `1px solid ${location === locSel ? 'rgba(184,134,11,0.55)' : 'rgba(255,255,255,0.12)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ico.MapPin s={13} c={location === locSel ? tokens.color.gold : tokens.color.whiteFaint} />
+                </div>
+                <span style={{ color: location === locSel ? tokens.color.gold : tokens.color.whiteMuted, fontSize: '0.85rem', fontWeight: 600, fontFamily: tokens.font.family }}>{locName(lang, locSel)}</span>
+              </div>
+              <CircleCheck active={location === locSel} />
+            </div>
+          ))}
+        </div>
+
+        <div className="divider" style={{ margin: '0 0 1.2rem' }} />
+
+        {/* your details — shared for the whole group */}
+        <div className="mg-contact-card">
+          <div className="mg-section-title"><Ico.User s={12} /> {t(lang, 'multi.yourDetails')}</div>
+          <p style={{ color: tokens.color.whiteFaint, fontSize: '0.72rem', marginBottom: '0.7rem', fontFamily: tokens.font.family }}>{t(lang, 'multi.yourDetailsNote')}</p>
+          <div style={{ display: 'flex', gap: '0.7rem', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 150px' }}>
+              <FieldLabel text={t(lang, 'sum.name')} lang={lang} />
+              <input className="sayo-input" value={contactName} onChange={e => setName(e.target.value)} style={{ padding: '0.62rem 0.8rem' }} />
+            </div>
+            <div style={{ flex: '1 1 160px' }}>
+              <FieldLabel text={t(lang, 'gp.contact')} lang={lang} />
+              <input className="sayo-input" value={contactPhone} onChange={e => setPhone(e.target.value)} style={{ padding: '0.62rem 0.8rem' }} />
+            </div>
+            <div style={{ flex: '1 1 200px' }}>
+              <FieldLabel text={t(lang, 'sum.email')} lang={lang} />
+              <input className="sayo-input" type="email" value={contactEmail} onChange={e => setEmail(e.target.value)} style={{ padding: '0.62rem 0.8rem' }} />
+            </div>
+          </div>
+        </div>
+
+        {/* guests — ME first, then Guest 1, Guest 2, … */}
+        {guests.map((g, i) => (
+          <MultiGuestEditor
+            key={g.id}
+            guest={g}
+            index={i}
+            total={guests.length}
+            mode={mode}
+            location={location}
+            lang={lang}
+            contactName={contactName}
+            meDate={meDate}
+            otherBusy={otherBusyFor(g.id)}
+            onPatch={patch => patchGuest(g.id, patch)}
+            onRemove={() => removeGuest(g.id)}
+          />
+        ))}
+
+        <button type="button" className="mg-add" onClick={addGuest}>
+          <Ico.User s={13} /> {t(lang, 'multi.addGuest')}
+        </button>
+
+        {submitError && <div className="api-error" style={{ marginBottom: '1rem' }}>⚠ {submitError}</div>}
+
+        {completed && completed.length > 0 && (
+          <div className="info-box-green" style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+            <Ico.Info s={13} />
+            <span style={{ fontSize: '0.75rem', color: tokens.color.whiteDim, fontFamily: tokens.font.family }}>
+              {t(lang, 'multi.partial')} {completed.map(r => `#${r.bookingId}`).join(', ')}
+            </span>
+          </div>
+        )}
+
+        {/* totals + CTA */}
+        <div className="mg-big-cta">
+          <div>
+            <p style={{ color: tokens.color.whiteMuted, fontSize: '0.8rem', fontWeight: 600, fontFamily: tokens.font.family }}>{t(lang, 'multi.total', { n: guests.length })} · {fmtDur(lang, totalMins)}</p>
+            <p style={{ color: tokens.color.gold, fontSize: '1.25rem', fontWeight: 700, fontFamily: tokens.font.family, marginTop: '0.15rem' }}>LKR {totalPrice.toLocaleString()}</p>
+          </div>
+          <button className={btnClass} type="button" disabled={submitting} onClick={handleReview} style={{ padding: '0.85rem 2.2rem', fontSize: '0.9rem' }}>
+            {t(lang, 'multi.reviewAll', { n: guests.length })} <Ico.Right />
+          </button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function BookingPage() {
   const router = useRouter();
 
   const [lang,      setLangState] = useState<Lang>('en');
   const [mode,      setMode]      = useState<BookingMode>('confirmed');
   const [step,      setStep]      = useState<Step>(1);
+  const [bookingTab,setBookingTab]= useState<'single' | 'multi'>('single');
   const [gender,    setGender]    = useState<GenderValue | ''>('');
   const [name,      setName]      = useState('');
   const [phone,     setPhone]     = useState('');
@@ -1471,6 +2249,26 @@ export default function BookingPage() {
             </p>
           </div>
 
+          {/* BOOKING TYPE TABS — single vs multi */}
+          <div className="btype-tabs">
+            <button
+              type="button"
+              className={`btype-tab${bookingTab === 'single' ? ' btype-tab-active' : ''}`}
+              onClick={() => setBookingTab('single')}
+            >
+              <Ico.User s={13} /> {t(lang, 'tabs.single')}
+            </button>
+            <button
+              type="button"
+              className={`btype-tab${bookingTab === 'multi' ? ' btype-tab-active' : ''}`}
+              onClick={() => setBookingTab('multi')}
+            >
+              <Ico.Users s={13} /> {t(lang, 'tabs.multi')}
+            </button>
+          </div>
+
+          {bookingTab === 'single' ? (
+          <>
           <StepIndicator current={step} mode={mode} lang={lang} />
 
           <div style={{ maxWidth: '680px', margin: '0 auto' }}>
@@ -1725,6 +2523,15 @@ export default function BookingPage() {
             )}
 
           </div>
+          </>
+          ) : (
+            <MultiBookingPanel
+              lang={lang}
+              contactName={name} setName={setName}
+              contactPhone={phone} setPhone={setPhone}
+              contactEmail={email} setEmail={setEmail}
+            />
+          )}
         </div>
       </main>
 

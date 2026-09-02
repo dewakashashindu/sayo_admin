@@ -43,6 +43,10 @@ function toChar(s: string, len: number): string {
   return s.substring(0, len).padEnd(len, " ");
 }
 
+function trimValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : String(value ?? "").trim();
+}
+
 /**
  * Return all useful forms of a Sri Lankan mobile number for searching.
  * This allows 0771234567, 94771234567, +94771234567 and
@@ -157,6 +161,99 @@ function isDuplicateKeyError(err: any): boolean {
     (err?.code === "P2010" &&
       (msg.includes("1062") || msg.toLowerCase().includes("duplicate entry")))
   );
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   SERVER-SIDE CONFLICT GUARD (race-safe double-booking prevention)
+   -----------------------------------------------------------------------------
+   Availability is checked on the client for UX, but the server must re-verify
+   inside the SAME database transaction that creates the booking. Two
+   receptionists submitting the same technician + slot concurrently are
+   serialized by a SELECT ... FOR UPDATE lock: the second transaction blocks
+   until the first commits, then sees the new row and is rejected with 409.
+──────────────────────────────────────────────────────────────────────────────── */
+class BookingConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BookingConflictError";
+  }
+}
+
+/** Parse "HH:MM AM/PM" (or 24h "HH:MM") into minutes since midnight. */
+function slotToMinutes(timeStr: string): number {
+  if (!timeStr) return -1;
+  const ampm = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (ampm) {
+    let hour = parseInt(ampm[1], 10);
+    const min = parseInt(ampm[2], 10);
+    const period = ampm[3].toUpperCase();
+    hour = period === "AM" ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
+    if (hour >= 0 && hour <= 23 && min >= 0 && min <= 59) return hour * 60 + min;
+    return -1;
+  }
+  const military = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (military) {
+    const hour = parseInt(military[1], 10);
+    const min = parseInt(military[2], 10);
+    if (hour >= 0 && hour <= 23 && min >= 0 && min <= 59) return hour * 60 + min;
+  }
+  return -1;
+}
+
+function minutesToTimeLabel(totalMinutes: number): string {
+  if (totalMinutes >= 1440) totalMinutes = 1439;
+  if (totalMinutes < 0) totalMinutes = 0;
+  const h24 = Math.floor(totalMinutes / 60);
+  const min = totalMinutes % 60;
+  const period = h24 >= 12 ? "PM" : "AM";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:${String(min).padStart(2, "0")} ${period}`;
+}
+
+interface ProviderWindow {
+  techID: string; // technician id (trimmed, "0" = unassigned → never conflicts)
+  startMin: number; // minutes since midnight (inclusive)
+  endMin: number; // minutes since midnight (exclusive)
+}
+
+/** Time windows the incoming payload would occupy, per technician per guest. */
+function providerWindowsFromPayload(
+  guests: Guest[],
+  durationOf: (itemCode: string) => number,
+): ProviderWindow[] {
+  const windows: ProviderWindow[] = [];
+
+  for (const guest of guests) {
+    const startMin = slotToMinutes(guest.timeSlot || "");
+    if (startMin < 0) continue;
+
+    // A technician's services run sequentially: window = Σ real durations
+    // of that technician's service rows (30 min fallback per unknown row).
+    const totals = new Map<string, number>();
+    for (const svc of guest.services || []) {
+      const tech = trimValue(svc.techID);
+      if (!tech || tech === "0") continue;
+      const dur = Math.max(30, durationOf(svc.serviceItemID.trim()) || 30);
+      totals.set(tech, (totals.get(tech) || 0) + dur);
+    }
+
+    for (const [techID, total] of totals) {
+      windows.push({ techID, startMin, endMin: startMin + total });
+    }
+  }
+
+  return windows;
+}
+
+interface RawConflictRow {
+  BookingID: string;
+  StartMin: number;
+  TechID: string;
+  TotalMin: number;
+}
+
+function hasOverlap(a: ProviderWindow, b: ProviderWindow): boolean {
+  return a.techID === b.techID && a.startMin < b.endMin && b.startMin < a.endMin;
 }
 
 interface GuestService {
@@ -518,11 +615,33 @@ export async function GET(req: NextRequest) {
 
   try {
     if (type === "branches") {
-      const branches = await prisma.tbl_LocationMaster.findMany({
-        where: { Enable: true },
-        select: { LocCode: true, LocDes: true, Address: true },
-        orderBy: { LocDes: "asc" },
-      });
+      const branchRows = await prisma.$queryRaw<
+        { LocCode: string; LocDes: string; Address: string | null }[]
+      >`
+        SELECT
+          RTRIM(LocCode) AS LocCode,
+          RTRIM(LocDes)  AS LocDes,
+          RTRIM(Address) AS Address
+        FROM tbl_LocationMaster
+        WHERE Enable = 1
+        ORDER BY LocDes ASC
+      `;
+
+      // CHAR(10) columns can come back padded / duplicated: dedupe by the
+      // trimmed code so the client never renders duplicate React keys.
+      const seen = new Set<string>();
+      const branches = branchRows
+        .filter((row) => {
+          const code = (row.LocCode || "").trim();
+          if (!code || seen.has(code)) return false;
+          seen.add(code);
+          return true;
+        })
+        .map((row) => ({
+          LocCode: row.LocCode.trim(),
+          LocDes: row.LocDes?.trim() || row.LocCode.trim(),
+          Address: row.Address?.trim() || "",
+        }));
 
       return NextResponse.json({ success: true, data: branches });
     }
@@ -550,6 +669,7 @@ export async function GET(req: NextRequest) {
           ItemDes: true,
           ItemPrintDes: true,
           Retailprice: true,
+          DurationMin: true,
           Category1: true,
           Category2: true,
           Category3: true,
@@ -612,6 +732,7 @@ export async function GET(req: NextRequest) {
           itemDes,
           itemPrintDes: s.ItemPrintDes?.trim() || itemDes,
           price: Number(s.Retailprice ?? 0),
+          durationMin: Number(s.DurationMin) > 0 ? Number(s.DurationMin) : 30,
           category1,
           category1Label: c1Map[category1] || category1,
           category2,
@@ -648,6 +769,8 @@ export async function GET(req: NextRequest) {
           RegTel: string;
           CusEmail: string | null;
           Gender: string | null;
+          BlackList: number | boolean;
+          BlackListRemarks: string | null;
         }[]
       >`
         SELECT
@@ -655,11 +778,12 @@ export async function GET(req: NextRequest) {
           RTRIM(CusName) AS CusName,
           RTRIM(RegTel) AS RegTel,
           RTRIM(CusEmail) AS CusEmail,
-          RTRIM(Gender) AS Gender
+          RTRIM(Gender) AS Gender,
+          BlackList AS BlackList,
+          RTRIM(BlackListRemarks) AS BlackListRemarks
         FROM tbl_CustomerMaster
         WHERE (${Prisma.join(conditions, " OR ")})
           AND Enable = 1
-          AND BlackList = 0
         ORDER BY CreateDateTime DESC
         LIMIT 5
       `;
@@ -673,6 +797,8 @@ export async function GET(req: NextRequest) {
           regTel: normalizePhoneForStorage(storedPhone),
           cusEmail: c.CusEmail?.trim() || "",
           gender: c.Gender?.trim() || "",
+          blacklisted: Boolean(c.BlackList),
+          blackListRemarks: (c.BlackListRemarks || "").trim() || undefined,
         };
       });
 
@@ -814,12 +940,26 @@ export async function POST(req: NextRequest) {
 
     const branchLabel = branchRows[0].LocDes || locCode;
 
-    const existingRows = await prisma.$queryRaw<{ CusCode: string }[]>`
-      SELECT RTRIM(CusCode) AS CusCode
+    const existingRows = await prisma.$queryRaw<
+      {
+        CusCode: string;
+        CusName: string;
+        CusEmail: string | null;
+        Gender: string | null;
+        BlackList: number | boolean;
+        BlackListRemarks: string | null;
+      }[]
+    >`
+      SELECT
+        RTRIM(CusCode) AS CusCode,
+        RTRIM(CusName) AS CusName,
+        RTRIM(CusEmail) AS CusEmail,
+        RTRIM(Gender) AS Gender,
+        BlackList AS BlackList,
+        RTRIM(BlackListRemarks) AS BlackListRemarks
       FROM tbl_CustomerMaster
       WHERE (${Prisma.join(phoneConditions, " OR ")})
         AND Enable = 1
-        AND BlackList = 0
       ORDER BY CreateDateTime DESC
       LIMIT 1
     `;
@@ -828,14 +968,55 @@ export async function POST(req: NextRequest) {
 
     if (existingRows[0]) {
       cusCode = existingRows[0].CusCode.trim();
+      const stored = existingRows[0];
+
+      // ── Blacklist guard ──────────────────────────────────────────────────
+      // Blacklisted customers are now FOUND by the phone lookup (the UI shows
+      // the warning banner). Their booking must not proceed silently as if
+      // they were a brand-new customer with a fresh CUS code.
+      if (Boolean(stored.BlackList)) {
+        const reason = stored.BlackListRemarks?.trim() || "no reason recorded";
+        return NextResponse.json(
+          {
+            success: false,
+            error: `This phone number belongs to a BLACKLISTED customer (${cusCode}). Booking is not allowed. Reason: ${reason}`,
+          },
+          { status: 403 },
+        );
+      }
+
+      // ── Customer master protection (no auto-overwrite) ───────────────────
+      // The phone may belong to a different person than the one at the
+      // counter (e.g. a friend booking on the customer's number). NEVER
+      // overwrite the stored profile with form data — that would silently
+      // rename "Nimali" to "Sarah" and corrupt her history. Only backfill
+      // fields the master record has never filled in (empty/NULL).
+      const formName = cusName.trim();
+      const formEmail = body.cusEmail?.trim() || "";
+
+      if (
+        formName.toLowerCase() !== (stored.CusName || "").trim().toLowerCase() ||
+        (formEmail &&
+          formEmail.toLowerCase() !== (stored.CusEmail || "").trim().toLowerCase())
+      ) {
+        console.warn(
+          `[CUSTOMER_KEPT] Booking created under ${cusCode} ("${stored.CusName}") but the master profile was NOT overwritten. Form entered: "${formName}" <${formEmail}>`,
+        );
+      }
 
       await prisma.$executeRaw`
         UPDATE tbl_CustomerMaster
         SET
-          RegTel = ${toChar(phone, 15)},
-          CusName = ${cusName.substring(0, 200)},
-          CusEmail = ${body.cusEmail?.trim()?.substring(0, 200) || " "},
-          Gender = ${body.gender?.trim() || " "}
+          CusEmail = CASE
+            WHEN CusEmail IS NULL OR RTRIM(CusEmail) = ' ' OR RTRIM(CusEmail) = ''
+            THEN ${formEmail.substring(0, 200) || " "}
+            ELSE CusEmail
+          END,
+          Gender = CASE
+            WHEN Gender IS NULL OR RTRIM(Gender) = ' ' OR RTRIM(Gender) = ''
+            THEN ${body.gender?.trim()?.substring(0, 50) || " "}
+            ELSE Gender
+          END
         WHERE RTRIM(CusCode) = ${cusCode}
       `;
     } else {
@@ -870,6 +1051,7 @@ export async function POST(req: NextRequest) {
     ];
 
     let itemNameMap: Record<string, string> = {};
+    let itemDurationMap: Record<string, number> = {};
 
     if (allItemCodes.length > 0) {
       const itemRows = await prisma.$queryRaw<
@@ -877,12 +1059,16 @@ export async function POST(req: NextRequest) {
           ItemCode: string;
           ItemDes: string;
           ItemPrintDes: string | null;
+          Retailprice: number;
+          DurationMin: number;
         }[]
       >`
         SELECT
           RTRIM(ItemCode) AS ItemCode,
           RTRIM(ItemDes) AS ItemDes,
-          RTRIM(ItemPrintDes) AS ItemPrintDes
+          RTRIM(ItemPrintDes) AS ItemPrintDes,
+          Retailprice AS Retailprice,
+          COALESCE(NULLIF(DurationMin, 0), 30) AS DurationMin
         FROM tbl_ItemMaster
         WHERE RTRIM(LocCode) = ${locCode}
           AND RTRIM(ItemCode) IN (${Prisma.join(allItemCodes)})
@@ -894,6 +1080,58 @@ export async function POST(req: NextRequest) {
           i.ItemPrintDes?.trim() || i.ItemDes.trim(),
         ]),
       );
+
+      // ── Server-authoritative pricing ──────────────────────────────────────
+      // Never trust the itemPrice sent by the client. Recompute every line
+      // from tbl_ItemMaster.Retailprice so a tampered payload (e.g. a LKR
+      // 5,000 service priced at 500 via devtools) can never reach the DB or
+      // billing. Any mismatch is logged and silently corrected.
+      const itemPriceMap = Object.fromEntries(
+        itemRows.map((i) => [i.ItemCode.trim(), Number(i.Retailprice) || 0]),
+      );
+      // Real per-service durations for the server-side conflict guard —
+      // the same source the availability UI now uses.
+      itemDurationMap = Object.fromEntries(
+        itemRows.map((i) => [
+          i.ItemCode.trim(),
+          Number(i.DurationMin) > 0 ? Number(i.DurationMin) : 30,
+        ]),
+      );
+
+      let priceAdjusted = 0;
+      for (const guest of body.guests) {
+        for (const svc of guest.services) {
+          const itemCode = svc.serviceItemID.trim();
+          const retailPrice = itemPriceMap[itemCode];
+
+          if (retailPrice === undefined) {
+            console.warn(
+              `[PRICE_CHECK] Item "${itemCode}" not found for branch ${locCode} — price not validated.`,
+            );
+            continue;
+          }
+
+          const qty = Number(svc.qty) > 0 ? Number(svc.qty) : 1;
+          const correctPrice = Math.round(retailPrice * qty * 100) / 100;
+          const sentPrice = Number(svc.itemPrice) || 0;
+
+          if (Math.abs(sentPrice - correctPrice) > 0.009) {
+            console.warn(
+              `[PRICE_FIXED] Item "${itemCode}": client sent LKR ${sentPrice}, ` +
+                `tbl_ItemMaster.Retailprice = LKR ${retailPrice} × ${qty} = LKR ${correctPrice}. ` +
+                `Storing the DB price.`,
+            );
+            svc.itemPrice = correctPrice;
+            priceAdjusted++;
+          }
+        }
+      }
+
+      if (priceAdjusted > 0) {
+        console.warn(
+          `[PRICE_FIXED] ${priceAdjusted} service line(s) were corrected to the DB retail price for booking at ${locCode}.`,
+        );
+      }
     }
 
     let bookingID = "";
@@ -901,25 +1139,99 @@ export async function POST(req: NextRequest) {
     let attempt = 0;
     let lastErr: any = null;
 
+    // Computed once, used both inside the transaction (INSERT) and in the
+    // response: walk-in bookings are always saved as CONFIRMED.
+    const requestedStatus = String(body.status || "PENDING")
+      .trim()
+      .toUpperCase();
+    const isWalkIn =
+      trimValue(body.bookingTypeID).toUpperCase() === "WALKIN" ||
+      trimValue(body.confirmationType).toUpperCase() === "WI";
+    const effectiveStatus = isWalkIn ? "CONFIRMED" : requestedStatus;
+    const initiallyConfirmed =
+      effectiveStatus === "CONFIRMED" || effectiveStatus === "CONFIRM";
+    const initiallyCancelled =
+      effectiveStatus === "CANCELLED" || effectiveStatus === "CANCEL";
+    const initiallyOngoing =
+      effectiveStatus === "ONGOING" || effectiveStatus === "IN PROGRESS";
+
     while (attempt < MAX_BOOKING_ID_RETRIES) {
       attempt++;
 
       try {
         await prisma.$transaction(
           async (tx) => {
+            // ── Server-side conflict guard (race-safe) ──────────────────────
+            // Lock every non-cancelled header row for this branch + date. A
+            // concurrent submission from another receptionist blocks here
+            // until this transaction commits, so it can never slip past the
+            // check below and create a double booking for the same technician.
+            const conflictRows = await tx.$queryRaw<RawConflictRow[]>`
+              SELECT
+                h.BookingID,
+                (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
+                RTRIM(d.TechID) AS TechID,
+                COALESCE(SUM(COALESCE(NULLIF(i.DurationMin, 0), 30)), 30) AS TotalMin
+              FROM tbl_bookingheder h
+              JOIN tbl_bookingdetail d
+                ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
+              LEFT JOIN tbl_ItemMaster i
+                ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
+               AND RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
+              WHERE RTRIM(h.LocCode) = ${locCode.trim()}
+                AND DATE(h.BookingDate) = ${body.appointmentDate}
+                AND RTRIM(h.Status) <> 'CANCELLED'
+              GROUP BY h.BookingID, RTRIM(d.TechID), StartMin
+              FOR UPDATE
+            `;
+
+            // Existing occupancy: per (booking, technician) → real duration
+            // (Σ tbl_itemmaster.DurationMin for that technician's rows).
+            const byKey = new Map<string, { start: number; total: number }>();
+            for (const row of conflictRows) {
+              const tech = trimValue(row.TechID);
+              if (!tech || tech === "0") continue;
+              const key = `${trimValue(row.BookingID)}|${tech}`;
+              const entry = byKey.get(key);
+              if (entry) entry.total += Number(row.TotalMin) || 30;
+              else
+                byKey.set(key, {
+                  start: Number(row.StartMin) || 0,
+                  total: Number(row.TotalMin) || 30,
+                });
+            }
+
+            const existingWindows: ProviderWindow[] = [...byKey.entries()].map(
+              ([key, e]) => ({
+                techID: key.slice(key.indexOf("|") + 1),
+                startMin: e.start,
+                endMin: e.start + Math.max(30, e.total),
+              }),
+            );
+
+            const candidateWindows = providerWindowsFromPayload(
+              body.guests,
+              (itemCode) => itemDurationMap[itemCode] || 30,
+            );
+
+            for (const cw of candidateWindows) {
+              for (const ew of existingWindows) {
+                if (hasOverlap(cw, ew)) {
+                  throw new BookingConflictError(
+                    `Technician ${cw.techID} is already booked on ${body.appointmentDate} at ${minutesToTimeLabel(ew.startMin)}. Please choose another technician or time slot.`,
+                  );
+                }
+              }
+            }
+
             bookingID = await generateBookingIDTx(tx, locCode);
 
+            // Walk-in customers are already physically in the salon, so the
+            // booking is saved as CONFIRMED (isWalkIn/effectiveStatus are
+            // computed above the transaction) — otherwise the DB stays
+            // PENDING/Confirmed=0 while the SMS/email already says "Booking
+            // Confirmed", and billing gets blocked later.
             const createdAt = new Date();
-            const requestedStatus = String(body.status || "PENDING")
-              .trim()
-              .toUpperCase();
-            const initiallyConfirmed =
-              requestedStatus === "CONFIRMED" || requestedStatus === "CONFIRM";
-            const initiallyCancelled =
-              requestedStatus === "CANCELLED" || requestedStatus === "CANCEL";
-            const initiallyOngoing =
-              requestedStatus === "ONGOING" ||
-              requestedStatus === "IN PROGRESS";
             const userID = toChar(body.userID?.trim() || "0", 10);
             const eventActor = toChar(body.userID?.trim() || " ", 10);
 
@@ -952,7 +1264,7 @@ export async function POST(req: NextRequest) {
                 ${bookingDateTime},
                 ${createdAt},
                 ${toChar(body.bookingTypeID, 10)},
-                ${toChar(body.status, 10)},
+                ${toChar(effectiveStatus, 10)},
                 ${toChar(body.confirmationType, 2)},
                 ${body.advBookingPayMode?.trim() || " "},
                 ${body.advBookingAmount ?? 0},
@@ -1020,8 +1332,11 @@ export async function POST(req: NextRequest) {
 
     if (lastErr) throw lastErr;
 
+    // Walk-ins are saved as CONFIRMED above, so the SMS must say "confirmed"
+    // too — otherwise the customer is told it is confirmed while the DB (and
+    // any later status check) still treats the message as an ordinary booking.
     const smsResult = await sendAppointmentSMS({
-      event: "booked",
+      event: isWalkIn ? "confirmed" : "booked",
       phone,
       name: cusName,
       bookingId: bookingID.trim(),
@@ -1098,17 +1413,31 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: "Booking created successfully",
+      message: isWalkIn
+        ? "Walk-in booking created and confirmed successfully"
+        : "Booking created successfully",
       data: {
         bookingID: bookingID.trim(),
         cusCode,
         locCode,
         serviceRows: detailRowCount,
+        status: effectiveStatus,
+        confirmed: initiallyConfirmed,
         refNumber: `SB-${bookingID.trim()}-${Date.now().toString(36).toUpperCase()}`,
       },
     });
   } catch (err: any) {
     console.error("[POST /api/appointmentform]", err);
+
+    if (err instanceof BookingConflictError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: err.message,
+        },
+        { status: 409 },
+      );
+    }
 
     if (isDuplicateKeyError(err)) {
       return NextResponse.json(

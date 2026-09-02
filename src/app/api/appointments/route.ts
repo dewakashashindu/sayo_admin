@@ -27,6 +27,36 @@ function trimValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : String(value ?? "").trim();
 }
 
+/* Server-side conflict guard: rejects a reschedule that would move a booking
+   onto a technician's already-booked slot. */
+class BookingConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BookingConflictError";
+  }
+}
+
+/** Parse "HH:MM AM/PM" (or 24h "HH:MM") into minutes since midnight. */
+function slotToMinutes(timeStr: string): number {
+  if (!timeStr) return -1;
+  const ampm = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (ampm) {
+    let hour = parseInt(ampm[1], 10);
+    const min = parseInt(ampm[2], 10);
+    const period = ampm[3].toUpperCase();
+    hour = period === "AM" ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
+    if (hour >= 0 && hour <= 23 && min >= 0 && min <= 59) return hour * 60 + min;
+    return -1;
+  }
+  const military = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (military) {
+    const hour = parseInt(military[1], 10);
+    const min = parseInt(military[2], 10);
+    if (hour >= 0 && hour <= 23 && min >= 0 && min <= 59) return hour * 60 + min;
+  }
+  return -1;
+}
+
 function dateOnly(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
 
@@ -745,16 +775,97 @@ export async function PATCH(req: NextRequest) {
       rescheduledDate = newDate;
       rescheduledTimeSlot = newTime;
 
-      // BookingDate stores the complete schedule date and time. Remarks now
-      // contains notes only; old Date:/Time: prefixes are removed on edit.
-      await prisma.$executeRaw`
-        UPDATE tbl_bookingheder
-        SET
-          BookingDate = ${bookingDateTime},
-          Remarks = ${newRemarks}
-        WHERE BookingID = ${bookingID}
-          AND LocCode = ${locCode}
+      // ── Server-side conflict guard (race-safe) ────────────────────────────
+      // Rescheduling must not move a booking onto a technician's already
+      // booked slot. The target date's headers are locked with FOR UPDATE and
+      // overlaps are re-checked inside the SAME transaction that updates the
+      // row, so concurrent reschedules serialize instead of racing.
+      const selfDetailRows = await prisma.$queryRaw<{ TechID: string }[]>`
+        SELECT RTRIM(TechID) AS TechID
+        FROM tbl_bookingdetail
+        WHERE RTRIM(BookingID) = ${bookingID}
+          AND RTRIM(LocCode) = ${locCode}
       `;
+
+      const selfTechCounts = new Map<string, number>();
+      for (const row of selfDetailRows) {
+        const tech = trimValue(row.TechID);
+        if (!tech || tech === "0") continue;
+        selfTechCounts.set(tech, (selfTechCounts.get(tech) || 0) + 1);
+      }
+
+      const newStartMin = slotToMinutes(newTime);
+
+      if (selfTechCounts.size > 0 && newStartMin >= 0) {
+        await prisma.$transaction(async (tx) => {
+          const lockRows = await tx.$queryRaw<
+            { BookingID: string; StartMin: number; TechID: string }[]
+          >`
+            SELECT
+              h.BookingID,
+              (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
+              RTRIM(d.TechID) AS TechID
+            FROM tbl_bookingheder h
+            JOIN tbl_bookingdetail d
+              ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
+            WHERE RTRIM(h.LocCode) = ${locCode.trim()}
+              AND DATE(h.BookingDate) = ${newDate}
+              AND RTRIM(h.Status) <> 'CANCELLED'
+              AND RTRIM(h.BookingID) <> ${bookingID}
+            FOR UPDATE
+          `;
+
+          const byKey = new Map<string, { start: number; count: number }>();
+          for (const row of lockRows) {
+            const tech = trimValue(row.TechID);
+            if (!tech || tech === "0") continue;
+            const key = `${trimValue(row.BookingID)}|${tech}`;
+            const entry = byKey.get(key);
+            if (entry) entry.count += 1;
+            else byKey.set(key, { start: Number(row.StartMin) || 0, count: 1 });
+          }
+
+          const conflictingTechs: string[] = [];
+          for (const [techID, count] of selfTechCounts) {
+            const selfEnd = newStartMin + Math.max(30, 30 * count);
+            for (const [key, e] of byKey) {
+              if (!key.endsWith(`|${techID}`)) continue;
+              const otherEnd = e.start + Math.max(30, 30 * e.count);
+              if (newStartMin < otherEnd && e.start < selfEnd) {
+                conflictingTechs.push(techID);
+              }
+            }
+          }
+
+          if (conflictingTechs.length > 0) {
+            throw new BookingConflictError(
+              `Technician ${conflictingTechs[0]} is already booked on ${newDate} at the requested time. Choose another technician or time slot.`,
+            );
+          }
+
+          // BookingDate stores the complete schedule date and time. Remarks now
+          // contains notes only; old Date:/Time: prefixes are removed on edit.
+          await tx.$executeRaw`
+            UPDATE tbl_bookingheder
+            SET
+              BookingDate = ${bookingDateTime},
+              Remarks = ${newRemarks}
+            WHERE BookingID = ${bookingID}
+              AND LocCode = ${locCode}
+          `;
+        });
+      } else {
+        // BookingDate stores the complete schedule date and time. Remarks now
+        // contains notes only; old Date:/Time: prefixes are removed on edit.
+        await prisma.$executeRaw`
+          UPDATE tbl_bookingheder
+          SET
+            BookingDate = ${bookingDateTime},
+            Remarks = ${newRemarks}
+          WHERE BookingID = ${bookingID}
+            AND LocCode = ${locCode}
+        `;
+      }
     }
 
     if (body.techID || body.providerName) {
@@ -843,6 +954,14 @@ export async function PATCH(req: NextRequest) {
     });
   } catch (err: any) {
     console.error("[PATCH /api/appointments]", err);
+
+    if (err instanceof BookingConflictError) {
+      return NextResponse.json(
+        { success: false, error: err.message },
+        { status: 409 },
+      );
+    }
+
     return NextResponse.json(
       { success: false, error: err?.message || "Failed to update booking" },
       { status: 500 },

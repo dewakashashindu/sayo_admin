@@ -129,6 +129,7 @@ model Tbl_ItemMaster {
   PackPrice        Float    @default(0)
   SemiFinishedProd Boolean  @default(false)
   ItemPic          Bytes?
+  DurationMin      Int      @default(30) @db.Int
   CreateDate       DateTime @default(now()) @db.DateTime(0)
   CreateBy         String   @default("0") @db.Char(10)
   UpdDate          DateTime @default(now()) @updatedAt @db.DateTime(0)

@@ -47,6 +47,7 @@ interface Item {
   stockBalance: number;
   expiryItem: boolean;
   retailPrice: number;
+  durationMin: number;
   wsApp: boolean;
   wsQty: number;
   wsPrice: number;
@@ -149,6 +150,7 @@ function emptyItem(): Item {
     stockBalance: 0,
     expiryItem: false,
     retailPrice: 0,
+    durationMin: 30,
     wsApp: false,
     wsQty: 0,
     wsPrice: 0,
@@ -1063,8 +1065,23 @@ function ItemCodeInput({
                     </div>
                     <div className="itm-ac-sub">Loc: {item.locCode}</div>
                   </div>
-                  <span className="itm-ac-price">
-                    LKR {item.retailPrice.toFixed(0)}
+                  <span style={{ textAlign: "right", flexShrink: 0 }}>
+                    <span className="itm-ac-price">
+                      LKR {item.retailPrice.toFixed(0)}
+                    </span>
+                    {item.serviceItem && (
+                      <span
+                        style={{
+                          display: "block",
+                          fontSize: 10,
+                          color: "#6b7280",
+                          marginTop: 2,
+                          textAlign: "right",
+                        }}
+                      >
+                        ⏱ {item.durationMin} min
+                      </span>
+                    )}
                   </span>
                 </div>
               ))}
@@ -2167,6 +2184,7 @@ function ItemsPopup({
                   </p>
                   <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>
                     Cost: {item.rawCost.toFixed(2)}
+                    {item.serviceItem && ` · ⏱ ${item.durationMin} min`}
                   </p>
                   {canHaveRecipe(item) && (
                     <p
@@ -3564,6 +3582,21 @@ export default function ItemMasterPage() {
                               )
                             }
                             min={0}
+                          />
+                        </FieldRow>
+                        <FieldRow label="Duration (Minutes)">
+                          <input
+                            className="frm-input"
+                            type="number"
+                            value={current.durationMin}
+                            onChange={(event) =>
+                              updateItem(
+                                "durationMin",
+                                Number(event.target.value),
+                              )
+                            }
+                            min={5}
+                            step={5}
                           />
                         </FieldRow>
                       </div>

@@ -16,6 +16,7 @@ interface ServiceItem {
   itemDes: string;
   itemPrintDes: string;
   price: number;
+  durationMin?: number;
   category1: string;
   category1Label: string;
   category2: string;
@@ -34,6 +35,11 @@ interface ExistingAppointment {
   status?: string;
   categoryCodes?: string[];
   techIDs?: string[];
+  /** Real per-technician windows from the server:
+      [start, start + Σ service durations for that technician]. */
+  techWindows?: { techID: string; startMin: number; endMin: number }[];
+  /** Minutes occupied by service rows that have no technician assigned. */
+  unassignedDuration?: number;
 }
 
 interface CustomerSuggestion {
@@ -42,6 +48,8 @@ interface CustomerSuggestion {
   regTel: string;
   cusEmail: string;
   gender: string;
+  blacklisted?: boolean;
+  blackListRemarks?: string;
 }
 
 interface Technician {
@@ -314,35 +322,71 @@ function getBranchTechnicianIds(
   ];
 }
 
-function isAppointmentBusyAt(
+/**
+ * Which technicians of this appointment are busy at the given slot minutes?
+ * Returns:
+ *   • []                          → appointment does not occupy the slot
+ *   • ["TECH_ID", ...]            → those technicians are busy at the slot
+ *   • ["__UNASSIGNED__"]          → unassigned service rows occupy the slot
+ *     (counts as one technician of the appointment's categories)
+ *
+ * Uses the server's real per-technician windows (techWindows) when present:
+ * each technician is busy only inside their own [start, start+duration]
+ * window, so parallel technicians (e.g. Hair + Nail by two people) do not
+ * over-block each other's slots anymore.
+ */
+function busyTechIdsAt(
   appointment: ExistingAppointment,
   slotMinutes: number,
   currentBookingID: string,
-): boolean {
+): string[] {
   if (
     currentBookingID &&
     normalizedCode(appointment.bookingID) === normalizedCode(currentBookingID)
   ) {
-    return false;
+    return [];
   }
 
-  if (normalizedCode(appointment.status) === "CANCELLED") return false;
+  if (normalizedCode(appointment.status) === "CANCELLED") return [];
 
   const startMinutes = slotToMins(appointment.timeSlot || "");
-  if (startMinutes < 0) return false;
+  if (startMinutes < 0) return [];
 
+  const candidateEnd = slotMinutes + 30;
+
+  if (
+    Array.isArray(appointment.techWindows) &&
+    appointment.techWindows.length > 0
+  ) {
+    const busy: string[] = [];
+    for (const w of appointment.techWindows) {
+      if (slotMinutes < w.endMin && candidateEnd > w.startMin) {
+        busy.push(normalizedCode(w.techID));
+      }
+    }
+    const unassignedDur = appointment.unassignedDuration || 0;
+    if (unassignedDur > 0) {
+      const end = startMinutes + unassignedDur;
+      if (slotMinutes < end && candidateEnd > startMinutes) {
+        busy.push("__UNASSIGNED__");
+      }
+    }
+    return busy;
+  }
+
+  // ── Legacy fallback (old records without techWindows) ──────────────────
   const categoryCount = new Set(
     (appointment.categoryCodes || []).map(normalizedCode).filter(Boolean),
   ).size;
-  // Different service categories can run in parallel when they have
-  // different technicians (for example Hair + Nail). Same-category service
-  // rows retain the recorded duration because they may be sequential.
   const duration =
     categoryCount > 1 ? 30 : Math.max(30, Number(appointment.duration) || 30);
   const endMinutes = startMinutes + duration;
-  const candidateEnd = slotMinutes + 30;
+  if (!(slotMinutes < endMinutes && candidateEnd > startMinutes)) return [];
 
-  return slotMinutes < endMinutes && candidateEnd > startMinutes;
+  const techIDs = (appointment.techIDs || [])
+    .map(normalizedCode)
+    .filter((techID) => techID && techID !== "0");
+  return techIDs.length > 0 ? techIDs : ["__UNASSIGNED__"];
 }
 
 function calculateSlotAvailability({
@@ -400,37 +444,28 @@ function calculateSlotAvailability({
   const unassignedBookingCategories: string[] = [];
 
   appointments.forEach((appointment) => {
-    if (!isAppointmentBusyAt(appointment, slotMinutes, currentBookingID)) {
-      return;
-    }
+    const busyTechs = busyTechIdsAt(appointment, slotMinutes, currentBookingID);
+    if (busyTechs.length === 0) return;
 
-    const appointmentTechIDs = [
-      ...new Set(
-        (appointment.techIDs || [])
-          .map(normalizedCode)
-          .filter((techID) => techID && techID !== "0"),
-      ),
-    ];
-
-    if (appointmentTechIDs.length > 0) {
-      appointmentTechIDs.forEach((techID) => busyTechnicianIds.add(techID));
-      return;
-    }
-
-    const appointmentCategories = [
-      ...new Set(
-        (appointment.categoryCodes || []).map(normalizedCode).filter(Boolean),
-      ),
-    ];
-
-    if (appointmentCategories.length === 0) {
-      // The booking has no assignment information. Count it as one
-      // technician demand rather than incorrectly making every slot red.
-      unassignedBookingCategories.push("__UNKNOWN_BOOKING__");
-    } else {
-      // Without a selected provider, an existing booking consumes one
-      // technician who could otherwise be available for a service.
-      unassignedBookingCategories.push(...appointmentCategories);
+    for (const tech of busyTechs) {
+      if (tech === "__UNASSIGNED__") {
+        const appointmentCategories = [
+          ...new Set(
+            (appointment.categoryCodes || []).map(normalizedCode).filter(Boolean),
+          ),
+        ];
+        if (appointmentCategories.length === 0) {
+          // The booking has no assignment information. Count it as one
+          // technician demand rather than incorrectly making every slot red.
+          unassignedBookingCategories.push("__UNKNOWN_BOOKING__");
+        } else {
+          // Without a selected provider, an existing booking consumes one
+          // technician who could otherwise be available for a service.
+          unassignedBookingCategories.push(...appointmentCategories);
+        }
+      } else {
+        busyTechnicianIds.add(tech);
+      }
     }
   });
 
@@ -2212,8 +2247,15 @@ function PhoneField({
                 setSuggestions([]);
               }}
             >
-              <div className="suggest-av">
-                {c.cusName.charAt(0).toUpperCase()}
+              <div
+                className="suggest-av"
+                style={
+                  c.blacklisted
+                    ? { background: "linear-gradient(135deg,#dc2626,#991b1b)" }
+                    : undefined
+                }
+              >
+                {c.blacklisted ? "⛔" : c.cusName.charAt(0).toUpperCase()}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ fontSize: 13, fontWeight: 700, color: "#1e3a40" }}>
@@ -2223,16 +2265,29 @@ function PhoneField({
                   {c.regTel}
                   {c.gender ? ` · ${c.gender}` : ""}
                 </p>
+                {c.blacklisted && (
+                  <p
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: "#dc2626",
+                      marginTop: 2,
+                    }}
+                  >
+                    🚫 BLACKLISTED
+                    {c.blackListRemarks ? ` — ${c.blackListRemarks}` : ""}
+                  </p>
+                )}
               </div>
               <span
                 style={{
                   fontSize: 10,
-                  color: "#9ca3af",
+                  color: c.blacklisted ? "#dc2626" : "#9ca3af",
                   fontWeight: 600,
                   flexShrink: 0,
                 }}
               >
-                Select
+                {c.blacklisted ? "Blocked" : "Select"}
               </span>
             </div>
           ))}
@@ -3514,6 +3569,7 @@ function WalkInPage() {
   const [submitted, setSubmitted] = useState(false);
   const [refNumber, setRefNumber] = useState("");
   const [errors, setErrors] = useState<FieldErrors>({});
+  const [blacklistWarning, setBlacklistWarning] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>("main");
   const [form, setForm] = useState<BookingFormData>({
     branch: "",
@@ -3988,6 +4044,19 @@ function WalkInPage() {
     }));
     clrErr("phoneNumber");
     clrErr("fullName");
+
+    // Blacklisted customers ARE returned by the lookup now (with a flag) so
+    // the receptionist sees a warning instead of a silent "not found" that
+    // would let the booking proceed with a fresh CUS code.
+    if (c.blacklisted) {
+      setBlacklistWarning(
+        `This phone number belongs to a BLACKLISTED customer (${c.cusCode}).${
+          c.blackListRemarks ? ` Reason: ${c.blackListRemarks}` : ""
+        } Booking is not allowed.`,
+      );
+    } else {
+      setBlacklistWarning(null);
+    }
   }
 
   function validate(): FieldErrors {
@@ -3995,6 +4064,9 @@ function WalkInPage() {
     if (!form.branch) e.branch = "Please select a branch.";
     if (!form.fullName.trim()) e.fullName = "Full name is required.";
     if (!form.phoneNumber.trim()) e.phoneNumber = "Phone number is required.";
+    if (blacklistWarning)
+      e.phoneNumber =
+        "This customer is blacklisted — booking is not allowed.";
     if (!form.isReschedule && form.selectedServices.length === 0)
       e.selectedServices = "Select at least one service.";
     if (!form.date) e.date = "Please select an appointment date.";
@@ -4117,6 +4189,7 @@ function WalkInPage() {
   }
 
   function resetForm() {
+    setBlacklistWarning(null);
     setForm({
       branch: "",
       fullName: "",
@@ -4430,10 +4503,10 @@ function WalkInPage() {
                       className="branch-row"
                       style={{ display: "flex", gap: 10, flexWrap: "wrap" }}
                     >
-                      {branches.map((b) => (
+                      {branches.map((b, idx) => (
                         <button
                           type="button"
-                          key={b.LocCode}
+                          key={`${b.LocCode}-${idx}`}
                           className={`branch-btn ${form.branch === b.LocCode ? "sel-b" : ""} ${submitted && errors.branch && !form.branch ? "err-b" : ""}`}
                           onClick={() => {
                             setF(
@@ -4507,11 +4580,33 @@ function WalkInPage() {
                           onChange={(v) => {
                             setF("phoneNumber", v);
                             clrErr("phoneNumber");
+                            setBlacklistWarning(null);
                           }}
                           onSelect={handleCustomerSelect}
                           hasError={submitted && !!errors.phoneNumber}
                         />
                         <ErrMsg msg={errors.phoneNumber} />
+                        {blacklistWarning && (
+                          <div
+                            style={{
+                              marginTop: 8,
+                              padding: "10px 12px",
+                              borderRadius: 8,
+                              background: "#fef2f2",
+                              border: "1.5px solid #fca5a5",
+                              color: "#991b1b",
+                              fontSize: 12,
+                              fontWeight: 600,
+                              lineHeight: 1.5,
+                              display: "flex",
+                              gap: 8,
+                              alignItems: "flex-start",
+                            }}
+                          >
+                            <span style={{ fontSize: 15 }}>⛔</span>
+                            <span>{blacklistWarning}</span>
+                          </div>
+                        )}
                       </div>
                       <div style={{ flex: 1 }}>
                         <label className="lbl">
