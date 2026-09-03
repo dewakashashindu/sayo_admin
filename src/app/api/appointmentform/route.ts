@@ -5,6 +5,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient, Prisma } from "@prisma/client";
 import nodemailer from "nodemailer";
 import { sendAppointmentSMS } from "@/lib/sms";
+import {
+  composeBookingRemarks,
+  type StoredBookingScheduleEntry,
+} from "@/lib/bookingSchedule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,6 +49,84 @@ function toChar(s: string, len: number): string {
 
 function trimValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : String(value ?? "").trim();
+}
+
+function normalizedQualification(value: unknown): string {
+  return trimValue(value).toUpperCase();
+}
+
+const QUALIFICATION_STOP_WORDS = new Set([
+  "AND",
+  "THE",
+  "WITH",
+  "CARE",
+  "SERVICES",
+  "SERVICE",
+  "TREATMENT",
+  "TREATMENTS",
+  "STYLING",
+  "PRODUCT",
+  "PRODUCTS",
+]);
+
+function qualificationWords(value: unknown): Set<string> {
+  return new Set(
+    trimValue(value)
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, " ")
+      .split(/\s+/)
+      .map((word) => word.replace(/S$/, ""))
+      .filter(
+        (word) =>
+          word.length >= 4 && !QUALIFICATION_STOP_WORDS.has(word),
+      ),
+  );
+}
+
+function technicianQualifiesForCategory(
+  technician: {
+    qualificationCodes?: string[];
+    qualificationNames?: string[];
+  },
+  categoryCode: string,
+  categoryLabel: string,
+): boolean {
+  const code = normalizedQualification(categoryCode);
+  const label = normalizedQualification(categoryLabel);
+  const qualifications = [
+    ...(technician.qualificationCodes || []),
+    ...(technician.qualificationNames || []),
+  ].filter((value) => trimValue(value));
+
+  if (!code || qualifications.length === 0) return false;
+
+  return qualifications.some((qualification) => {
+    const normalized = normalizedQualification(qualification);
+    if (normalized === code || normalized === label) return true;
+
+    const categoryWords = qualificationWords(categoryLabel || categoryCode);
+    const qualificationWordSet = qualificationWords(qualification);
+    return [...categoryWords].some((word) => qualificationWordSet.has(word));
+  });
+}
+
+function technicianBelongsToBranch(
+  workingLocations: string | null | undefined,
+  locCode: string,
+): boolean {
+  const branch = normalizedQualification(locCode);
+  const locations = trimValue(workingLocations)
+    .split(/[\s,]+/)
+    .map(normalizedQualification)
+    .filter(Boolean);
+  return Boolean(
+    branch &&
+      (locations.includes(branch) || locations.includes("ALL")),
+  );
+}
+
+function isEnabledValue(value: unknown): boolean {
+  return value === true || value === 1 || value === "1" || value === "true";
 }
 
 /**
@@ -216,33 +298,111 @@ interface ProviderWindow {
   endMin: number; // minutes since midnight (exclusive)
 }
 
-/** Time windows the incoming payload would occupy, per technician per guest. */
+/** Time windows the incoming payload would occupy, per provider. */
 function providerWindowsFromPayload(
   guests: Guest[],
   durationOf: (itemCode: string) => number,
 ): ProviderWindow[] {
-  const windows: ProviderWindow[] = [];
+  const records: {
+    techID: string;
+    startHint: number;
+    durationMin: number;
+    inputOrder: number;
+  }[] = [];
+  let inputOrder = 0;
 
   for (const guest of guests) {
     const startMin = slotToMinutes(guest.timeSlot || "");
     if (startMin < 0) continue;
-
-    // A technician's services run sequentially: window = Σ real durations
-    // of that technician's service rows (30 min fallback per unknown row).
-    const totals = new Map<string, number>();
-    for (const svc of guest.services || []) {
-      const tech = trimValue(svc.techID);
-      if (!tech || tech === "0") continue;
-      const dur = Math.max(30, durationOf(svc.serviceItemID.trim()) || 30);
-      totals.set(tech, (totals.get(tech) || 0) + dur);
-    }
-
-    for (const [techID, total] of totals) {
-      windows.push({ techID, startMin, endMin: startMin + total });
+    for (const service of guest.services || []) {
+      const techID = trimValue(service.techID);
+      const catalogDuration = Number(durationOf(service.serviceItemID.trim()));
+      const duration = catalogDuration > 0 ? catalogDuration : 30;
+      const quantity = Number(service.qty) > 0 ? Number(service.qty) : 1;
+      if (techID && techID !== "0") {
+        records.push({
+          techID,
+          startHint: startMin,
+          durationMin: duration * quantity,
+          inputOrder,
+        });
+      }
+      inputOrder += 1;
     }
   }
 
+  records.sort((a, b) => a.startHint - b.startHint || a.inputOrder - b.inputOrder);
+  const cursors = new Map<string, number>();
+  const windows: ProviderWindow[] = [];
+  for (const record of records) {
+    const startMin = Math.max(
+      record.startHint,
+      cursors.get(record.techID) ?? record.startHint,
+    );
+    const endMin = startMin + record.durationMin;
+    cursors.set(record.techID, endMin);
+    windows.push({ techID: record.techID, startMin, endMin });
+  }
+
   return windows;
+}
+
+/**
+ * Persist the admin booking's actual execution placement. Each provider has
+ * an independent cursor, so different technicians run in parallel while two
+ * services assigned to the same technician are sequential.
+ */
+function buildAdminSchedule(
+  guests: Guest[],
+  durationOf: (itemCode: string) => number,
+  fallbackStartMin: number,
+): StoredBookingScheduleEntry[] {
+  const records: {
+    serviceIndex: number;
+    service: GuestService;
+    startHint: number;
+    inputOrder: number;
+  }[] = [];
+  let serviceIndex = 0;
+  let inputOrder = 0;
+
+  for (const guest of guests) {
+    const guestStart = slotToMinutes(guest.timeSlot || "");
+    const startHint = guestStart >= 0 ? guestStart : fallbackStartMin;
+    for (const service of guest.services || []) {
+      records.push({ serviceIndex, service, startHint, inputOrder });
+      serviceIndex += 1;
+      inputOrder += 1;
+    }
+  }
+
+  // Chronological ordering prevents a later guest in the payload from being
+  // scheduled before an earlier guest when both use the same technician.
+  records.sort((a, b) => a.startHint - b.startHint || a.inputOrder - b.inputOrder);
+  const cursors = new Map<string, number>();
+  const result: StoredBookingScheduleEntry[] = [];
+
+  for (const record of records) {
+    const techID = trimValue(record.service.techID) || "0";
+    const providerKey = techID === "0" ? "__UNASSIGNED__" : techID;
+    const catalogDuration = Number(durationOf(record.service.serviceItemID.trim()));
+    const duration = catalogDuration > 0 ? catalogDuration : 30;
+    const quantity = Number(record.service.qty) > 0 ? Number(record.service.qty) : 1;
+    const startMin = Math.max(
+      record.startHint,
+      cursors.get(providerKey) ?? record.startHint,
+    );
+    const endMin = startMin + duration * quantity;
+    cursors.set(providerKey, endMin);
+    result.push({
+      serviceIndex: record.serviceIndex,
+      itemCode: "",
+      startMin,
+      endMin,
+    });
+  }
+
+  return result.sort((a, b) => a.serviceIndex - b.serviceIndex);
 }
 
 interface RawConflictRow {
@@ -895,12 +1055,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // BookingDate stores the complete schedule date and time. Remarks now
-  // contains notes only; old Date:/Time: prefixes are not written anymore.
-  const appointmentRemarks =
-    String(body.remarks || "")
-      .trim()
-      .substring(0, 500) || " ";
+  // BookingDate stores the complete schedule date and time. The note is kept
+  // separate until catalog validation has produced the persisted schedule.
+  const appointmentNotes = String(body.remarks || "").trim();
 
   try {
     const locCode = body.locCode.trim();
@@ -939,6 +1096,238 @@ export async function POST(req: NextRequest) {
     }
 
     const branchLabel = branchRows[0].LocDes || locCode;
+
+    const allItemCodes = [
+      ...new Set(
+        body.guests.flatMap((guest) =>
+          guest.services.map((service) => trimValue(service.serviceItemID)),
+        ),
+      ),
+    ].filter(Boolean);
+
+    if (allItemCodes.length === 0) {
+      return NextResponse.json(
+        { success: false, error: "At least one valid service code is required" },
+        { status: 422 },
+      );
+    }
+
+    const itemRows = await prisma.$queryRaw<
+      {
+        ItemCode: string;
+        ItemDes: string;
+        ItemPrintDes: string | null;
+        Retailprice: number;
+        DurationMin: number;
+        ServiceItem: boolean | number | string;
+        Enable: boolean | number | string;
+        Category1: string | null;
+        Category2: string | null;
+        Category3: string | null;
+        Category4: string | null;
+      }[]
+    >`
+      SELECT
+        RTRIM(ItemCode) AS ItemCode,
+        RTRIM(ItemDes) AS ItemDes,
+        RTRIM(ItemPrintDes) AS ItemPrintDes,
+        Retailprice AS Retailprice,
+        COALESCE(NULLIF(DurationMin, 0), 30) AS DurationMin,
+        ServiceItem AS ServiceItem,
+        Enable AS Enable,
+        RTRIM(Category1) AS Category1,
+        RTRIM(Category2) AS Category2,
+        RTRIM(Category3) AS Category3,
+        RTRIM(Category4) AS Category4
+      FROM tbl_ItemMaster
+      WHERE RTRIM(LocCode) = ${locCode}
+        AND RTRIM(ItemCode) IN (${Prisma.join(allItemCodes)})
+    `;
+
+    const itemByCode = new Map(
+      itemRows.map((item) => [normalizedQualification(item.ItemCode), item]),
+    );
+    const missingServiceCodes = allItemCodes.filter(
+      (itemCode) => !itemByCode.has(normalizedQualification(itemCode)),
+    );
+    if (missingServiceCodes.length > 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Service code(s) not found for branch ${locCode}: ${missingServiceCodes.join(", ")}`,
+        },
+        { status: 422 },
+      );
+    }
+
+    const disabledServices = itemRows
+      .filter(
+        (item) =>
+          !isEnabledValue(item.ServiceItem) || !isEnabledValue(item.Enable),
+      )
+      .map((item) => trimValue(item.ItemCode));
+    if (disabledServices.length > 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `The following selected services are disabled or not configured as services: ${disabledServices.join(", ")}`,
+        },
+        { status: 422 },
+      );
+    }
+
+    const categoryCodes = [
+      ...new Set(
+        itemRows
+          .map((item) => trimValue(item.Category1))
+          .filter(Boolean),
+      ),
+    ];
+    const categoryRows =
+      categoryCodes.length > 0
+        ? await prisma.$queryRaw<
+            { CatCode: string; CatDes: string | null }[]
+          >`
+            SELECT RTRIM(CatCode) AS CatCode, RTRIM(CatDes) AS CatDes
+            FROM tbl_ItemCategory1
+            WHERE RTRIM(CatCode) IN (${Prisma.join(categoryCodes)})
+          `
+        : [];
+    const categoryLabelMap = new Map(
+      categoryRows.map((category) => [
+        normalizedQualification(category.CatCode),
+        trimValue(category.CatDes),
+      ]),
+    );
+
+    const requestedTechIDs = [
+      ...new Set(
+        body.guests
+          .flatMap((guest) => guest.services.map((service) => trimValue(service.techID)))
+          .filter((techID) => techID && techID !== "0"),
+      ),
+    ];
+    const technicianRows =
+      requestedTechIDs.length > 0
+        ? await prisma.$queryRaw<
+            {
+              UserId: string;
+              UserName: string;
+              WorkingLocID: string | null;
+              Enable: boolean | number | string;
+            }[]
+          >`
+            SELECT
+              RTRIM(UserId) AS UserId,
+              RTRIM(UserName) AS UserName,
+              RTRIM(WorkingLocID) AS WorkingLocID,
+              Enable AS Enable
+            FROM tbl_userdetails
+            WHERE RTRIM(UserId) IN (${Prisma.join(requestedTechIDs)})
+          `
+        : [];
+    const qualificationRows =
+      requestedTechIDs.length > 0
+        ? await prisma.$queryRaw<
+            {
+              UserID: string;
+              SpecAreaID: string;
+              Specilities: string | null;
+            }[]
+          >`
+            SELECT
+              RTRIM(a.UserID) AS UserID,
+              RTRIM(a.SpecAreaID) AS SpecAreaID,
+              RTRIM(s.Specilities) AS Specilities
+            FROM tbl_technicianspecilityassignment a
+            LEFT JOIN tbl_technicianspecilities s
+              ON RTRIM(s.SpecAreaID) = RTRIM(a.SpecAreaID)
+            WHERE RTRIM(a.UserID) IN (${Prisma.join(requestedTechIDs)})
+          `
+        : [];
+
+    const qualificationsByUser = new Map<
+      string,
+      { codes: string[]; names: string[] }
+    >();
+    qualificationRows.forEach((qualification) => {
+      const userID = normalizedQualification(qualification.UserID);
+      if (!userID) return;
+      const current = qualificationsByUser.get(userID) || {
+        codes: [],
+        names: [],
+      };
+      const code = trimValue(qualification.SpecAreaID);
+      const name = trimValue(qualification.Specilities);
+      if (code && !current.codes.includes(code)) current.codes.push(code);
+      if (name && !current.names.includes(name)) current.names.push(name);
+      qualificationsByUser.set(userID, current);
+    });
+
+    const techniciansByID = new Map(
+      technicianRows.map((technician) => {
+        const qualifications = qualificationsByUser.get(
+          normalizedQualification(technician.UserId),
+        ) || { codes: [], names: [] };
+        return [normalizedQualification(technician.UserId), {
+          ...technician,
+          qualificationCodes: qualifications.codes,
+          qualificationNames: qualifications.names,
+        }];
+      }),
+    );
+
+    for (const guest of body.guests) {
+      for (const service of guest.services) {
+        const techID = trimValue(service.techID);
+        if (!techID || techID === "0") continue;
+
+        const technician = techniciansByID.get(normalizedQualification(techID));
+        if (!technician) {
+          return NextResponse.json(
+            { success: false, error: `Technician "${techID}" was not found` },
+            { status: 422 },
+          );
+        }
+        if (!isEnabledValue(technician.Enable)) {
+          return NextResponse.json(
+            { success: false, error: `Technician "${techID}" is inactive` },
+            { status: 422 },
+          );
+        }
+        if (!technicianBelongsToBranch(technician.WorkingLocID, locCode)) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Technician "${techID}" is not assigned to branch ${locCode}`,
+            },
+            { status: 422 },
+          );
+        }
+
+        const item = itemByCode.get(
+          normalizedQualification(service.serviceItemID),
+        );
+        const category = trimValue(item?.Category1);
+        const categoryKey = normalizedQualification(category);
+        if (
+          category &&
+          !technicianQualifiesForCategory(
+            technician,
+            category,
+            categoryLabelMap.get(categoryKey) || category,
+          )
+        ) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Technician "${techID}" is not qualified for service category "${categoryLabelMap.get(categoryKey) || category}"`,
+            },
+            { status: 422 },
+          );
+        }
+      }
+    }
 
     const existingRows = await prisma.$queryRaw<
       {
@@ -1042,41 +1431,13 @@ export async function POST(req: NextRequest) {
       `;
     }
 
-    const allItemCodes = [
-      ...new Set(
-        body.guests.flatMap((g) =>
-          g.services.map((s) => s.serviceItemID.trim()),
-        ),
-      ),
-    ];
-
     let itemNameMap: Record<string, string> = {};
     let itemDurationMap: Record<string, number> = {};
 
     if (allItemCodes.length > 0) {
-      const itemRows = await prisma.$queryRaw<
-        {
-          ItemCode: string;
-          ItemDes: string;
-          ItemPrintDes: string | null;
-          Retailprice: number;
-          DurationMin: number;
-        }[]
-      >`
-        SELECT
-          RTRIM(ItemCode) AS ItemCode,
-          RTRIM(ItemDes) AS ItemDes,
-          RTRIM(ItemPrintDes) AS ItemPrintDes,
-          Retailprice AS Retailprice,
-          COALESCE(NULLIF(DurationMin, 0), 30) AS DurationMin
-        FROM tbl_ItemMaster
-        WHERE RTRIM(LocCode) = ${locCode}
-          AND RTRIM(ItemCode) IN (${Prisma.join(allItemCodes)})
-      `;
-
       itemNameMap = Object.fromEntries(
         itemRows.map((i) => [
-          i.ItemCode.trim(),
+          normalizedQualification(i.ItemCode),
           i.ItemPrintDes?.trim() || i.ItemDes.trim(),
         ]),
       );
@@ -1087,13 +1448,16 @@ export async function POST(req: NextRequest) {
       // 5,000 service priced at 500 via devtools) can never reach the DB or
       // billing. Any mismatch is logged and silently corrected.
       const itemPriceMap = Object.fromEntries(
-        itemRows.map((i) => [i.ItemCode.trim(), Number(i.Retailprice) || 0]),
+        itemRows.map((i) => [
+          normalizedQualification(i.ItemCode),
+          Number(i.Retailprice) || 0,
+        ]),
       );
       // Real per-service durations for the server-side conflict guard —
       // the same source the availability UI now uses.
       itemDurationMap = Object.fromEntries(
         itemRows.map((i) => [
-          i.ItemCode.trim(),
+          normalizedQualification(i.ItemCode),
           Number(i.DurationMin) > 0 ? Number(i.DurationMin) : 30,
         ]),
       );
@@ -1102,7 +1466,7 @@ export async function POST(req: NextRequest) {
       for (const guest of body.guests) {
         for (const svc of guest.services) {
           const itemCode = svc.serviceItemID.trim();
-          const retailPrice = itemPriceMap[itemCode];
+          const retailPrice = itemPriceMap[normalizedQualification(itemCode)];
 
           if (retailPrice === undefined) {
             console.warn(
@@ -1133,6 +1497,16 @@ export async function POST(req: NextRequest) {
         );
       }
     }
+
+    const persistedSchedule = buildAdminSchedule(
+      body.guests,
+      (itemCode) => itemDurationMap[normalizedQualification(itemCode)] || 30,
+      slotToMinutes(appointmentTime),
+    );
+    const appointmentRemarks = composeBookingRemarks(
+      appointmentNotes,
+      persistedSchedule,
+    );
 
     let bookingID = "";
     let detailRowCount = 0;
@@ -1205,13 +1579,13 @@ export async function POST(req: NextRequest) {
               ([key, e]) => ({
                 techID: key.slice(key.indexOf("|") + 1),
                 startMin: e.start,
-                endMin: e.start + Math.max(30, e.total),
+                endMin: e.start + (Number(e.total) > 0 ? Number(e.total) : 30),
               }),
             );
 
             const candidateWindows = providerWindowsFromPayload(
               body.guests,
-              (itemCode) => itemDurationMap[itemCode] || 30,
+              (itemCode) => itemDurationMap[normalizedQualification(itemCode)] || 30,
             );
 
             for (const cw of candidateWindows) {
@@ -1362,7 +1736,7 @@ export async function POST(req: NextRequest) {
           const svcRows = g.services.map((s) => ({
             name:
               s.serviceName?.trim() ||
-              itemNameMap[s.serviceItemID.trim()] ||
+              itemNameMap[normalizedQualification(s.serviceItemID)] ||
               s.serviceItemID,
             qty: s.qty ?? 1,
             price: s.itemPrice ?? 0,

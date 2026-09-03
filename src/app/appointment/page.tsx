@@ -1,3 +1,4 @@
+// src/app/appointment/page.tsx
 "use client";
 
 import React, {
@@ -9,6 +10,15 @@ import React, {
 } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
+
+interface ServiceSchedule {
+  serviceIndex: number;
+  itemCode: string;
+  serviceName: string;
+  providerName: string;
+  startTime: string;
+  endTime: string;
+}
 
 interface Appointment {
   id: string;
@@ -22,6 +32,7 @@ interface Appointment {
   techID: string;
   serviceName: string;
   serviceNames: string[];
+  serviceSchedule?: ServiceSchedule[];
   date: string;
   bookingDate?: string;
   timeSlot: string;
@@ -46,6 +57,8 @@ interface Appointment {
   checkInTime?: string | null;
   billingTime?: string | null;
   txnDateTime: string;
+  techWindows?: { techID: string; startMin: number; endMin: number }[];
+  unassignedDuration?: number;
 }
 
 interface Stats {
@@ -71,6 +84,27 @@ interface FilterMeta {
     UserName: string;
     WorkingLocID?: string;
   }[];
+}
+
+function bookingIdentity(bookingID: string, locCode: string): string {
+  return `${locCode.trim().toUpperCase()}|${bookingID.trim().toUpperCase()}`;
+}
+
+function technicianIsInBranch(
+  technician: FilterMeta["technicians"][number],
+  branch: string,
+): boolean {
+  const branchCode = branch.trim().toUpperCase();
+  if (!branchCode || branchCode === "ALL") return true;
+
+  const workingLocations = String(technician.WorkingLocID || "")
+    .split(/[\s,]+/)
+    .map((location) => location.trim().toUpperCase())
+    .filter(Boolean);
+
+  return (
+    workingLocations.includes(branchCode) || workingLocations.includes("ALL")
+  );
 }
 
 function todayISO(): string {
@@ -888,8 +922,12 @@ function NotificationPanel({ appointments }: { appointments: Appointment[] }) {
           new Date(b.txnDateTime).getTime() - new Date(a.txnDateTime).getTime(),
       )
       .filter((appointment) => {
-        if (seen.has(appointment.bookingID)) return false;
-        seen.add(appointment.bookingID);
+        const identity = bookingIdentity(
+          appointment.bookingID,
+          appointment.locCode,
+        );
+        if (seen.has(identity)) return false;
+        seen.add(identity);
         return true;
       })
       .slice(0, 8);
@@ -929,7 +967,10 @@ function NotificationPanel({ appointments }: { appointments: Appointment[] }) {
           </div>
         ) : (
           recent.map((appointment) => (
-            <div key={appointment.bookingID} className="notif-item">
+            <div
+              key={bookingIdentity(appointment.bookingID, appointment.locCode)}
+              className="notif-item"
+            >
               <span
                 style={{
                   width: 8,
@@ -1657,6 +1698,55 @@ function DetailModal({
             </div>
           )}
 
+          {appointment.serviceSchedule && appointment.serviceSchedule.length > 0 && (
+            <div
+              style={{
+                padding: "10px 14px",
+                border: "1px solid #c8dce0",
+                borderRadius: 10,
+                background: "#f8fbfb",
+              }}
+            >
+              <p
+                style={{
+                  marginBottom: 6,
+                  color: "#6b7280",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                }}
+              >
+                Service schedule
+              </p>
+              {appointment.serviceSchedule.map((service, index) => (
+                <div
+                  key={`${service.itemCode}-${service.serviceIndex}-${index}`}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    padding: "5px 0",
+                    borderBottom: index < appointment.serviceSchedule!.length - 1
+                      ? "1px solid #e5eeee"
+                      : "none",
+                    color: "#1e3a40",
+                    fontSize: 12,
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>
+                    {index + 1}. {service.serviceName}
+                    <small style={{ display: "block", color: "#6b7280", fontSize: 10 }}>
+                      {service.providerName}
+                    </small>
+                  </span>
+                  <span style={{ whiteSpace: "nowrap", fontWeight: 700 }}>
+                    {service.startTime} – {service.endTime}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div
             style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}
           >
@@ -1902,7 +1992,12 @@ function ScheduleGrid({
       string,
       Record<
         number,
-        { appointment: Appointment; span: number; isStart: boolean }
+        {
+          appointment: Appointment;
+          span: number;
+          isStart: boolean;
+          service?: ServiceSchedule;
+        }
       >
     > = {};
     providers.forEach((provider) => {
@@ -1910,37 +2005,61 @@ function ScheduleGrid({
     });
 
     appointments.forEach((appointment) => {
-      const startMinutes = parseSlotToMinutes(appointment.timeSlot);
-      if (startMinutes < GRID_START_MINUTES) return;
+      // A multi-technician booking contributes one segment to each matching
+      // technician column. Keep unmatched assignments out of the grid instead
+      // of silently placing them in the first column.
+      const segments = appointment.serviceSchedule?.length
+        ? appointment.serviceSchedule
+        : [
+            {
+              serviceIndex: 0,
+              itemCode: "",
+              serviceName: appointment.serviceName,
+              providerName: appointment.providerName,
+              startTime: appointment.timeSlot,
+              endTime: minutesToSlotLabel(
+                parseSlotToMinutes(appointment.timeSlot) + appointment.duration,
+              ),
+            },
+          ];
 
-      const startIndex = Math.round(
-        (startMinutes - GRID_START_MINUTES) / GRID_STEP_MINUTES,
-      );
-      if (startIndex < 0 || startIndex >= GRID_ROWS.length) return;
+      segments.forEach((segment) => {
+        const startMinutes = parseSlotToMinutes(segment.startTime);
+        const endMinutes = parseSlotToMinutes(segment.endTime);
+        if (startMinutes < GRID_START_MINUTES || endMinutes <= startMinutes) return;
 
-      const span = Math.max(
-        1,
-        Math.ceil(appointment.duration / GRID_STEP_MINUTES),
-      );
-      const provider = providers.includes(appointment.providerName)
-        ? appointment.providerName
-        : providers[0] || "";
-      if (!provider) return;
+        const startIndex = Math.round(
+          (startMinutes - GRID_START_MINUTES) / GRID_STEP_MINUTES,
+        );
+        if (startIndex < 0 || startIndex >= GRID_ROWS.length) return;
 
-      for (
-        let index = 0;
-        index < span && startIndex + index < GRID_ROWS.length;
-        index += 1
-      ) {
-        if (!result[provider]) result[provider] = {};
-        if (!result[provider][startIndex + index]) {
-          result[provider][startIndex + index] = {
-            appointment,
-            span,
-            isStart: index === 0,
-          };
+        const span = Math.max(
+          1,
+          Math.ceil((endMinutes - startMinutes) / GRID_STEP_MINUTES),
+        );
+        const provider = providers.find(
+          (candidate) =>
+            candidate.trim().toUpperCase() ===
+            segment.providerName.trim().toUpperCase(),
+        );
+        if (!provider) return;
+
+        for (
+          let index = 0;
+          index < span && startIndex + index < GRID_ROWS.length;
+          index += 1
+        ) {
+          if (!result[provider]) result[provider] = {};
+          if (!result[provider][startIndex + index]) {
+            result[provider][startIndex + index] = {
+              appointment,
+              span,
+              isStart: index === 0,
+              service: segment,
+            };
+          }
         }
-      }
+      });
     });
 
     return result;
@@ -1948,7 +2067,9 @@ function ScheduleGrid({
 
   const draggedAppointment =
     appointments.find(
-      (appointment) => appointment.bookingID === dragAppointmentID,
+      (appointment) =>
+        bookingIdentity(appointment.bookingID, appointment.locCode) ===
+        dragAppointmentID,
     ) || null;
 
   function isRangeFree(
@@ -1961,7 +2082,12 @@ function ScheduleGrid({
 
     for (let index = 0; index < span; index += 1) {
       const cell = occupancy[provider]?.[startIndex + index];
-      if (cell && cell.appointment.bookingID !== excludedID) return false;
+      if (
+        cell &&
+        bookingIdentity(cell.appointment.bookingID, cell.appointment.locCode) !==
+          excludedID
+      )
+        return false;
     }
 
     return true;
@@ -1973,12 +2099,13 @@ function ScheduleGrid({
       return;
     }
 
-    setDragAppointmentID(appointment.bookingID);
+    const identity = bookingIdentity(appointment.bookingID, appointment.locCode);
+    setDragAppointmentID(identity);
     setDragSpan(
       Math.max(1, Math.ceil(appointment.duration / GRID_STEP_MINUTES)),
     );
     event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", appointment.bookingID);
+    event.dataTransfer.setData("text/plain", identity);
   }
 
   function handleDragEnd() {
@@ -1998,7 +2125,10 @@ function ScheduleGrid({
       provider,
       index,
       dragSpan,
-      draggedAppointment.bookingID,
+      bookingIdentity(
+        draggedAppointment.bookingID,
+        draggedAppointment.locCode,
+      ),
     );
     if (!valid) {
       showToast("Cannot drop here — slot occupied", "error");
@@ -2137,8 +2267,15 @@ function ScheduleGrid({
                   if (cell && cell.isStart) {
                     const appointment = cell.appointment;
                     const locked = appointment.status === "ongoing";
-                    const pillClass = `appt-pill pill-${appointment.status}${dragAppointmentID === appointment.bookingID ? " dragging" : ""}${locked ? " locked-pill" : ""}`;
-                    const endLabel = minutesToSlotLabel(
+                    const appointmentIdentity = bookingIdentity(
+                      appointment.bookingID,
+                      appointment.locCode,
+                    );
+                    const pillClass = `appt-pill pill-${appointment.status}${dragAppointmentID === appointmentIdentity ? " dragging" : ""}${locked ? " locked-pill" : ""}`;
+                    const segment = cell.service;
+                    const serviceLabel = segment?.serviceName || appointment.serviceName;
+                    const startLabel = segment?.startTime || appointment.timeSlot;
+                    const endLabel = segment?.endTime || minutesToSlotLabel(
                       parseSlotToMinutes(appointment.timeSlot) +
                         appointment.duration,
                     );
@@ -2147,7 +2284,7 @@ function ScheduleGrid({
                       hoverCell.provider === provider &&
                       hoverCell.index === rowIndex &&
                       dragAppointmentID &&
-                      appointment.bookingID !== dragAppointmentID,
+                      appointmentIdentity !== dragAppointmentID,
                     );
 
                     return (
@@ -2178,7 +2315,7 @@ function ScheduleGrid({
                           event.preventDefault();
                           if (
                             dragAppointmentID &&
-                            appointment.bookingID !== dragAppointmentID
+                            appointmentIdentity !== dragAppointmentID
                           )
                             showToast(
                               "Cannot drop — slot already occupied",
@@ -2210,10 +2347,10 @@ function ScheduleGrid({
                               <span className="live-dot-blue" />
                             )}
                             {locked && <Ico.Lock />}
-                            {appointment.serviceName.split(",")[0]}
+                            {serviceLabel.split(",")[0]}
                           </span>
                           <span className="ap-time">
-                            {appointment.timeSlot} – {endLabel}
+                            {startLabel} – {endLabel}
                           </span>
                           <span className="ap-client">
                             {appointment.clientName}
@@ -2248,7 +2385,10 @@ function ScheduleGrid({
                         provider,
                         rowIndex,
                         dragSpan,
-                        draggedAppointment.bookingID,
+                        bookingIdentity(
+                          draggedAppointment.bookingID,
+                          draggedAppointment.locCode,
+                        ),
                       )
                     : true;
                   let className = "";
@@ -2522,8 +2662,12 @@ export default function AppointmentsPage() {
 
         const seen = new Set<string>();
         const deduped = (json.data as Appointment[]).filter((appointment) => {
-          if (seen.has(appointment.bookingID)) return false;
-          seen.add(appointment.bookingID);
+          const identity = bookingIdentity(
+            appointment.bookingID,
+            appointment.locCode,
+          );
+          if (seen.has(identity)) return false;
+          seen.add(identity);
           return true;
         });
 
@@ -2561,11 +2705,55 @@ export default function AppointmentsPage() {
       status: Appointment["status"],
     ) => {
       setAppointments((current) =>
-        current.map((appointment) =>
-          appointment.bookingID === bookingID
-            ? { ...appointment, status }
-            : appointment,
-        ),
+        current.map((appointment) => {
+          if (
+            bookingIdentity(appointment.bookingID, appointment.locCode) !==
+            bookingIdentity(bookingID, locCode)
+          )
+            return appointment;
+
+          const now = new Date().toISOString();
+          if (status === "confirmed") {
+            return {
+              ...appointment,
+              status,
+              confirmed: true,
+              confirmedBy: "ADMIN",
+              confirmedDate: now,
+              cancelledBy: "",
+              cancelledDate: null,
+            };
+          }
+          if (status === "cancelled") {
+            return {
+              ...appointment,
+              status,
+              confirmed: false,
+              confirmedBy: "",
+              confirmedDate: null,
+              cancelledBy: "ADMIN",
+              cancelledDate: now,
+            };
+          }
+          if (status === "ongoing") {
+            return {
+              ...appointment,
+              status,
+              confirmed: true,
+              cancelledBy: "",
+              cancelledDate: null,
+            };
+          }
+          return {
+            ...appointment,
+            status,
+            confirmed: false,
+            confirmedBy: "",
+            confirmedDate: null,
+            cancelledBy: "",
+            cancelledDate: null,
+          };
+        }),
       );
       const labels: Record<string, string> = {
         confirmed: "Appointment confirmed",
@@ -2603,14 +2791,135 @@ export default function AppointmentsPage() {
 
   const handleDragReschedule = useCallback(
     async (appointment: Appointment, provider: string, timeSlot: string) => {
+      // ScheduleGrid intentionally renders provider names. Resolve that label
+      // against the filter metadata before it reaches the API; TechID in the
+      // database must always be the canonical UserId, never UserName.
+      const providerKey = provider.trim().toUpperCase();
+      const technician = filterMeta.technicians.find(
+        (candidate) =>
+          candidate.UserName.trim().toUpperCase() === providerKey ||
+          candidate.UserId.trim().toUpperCase() === providerKey,
+      );
+      const targetTechID =
+        technician?.UserId.trim() ||
+        (providerKey === "UNASSIGNED" ? "0" : "");
+      const targetProviderName =
+        technician?.UserName.trim() || provider.trim();
+
+      if (!targetTechID) {
+        showToast(
+          `Could not resolve technician "${provider}" — reschedule not saved`,
+          "error",
+        );
+        return;
+      }
+
+      const oldStartMin = parseSlotToMinutes(appointment.timeSlot);
+      const newStartMin = parseSlotToMinutes(timeSlot);
+      const scheduleShift =
+        oldStartMin >= 0 && newStartMin >= 0
+          ? newStartMin - oldStartMin
+          : 0;
+
+      // Moving a booking to one calendar column reassigns all of its detail
+      // rows to that technician. Rebuild the optimistic segments sequentially
+      // in service order so the UI mirrors the server's target-provider
+      // schedule while the PATCH is in flight.
+      const optimisticSchedule =
+        appointment.serviceSchedule && appointment.serviceSchedule.length > 0
+          ? (() => {
+              const ordered = [...appointment.serviceSchedule].sort(
+                (a, b) => a.serviceIndex - b.serviceIndex,
+              );
+              let cursor = newStartMin >= 0 ? newStartMin : oldStartMin;
+
+              return ordered.map((segment) => {
+                const originalStart = parseSlotToMinutes(segment.startTime);
+                const originalEnd = parseSlotToMinutes(segment.endTime);
+                const segmentDuration =
+                  originalStart >= 0 && originalEnd > originalStart
+                    ? originalEnd - originalStart
+                    : 30;
+                const start = cursor >= 0 ? cursor : originalStart + scheduleShift;
+                const end = start + segmentDuration;
+                cursor = end;
+
+                return {
+                  ...segment,
+                  providerName: targetProviderName,
+                  startTime:
+                    start >= 0 ? minutesToSlotLabel(start) : segment.startTime,
+                  endTime: end >= 0 ? minutesToSlotLabel(end) : segment.endTime,
+                };
+              });
+            })()
+          : undefined;
+      const optimisticWindows =
+        targetTechID !== "0" && optimisticSchedule?.length
+          ? [
+              {
+                techID: targetTechID,
+                startMin: Math.min(
+                  ...optimisticSchedule.map((segment) =>
+                    parseSlotToMinutes(segment.startTime),
+                  ),
+                ),
+                endMin: Math.max(
+                  ...optimisticSchedule.map((segment) =>
+                    parseSlotToMinutes(segment.endTime),
+                  ),
+                ),
+              },
+            ]
+          : targetTechID === "0"
+            ? []
+            : appointment.techWindows;
+
       setAppointments((current) =>
         current.map((item) =>
-          item.bookingID === appointment.bookingID
-            ? { ...item, providerName: provider, techID: provider, timeSlot }
+          bookingIdentity(item.bookingID, item.locCode) ===
+          bookingIdentity(appointment.bookingID, appointment.locCode)
+            ? {
+                ...item,
+                providerName: targetProviderName,
+                techID: targetTechID,
+                techIDs: targetTechID === "0" ? [] : [targetTechID],
+                // The API reactivates a cancelled booking when its schedule
+                // is moved. Mirror that transition in the optimistic row too.
+                status: item.status === "cancelled" ? "pending" : item.status,
+                confirmed: item.status === "cancelled" ? false : item.confirmed,
+                confirmedBy: item.status === "cancelled" ? "" : item.confirmedBy,
+                confirmedDate:
+                  item.status === "cancelled" ? null : item.confirmedDate,
+                cancelledBy: item.status === "cancelled" ? "" : item.cancelledBy,
+                cancelledDate:
+                  item.status === "cancelled" ? null : item.cancelledDate,
+                timeSlot,
+                duration:
+                  optimisticSchedule && optimisticSchedule.length > 0
+                    ? Math.max(
+                        0,
+                        Math.max(
+                          ...optimisticSchedule.map((segment) =>
+                            parseSlotToMinutes(segment.endTime),
+                          ),
+                        ) -
+                          Math.min(
+                            ...optimisticSchedule.map((segment) =>
+                              parseSlotToMinutes(segment.startTime),
+                            ),
+                          ),
+                      )
+                    : item.duration,
+                serviceSchedule: optimisticSchedule,
+                techWindows: optimisticWindows,
+                unassignedDuration:
+                  targetTechID === "0" ? item.duration : 0,
+              }
             : item,
         ),
       );
-      showToast(`Rescheduled to ${timeSlot} · ${provider}`, "success");
+      showToast(`Rescheduled to ${timeSlot} · ${targetProviderName}`, "success");
 
       try {
         const response = await fetch("/api/appointments", {
@@ -2621,7 +2930,8 @@ export default function AppointmentsPage() {
             locCode: appointment.locCode,
             date: appointment.date,
             timeSlot,
-            techID: provider,
+            techID: targetTechID,
+            providerName: targetProviderName,
             updatedBy: "ADMIN",
           }),
         });
@@ -2635,21 +2945,32 @@ export default function AppointmentsPage() {
         showToast("Network error — reschedule not saved", "error");
       }
     },
-    [date, fetchAppointments, showToast],
+    [date, fetchAppointments, filterMeta.technicians, showToast],
   );
 
   const handleSlotClick = useCallback(
     (provider: string, timeSlot: string) => {
+      const providerKey = provider.trim().toUpperCase();
+      const technician = filterMeta.technicians.find(
+        (candidate) =>
+          candidate.UserName.trim().toUpperCase() === providerKey ||
+          candidate.UserId.trim().toUpperCase() === providerKey,
+      );
+      const canonicalTechID =
+        technician?.UserId.trim() ||
+        (providerKey === "UNASSIGNED" ? "0" : "");
       const params = new URLSearchParams({
         date,
         timeSlot,
         providerName: provider,
-        techID: provider,
+        // Never put the display name in the techID route parameter. The form
+        // can still open an unassigned slot when a provider is not resolvable.
+        techID: canonicalTechID,
         location: filterLoc !== "ALL" ? filterLoc : "",
       });
       router.push(`/appointmentform?${params.toString()}`);
     },
-    [date, filterLoc, router],
+    [date, filterLoc, filterMeta.technicians, router],
   );
 
   const handleReschedule = useCallback(
@@ -2824,14 +3145,43 @@ export default function AppointmentsPage() {
   };
 
   const providers = useMemo(() => {
-    const activeProviders = new Set(
-      filtered.map((appointment) => appointment.providerName).filter(Boolean),
-    );
-    const allTechnicians = filterMeta.technicians
-      .map((technician) => technician.UserName)
+    // Columns are based on active technicians assigned to the selected branch.
+    // Keep the display label canonical so service segments can be matched to
+    // the correct column even when a legacy row has different casing.
+    const branchTechnicianNames = new Map<string, string>();
+    filterMeta.technicians
+      .filter((technician) => technicianIsInBranch(technician, filterLoc))
+      .forEach((technician) => {
+        const name = technician.UserName.trim();
+        if (name) branchTechnicianNames.set(name.toUpperCase(), name);
+      });
+
+    // During the initial metadata request, the appointment payload is still
+    // useful for rendering every service segment. Once metadata is available,
+    // unknown nonzero technician names are excluded rather than being mapped
+    // into an unrelated column.
+    const allowUnknownAppointmentProviders = filterMeta.technicians.length === 0;
+    const appointmentProviders = filtered
+      .flatMap((appointment) =>
+        appointment.serviceSchedule?.length
+          ? appointment.serviceSchedule.map((segment) => segment.providerName)
+          : [appointment.providerName],
+      )
+      .map((provider) => provider.trim())
+      .filter(Boolean)
+      .map((provider) => {
+        if (provider.toUpperCase() === "UNASSIGNED") return "Unassigned";
+        return (
+          branchTechnicianNames.get(provider.toUpperCase()) ||
+          (allowUnknownAppointmentProviders ? provider : "")
+        );
+      })
       .filter(Boolean);
-    return Array.from(new Set([...activeProviders, ...allTechnicians])).sort();
-  }, [filtered, filterMeta.technicians]);
+
+    return Array.from(
+      new Set([...branchTechnicianNames.values(), ...appointmentProviders]),
+    ).sort();
+  }, [filtered, filterLoc, filterMeta.technicians]);
 
   const hasActiveFilters =
     filterLoc !== "ALL" ||
@@ -3349,7 +3699,10 @@ export default function AppointmentsPage() {
                     >
                       {filtered.map((appointment) => (
                         <AppointmentCard
-                          key={appointment.bookingID}
+                          key={bookingIdentity(
+                            appointment.bookingID,
+                            appointment.locCode,
+                          )}
                           appointment={appointment}
                           onClick={() => setSelected(appointment)}
                         />

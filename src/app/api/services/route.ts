@@ -172,6 +172,10 @@ export async function GET() {
         stockBalance: num(item.StockBalance),
         expiryItem: item.ExpiryItem,
         retailPrice: num(item.Retailprice),
+        // Older item rows may not have a valid duration yet. Always return a
+        // number so the service form stays controlled and bookings have a
+        // sensible fallback duration.
+        durationMin: num(item.DurationMin) > 0 ? num(item.DurationMin) : 30,
         wsApp: item.WSApp,
         wsQty: num(item.WSQty),
         wsPrice: num(item.WSPrice),
@@ -352,6 +356,7 @@ export async function POST(req: NextRequest) {
               PackSize: num(body.packSize),
               PackPrice: num(body.packPrice),
               SemiFinishedProd: bool(body.semiFinishedProd),
+              DurationMin: num(body.durationMin) > 0 ? num(body.durationMin) : 30,
               ItemPic: picBuffer,
               CreateBy: text(body.createBy, "ADMIN"),
               UpdBy: text(body.updBy, "ADMIN"),

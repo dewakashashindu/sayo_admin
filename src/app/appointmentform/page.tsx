@@ -1,4 +1,4 @@
-//E:\sayo_admin\sayo-admin\src\app\appointmentform\page.tsx
+// src/app/appointmentform/page.tsx
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo, Suspense } from "react";
@@ -40,6 +40,14 @@ interface ExistingAppointment {
   techWindows?: { techID: string; startMin: number; endMin: number }[];
   /** Minutes occupied by service rows that have no technician assigned. */
   unassignedDuration?: number;
+  serviceSchedule?: {
+    serviceIndex: number;
+    itemCode: string;
+    serviceName: string;
+    providerName: string;
+    startTime: string;
+    endTime: string;
+  }[];
 }
 
 interface CustomerSuggestion {
@@ -56,6 +64,17 @@ interface Technician {
   UserId: string;
   UserName: string;
   WorkingLocID: string;
+  /** Assigned technician specialities/category aliases returned by the API. */
+  qualificationCodes?: string[];
+  qualificationNames?: string[];
+  categoryCodes?: string[];
+  enabled?: boolean;
+  Enable?: boolean | number | string;
+}
+
+interface CategoryWorkload {
+  category: string;
+  durationMin: number;
 }
 
 interface GuestProvider {
@@ -69,6 +88,7 @@ interface AvailabilityRequirement {
   id: string;
   timeSlot: string;
   categories: string[];
+  workloads?: CategoryWorkload[];
   selectedProviders: GuestProvider[];
   preferredTechID: string;
 }
@@ -375,11 +395,8 @@ function busyTechIdsAt(
   }
 
   // ── Legacy fallback (old records without techWindows) ──────────────────
-  const categoryCount = new Set(
-    (appointment.categoryCodes || []).map(normalizedCode).filter(Boolean),
-  ).size;
   const duration =
-    categoryCount > 1 ? 30 : Math.max(30, Number(appointment.duration) || 30);
+    Number(appointment.duration) > 0 ? Number(appointment.duration) : 30;
   const endMinutes = startMinutes + duration;
   if (!(slotMinutes < endMinutes && candidateEnd > startMinutes)) return [];
 
@@ -389,23 +406,95 @@ function busyTechIdsAt(
   return techIDs.length > 0 ? techIDs : ["__UNASSIGNED__"];
 }
 
+function isTechnicianInBranch(
+  technician: Technician,
+  branch: string,
+): boolean {
+  const branchCode = normalizedCode(branch);
+  if (!branchCode) return false;
+  const workingLocations = String(technician.WorkingLocID || "")
+    .split(/[\s,]+/)
+    .map(normalizedCode)
+    .filter(Boolean);
+  return (
+    technician.enabled !== false &&
+    technician.Enable !== false &&
+    technician.Enable !== 0 &&
+    technician.Enable !== "0" &&
+    (workingLocations.includes(branchCode) || workingLocations.includes("ALL"))
+  );
+}
+
+function isTechnicianFreeForDuration(
+  technicianID: string,
+  startMin: number,
+  durationMin: number,
+  appointments: ExistingAppointment[],
+  currentBookingID: string,
+): boolean {
+  const candidateID = normalizedCode(technicianID);
+  const candidateEnd =
+    startMin + (Number(durationMin) > 0 ? Number(durationMin) : 30);
+
+  return !appointments.some((appointment) => {
+    if (
+      currentBookingID &&
+      normalizedCode(appointment.bookingID) === normalizedCode(currentBookingID)
+    ) {
+      return false;
+    }
+    if (normalizedCode(appointment.status) === "CANCELLED") return false;
+
+    const windows = Array.isArray(appointment.techWindows)
+      ? appointment.techWindows
+      : [];
+    if (windows.length > 0) {
+      return windows.some((window) => {
+        if (normalizedCode(window.techID) !== candidateID) return false;
+        return (
+          startMin < Number(window.endMin) &&
+          Number(window.startMin) < candidateEnd
+        );
+      });
+    }
+
+    const appointmentTechIDs = (appointment.techIDs || [])
+      .map(normalizedCode)
+      .filter((techID) => techID && techID !== "0");
+    if (!appointmentTechIDs.includes(candidateID)) return false;
+
+    const appointmentStart = slotToMins(appointment.timeSlot || "");
+    if (appointmentStart < 0) return false;
+    const appointmentDuration =
+      Number(appointment.duration) > 0 ? Number(appointment.duration) : 30;
+    return (
+      startMin < appointmentStart + appointmentDuration &&
+      appointmentStart < candidateEnd
+    );
+  });
+}
+
 function calculateSlotAvailability({
   slot,
   categories,
+  workloads = [],
   selectedProviders,
   preferredTechID,
   branch,
   technicians,
+  services,
   appointments,
   currentBookingID,
   additionalRequirements = [],
 }: {
   slot: string;
   categories: string[];
+  workloads?: CategoryWorkload[];
   selectedProviders: GuestProvider[];
   preferredTechID: string;
   branch: string;
   technicians: Technician[];
+  services: ServiceItem[];
   appointments: ExistingAppointment[];
   currentBookingID: string;
   additionalRequirements?: AvailabilityRequirement[];
@@ -416,6 +505,7 @@ function calculateSlotAvailability({
   const requirementGroups = [
     {
       categories,
+      workloads,
       selectedProviders,
       preferredTechID,
     },
@@ -423,98 +513,222 @@ function calculateSlotAvailability({
       .filter((requirement) => slotToMins(requirement.timeSlot) === slotMinutes)
       .map((requirement) => ({
         categories: requirement.categories,
+        workloads: requirement.workloads || [],
         selectedProviders: requirement.selectedProviders,
         preferredTechID: requirement.preferredTechID,
       })),
   ];
-  const categoryRequirements = requirementGroups.flatMap((group) =>
-    [...new Set(group.categories.map(normalizedCode).filter(Boolean))].map(
-      (category) => ({
-        category,
-        selectedProviders: group.selectedProviders,
-        preferredTechID: group.preferredTechID,
-      }),
-    ),
-  );
+  const categoryRequirements = requirementGroups.flatMap((group) => {
+    const workloadMap = new Map(
+      group.workloads.map((workload) => [
+        normalizedCode(workload.category),
+        Number(workload.durationMin) > 0 ? Number(workload.durationMin) : 30,
+      ]),
+    );
+
+    return [
+      ...new Set(group.categories.map(normalizedCode).filter(Boolean)),
+    ].map((category) => ({
+      category,
+      durationMin: workloadMap.get(category) || 30,
+      selectedProviders: group.selectedProviders,
+      preferredTechID: group.preferredTechID,
+    }));
+  });
 
   // Before a service is selected there is no technician requirement to test.
   if (categoryRequirements.length === 0) return true;
 
-  const busyTechnicianIds = new Set<string>();
-  const unassignedBookingCategories: string[] = [];
+  const branchTechnicians = technicians.filter((technician) =>
+    isTechnicianInBranch(technician, branch),
+  );
+  const unassignedBookingRequirements: {
+    category: string;
+    durationMin: number;
+  }[] = [];
 
+  // An existing unassigned booking still consumes one technician. Use its
+  // server-provided unassigned duration when available rather than treating
+  // every such booking as an arbitrary one-cell block.
   appointments.forEach((appointment) => {
-    const busyTechs = busyTechIdsAt(appointment, slotMinutes, currentBookingID);
-    if (busyTechs.length === 0) return;
+    if (
+      currentBookingID &&
+      normalizedCode(appointment.bookingID) === normalizedCode(currentBookingID)
+    ) {
+      return;
+    }
+    if (normalizedCode(appointment.status) === "CANCELLED") return;
 
-    for (const tech of busyTechs) {
-      if (tech === "__UNASSIGNED__") {
-        const appointmentCategories = [
-          ...new Set(
-            (appointment.categoryCodes || []).map(normalizedCode).filter(Boolean),
-          ),
-        ];
-        if (appointmentCategories.length === 0) {
-          // The booking has no assignment information. Count it as one
-          // technician demand rather than incorrectly making every slot red.
-          unassignedBookingCategories.push("__UNKNOWN_BOOKING__");
-        } else {
-          // Without a selected provider, an existing booking consumes one
-          // technician who could otherwise be available for a service.
-          unassignedBookingCategories.push(...appointmentCategories);
-        }
-      } else {
-        busyTechnicianIds.add(tech);
-      }
+    const start = slotToMins(appointment.timeSlot || "");
+    if (start < 0) return;
+    const duration =
+      Number(appointment.unassignedDuration) > 0
+        ? Number(appointment.unassignedDuration)
+        : Number(appointment.duration) > 0
+          ? Number(appointment.duration)
+          : 30;
+    if (!(slotMinutes < start + duration && start < slotMinutes + 30)) return;
+
+    const appointmentCategories = [
+      ...new Set(
+        (appointment.categoryCodes || []).map(normalizedCode).filter(Boolean),
+      ),
+    ];
+    if (appointmentCategories.length === 0) {
+      unassignedBookingRequirements.push({
+        category: "__UNKNOWN_BOOKING__",
+        durationMin: duration,
+      });
+    } else {
+      // Without a selected provider, an existing booking consumes one
+      // technician for each distinct category represented by its services.
+      appointmentCategories.forEach((category) =>
+        unassignedBookingRequirements.push({
+          category,
+          durationMin: duration,
+        }),
+      );
     }
   });
 
-  const branchTechnicianIds = getBranchTechnicianIds(branch, technicians);
   const allRequirements = [
     ...categoryRequirements,
-    ...unassignedBookingCategories.map((category) => ({
-      category,
+    ...unassignedBookingRequirements.map((requirement) => ({
+      ...requirement,
       selectedProviders: [] as GuestProvider[],
       preferredTechID: "",
     })),
   ];
 
-  const possibleTechnicians = allRequirements.map(
-    ({
-      category,
-      selectedProviders: groupProviders,
-      preferredTechID: groupPreferredTechID,
-    }) => {
-      const assignedProvider = groupProviders.find(
-        (provider) => normalizedCode(provider.categoryCode) === category,
+  // If the same provider is explicitly assigned to more than one category,
+  // those services are sequential work for one person, not two parallel
+  // technician requirements. Combine that workload before matching.
+  const explicitRequirements = new Map<
+    string,
+    {
+      categories: string[];
+      durationMin: number;
+      assignedTechID: string;
+    }
+  >();
+  const flexibleRequirements: {
+    category: string;
+    durationMin: number;
+    selectedProviders: GuestProvider[];
+    preferredTechID: string;
+  }[] = [];
+
+  allRequirements.forEach((requirement) => {
+    const assignedProvider = requirement.selectedProviders.find(
+      (provider) =>
+        normalizedCode(provider.categoryCode) ===
+        normalizedCode(requirement.category),
+    );
+    const assignedTechID = resolveTechnicianId(
+      assignedProvider?.techID || requirement.preferredTechID,
+      technicians,
+    );
+
+    if (assignedTechID && !requirement.category.startsWith("__")) {
+      const key = normalizedCode(assignedTechID);
+      const current = explicitRequirements.get(key) || {
+        categories: [],
+        durationMin: 0,
+        assignedTechID,
+      };
+      if (!current.categories.includes(requirement.category)) {
+        current.categories.push(requirement.category);
+      }
+      current.durationMin += requirement.durationMin;
+      explicitRequirements.set(key, current);
+    } else {
+      flexibleRequirements.push({
+        category: requirement.category,
+        durationMin: requirement.durationMin,
+        selectedProviders: requirement.selectedProviders,
+        preferredTechID: requirement.preferredTechID,
+      });
+    }
+  });
+
+  const possibleTechnicians = [
+    ...[...explicitRequirements.values()].map((requirement) => {
+      const technician = branchTechnicians.find(
+        (candidate) =>
+          normalizedCode(candidate.UserId) ===
+          normalizedCode(requirement.assignedTechID),
+      );
+      const eligible = Boolean(
+        technician &&
+          requirement.categories.every((category) =>
+            technicianQualifiesForCategory(technician, category, services),
+          ),
+      );
+      return eligible &&
+        isTechnicianFreeForDuration(
+          requirement.assignedTechID,
+          slotMinutes,
+          requirement.durationMin,
+          appointments,
+          currentBookingID,
+        )
+        ? [normalizedCode(requirement.assignedTechID)]
+        : [];
+    }),
+    ...flexibleRequirements.map((requirement) => {
+      const assignedProvider = requirement.selectedProviders.find(
+        (provider) =>
+          normalizedCode(provider.categoryCode) ===
+          normalizedCode(requirement.category),
       );
       const assignedTechID = resolveTechnicianId(
-        assignedProvider?.techID || groupPreferredTechID,
+        assignedProvider?.techID || requirement.preferredTechID,
         technicians,
       );
-
       const candidates = assignedTechID
         ? [assignedTechID]
-        : branchTechnicianIds;
+        : branchTechnicians.map((technician) => technician.UserId);
 
       return [
         ...new Set(
           candidates
             .map(normalizedCode)
             .filter((techID) => techID && techID !== "0")
-            .filter((techID) => !busyTechnicianIds.has(techID)),
+            .filter((techID) => {
+              if (requirement.category.startsWith("__")) return true;
+              const technician = branchTechnicians.find(
+                (candidate) => normalizedCode(candidate.UserId) === techID,
+              );
+              return Boolean(
+                technician &&
+                  technicianQualifiesForCategory(
+                    technician,
+                    requirement.category,
+                    services,
+                  ),
+              );
+            })
+            .filter((techID) =>
+              isTechnicianFreeForDuration(
+                techID,
+                slotMinutes,
+                requirement.durationMin,
+                appointments,
+                currentBookingID,
+              ),
+            ),
         ),
       ];
-    },
-  );
+    }),
+  ];
 
   if (possibleTechnicians.some((candidates) => candidates.length === 0)) {
     return false;
   }
 
-  // A booking with two categories, for example Hair + Nail, needs two
-  // available technicians at the same time. Find a distinct technician for
-  // every category instead of incorrectly reusing one person twice.
+  // Independent category workloads (for example Hair + Nail assigned to
+  // different providers) need distinct technicians at the same time. Do not
+  // reuse one person for two parallel requirements.
   const ordered = possibleTechnicians
     .map((candidates) => ({ candidates }))
     .sort((a, b) => a.candidates.length - b.candidates.length);
@@ -637,6 +851,128 @@ function getCat1Label(services: ServiceItem[], cat1: string): string {
   return (
     services.find((s) => s.category1?.trim() === cat1)?.category1Label || cat1
   );
+}
+
+const QUALIFICATION_STOP_WORDS = new Set([
+  "AND",
+  "THE",
+  "WITH",
+  "CARE",
+  "SERVICES",
+  "SERVICE",
+  "TREATMENT",
+  "TREATMENTS",
+  "STYLING",
+  "PRODUCT",
+  "PRODUCTS",
+]);
+
+function qualificationWords(value: string): Set<string> {
+  return new Set(
+    String(value || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, " ")
+      .split(/\s+/)
+      .map((word) => word.replace(/S$/, ""))
+      .filter(
+        (word) =>
+          word.length >= 4 && !QUALIFICATION_STOP_WORDS.has(word),
+      ),
+  );
+}
+
+/**
+ * A technician's speciality rows pre-date the item-category tables, so some
+ * databases store a category code while others store the speciality label.
+ * Accept the exact code/label first, then a meaningful label-word match. The
+ * same rule is also enforced by the admin POST route; this is not a UI-only
+ * filter.
+ */
+function technicianQualifiesForCategory(
+  technician: Technician,
+  categoryCode: string,
+  services: ServiceItem[],
+): boolean {
+  const category = normalizedCode(categoryCode);
+  if (!category) return false;
+
+  const categoryLabel = normalizedCode(getCat1Label(services, categoryCode));
+  const qualifications = [
+    ...(technician.categoryCodes || []),
+    ...(technician.qualificationCodes || []),
+    ...(technician.qualificationNames || []),
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+  if (qualifications.length === 0) return false;
+
+  return qualifications.some((qualification) => {
+    const normalizedQualification = normalizedCode(qualification);
+    if (
+      normalizedQualification === category ||
+      normalizedQualification === categoryLabel
+    ) {
+      return true;
+    }
+
+    const categoryWords = qualificationWords(categoryLabel || category);
+    const qualificationWordSet = qualificationWords(qualification);
+    return [...categoryWords].some((word) => qualificationWordSet.has(word));
+  });
+}
+
+function getCategoryWorkloads(
+  services: ServiceItem[],
+  selectedServiceCodes: string[],
+): CategoryWorkload[] {
+  const byCategory = new Map<string, number>();
+
+  services
+    .filter((service) => selectedServiceCodes.includes(service.itemCode))
+    .forEach((service) => {
+      const category = service.category1?.trim();
+      if (!category) return;
+      const duration =
+        Number(service.durationMin) > 0 ? Number(service.durationMin) : 30;
+      byCategory.set(category, (byCategory.get(category) || 0) + duration);
+    });
+
+  return [...byCategory.entries()].map(([category, durationMin]) => ({
+    category,
+    durationMin,
+  }));
+}
+
+function getRescheduleCategoryWorkloads(
+  services: ServiceItem[],
+  booking: ExistingAppointment | null,
+  categories: string[],
+): CategoryWorkload[] {
+  const byCategory = new Map<string, number>();
+
+  (booking?.serviceSchedule || []).forEach((scheduledService) => {
+    const itemCode = scheduledService.itemCode?.trim();
+    const service = services.find((candidate) => candidate.itemCode === itemCode);
+    const category = service?.category1?.trim();
+    if (!service || !category) return;
+    const duration =
+      Number(service.durationMin) > 0 ? Number(service.durationMin) : 30;
+    byCategory.set(category, (byCategory.get(category) || 0) + duration);
+  });
+
+  const fallbackDuration =
+    categories.length === 1 && Number(booking?.duration) > 0
+      ? Number(booking?.duration)
+      : 30;
+  categories.forEach((category) => {
+    if (!byCategory.has(category)) byCategory.set(category, fallbackDuration);
+  });
+
+  return [...byCategory.entries()].map(([category, durationMin]) => ({
+    category,
+    durationMin,
+  }));
 }
 
 function getCat2Label(
@@ -3390,12 +3726,9 @@ function ProviderPicker({
   services: ServiceItem[];
 }) {
   if (!branch || categories.length === 0) return null;
-  const branchTechs = technicians.filter((t) => {
-    const locs = (t.WorkingLocID || "")
-      .split(",")
-      .map((s) => s.trim().toUpperCase());
-    return locs.includes(branch.trim().toUpperCase()) || locs.includes("ALL");
-  });
+  const branchTechs = technicians.filter((t) =>
+    isTechnicianInBranch(t, branch),
+  );
   function isSelected(techID: string, catCode: string) {
     return selectedProviders.some(
       (gp) => gp.techID === techID && gp.categoryCode === catCode,
@@ -3430,6 +3763,9 @@ function ProviderPicker({
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {categories.map((cat) => {
         const col = catColor(cat);
+        const qualifiedTechs = branchTechs.filter((tech) =>
+          technicianQualifiesForCategory(tech, cat, services),
+        );
         const assigned = selectedProviders.find(
           (gp) => gp.guessID === guessID && gp.categoryCode === cat,
         );
@@ -3471,7 +3807,7 @@ function ProviderPicker({
               )}
             </div>
             <div className="cat-row-body">
-              {branchTechs.length === 0 ? (
+              {qualifiedTechs.length === 0 ? (
                 <p
                   style={{
                     fontSize: 12,
@@ -3481,10 +3817,10 @@ function ProviderPicker({
                     textAlign: "center",
                   }}
                 >
-                  No technicians found for this branch
+                  No qualified technicians found for this branch and service category
                 </p>
               ) : (
-                branchTechs.map((tech) => {
+                qualifiedTechs.map((tech) => {
                   const sel = isSelected(tech.UserId, cat);
                   return (
                     <button
@@ -3676,6 +4012,21 @@ function WalkInPage() {
               UserId: t.UserId?.trim() || "",
               UserName: t.UserName?.trim() || "",
               WorkingLocID: t.WorkingLocID?.trim() || "0",
+              qualificationCodes: Array.isArray(t.qualificationCodes)
+                ? t.qualificationCodes.map((value: unknown) => String(value).trim())
+                : [],
+              qualificationNames: Array.isArray(t.qualificationNames)
+                ? t.qualificationNames.map((value: unknown) => String(value).trim())
+                : [],
+              categoryCodes: Array.isArray(t.categoryCodes)
+                ? t.categoryCodes.map((value: unknown) => String(value).trim())
+                : [],
+              enabled:
+                t.enabled !== false &&
+                t.Enable !== false &&
+                t.Enable !== 0 &&
+                t.Enable !== "0",
+              Enable: t.Enable,
             })),
           );
       })
@@ -3765,11 +4116,21 @@ function WalkInPage() {
       .then((j) => {
         if (j.success) {
           setServices(j.data);
-          if (j.data.length > 0 && !form.activeCategoryCode)
+
+          // Initialise the category for every client, not only the main
+          // client. Without this, an additional client created while the
+          // services request is still loading keeps an empty category.
+          const firstCategory = j.data[0]?.category1?.trim() || "";
+          if (firstCategory) {
             setForm((f) => ({
               ...f,
-              activeCategoryCode: j.data[0].category1?.trim() || "",
+              activeCategoryCode: f.activeCategoryCode || firstCategory,
+              subClients: f.subClients.map((sc) => ({
+                ...sc,
+                activeCategoryCode: sc.activeCategoryCode || firstCategory,
+              })),
             }));
+          }
         }
       })
       .catch(() => {})
@@ -3818,13 +4179,28 @@ function WalkInPage() {
         .filter(Boolean),
     ),
   ] as string[];
-  const rescheduleCategories =
-    rescheduleBooking?.categoryCodes?.filter(Boolean) || [];
+  const rescheduleCategories = [
+    ...new Set(
+      (rescheduleBooking?.categoryCodes || [])
+        .filter((category) =>
+          services.some((service) => service.category1?.trim() === category),
+        )
+        .filter(Boolean),
+    ),
+  ];
   const tabAvailabilityCategories = form.isReschedule
     ? rescheduleCategories.length > 0
       ? rescheduleCategories
       : ["__BOOKING__"]
     : tabServiceCategories;
+  const rescheduleWorkloads = getRescheduleCategoryWorkloads(
+    services,
+    rescheduleBooking,
+    rescheduleCategories,
+  );
+  const tabAvailabilityWorkloads = form.isReschedule
+    ? rescheduleWorkloads
+    : getCategoryWorkloads(services, tabSelSvcs);
   const tabSelectedProviders = isMain
     ? form.providers
     : (activeSub?.providers ?? []);
@@ -3842,6 +4218,9 @@ function WalkInPage() {
             )
             .map((service) => service.category1?.trim())
             .filter((category): category is string => Boolean(category)),
+      workloads: form.isReschedule
+        ? rescheduleWorkloads
+        : getCategoryWorkloads(services, form.selectedServices),
       selectedProviders: form.providers,
       preferredTechID: form.isReschedule ? "" : form.prefilledTechID,
     },
@@ -3854,6 +4233,7 @@ function WalkInPage() {
         )
         .map((service) => service.category1?.trim())
         .filter((category): category is string => Boolean(category)),
+      workloads: getCategoryWorkloads(services, subClient.selectedServices),
       selectedProviders: subClient.providers,
       preferredTechID: "",
     })),
@@ -3881,10 +4261,12 @@ function WalkInPage() {
         calculateSlotAvailability({
           slot,
           categories: tabAvailabilityCategories,
+          workloads: tabAvailabilityWorkloads,
           selectedProviders: tabSelectedProviders,
           preferredTechID: form.isReschedule ? "" : form.prefilledTechID,
           branch: form.branch,
           technicians,
+          services,
           appointments: existingAppointments,
           currentBookingID: form.isReschedule ? form.bookingID : "",
           additionalRequirements: additionalAvailabilityRequirements,
@@ -3893,6 +4275,7 @@ function WalkInPage() {
     ) as Record<string, boolean>;
   }, [
     tabAvailabilityCategories,
+    tabAvailabilityWorkloads,
     tabAvailabilityStatus,
     tabSelectedProviders,
     form.prefilledTechID,
@@ -3900,6 +4283,7 @@ function WalkInPage() {
     form.isReschedule,
     form.bookingID,
     technicians,
+    services,
     existingAppointments,
     additionalAvailabilityRequirements,
   ]);
@@ -3955,18 +4339,30 @@ function WalkInPage() {
     }));
   }
   function handleSubCat(id: string, key: keyof SubClient, val: string) {
-    const sc = form.subClients.find((x) => x.id === id);
-    if (!sc) return;
-    const updates: Partial<SubClient> = { [key]: val };
-    if (key === "activeCategoryCode") {
-      updates.activeSubCat2 = "";
-      updates.activeSubCat3 = "";
-      updates.activeSubCat4 = "";
-    } else if (key === "activeSubCat2") {
-      updates.activeSubCat3 = "";
-      updates.activeSubCat4 = "";
-    } else if (key === "activeSubCat3") updates.activeSubCat4 = "";
-    updateSub(id, { ...sc, ...updates });
+    // Use the latest state for every update. CategoryPanel intentionally
+    // clears child categories immediately after changing a parent category;
+    // rebuilding the whole sub-client from the render-time `sc` object would
+    // make the later update overwrite the parent's new value.
+    setForm((f) => {
+      const updates: Partial<SubClient> = { [key]: val };
+      if (key === "activeCategoryCode") {
+        updates.activeSubCat2 = "";
+        updates.activeSubCat3 = "";
+        updates.activeSubCat4 = "";
+      } else if (key === "activeSubCat2") {
+        updates.activeSubCat3 = "";
+        updates.activeSubCat4 = "";
+      } else if (key === "activeSubCat3") {
+        updates.activeSubCat4 = "";
+      }
+
+      return {
+        ...f,
+        subClients: f.subClients.map((sc) =>
+          sc.id === id ? { ...sc, ...updates } : sc,
+        ),
+      };
+    });
   }
 
   function handleTabToggleSvc(itemCode: string) {

@@ -1,15 +1,29 @@
+// src/app/api/bookings/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import {
+  clockToMinutes,
+  composeBookingRemarks,
+  decodeBookingSchedule,
+  minutesToClock,
+  stripBookingSchedule,
+  type BookingScheduleEntry,
+  type StoredBookingScheduleEntry,
+} from '@/lib/bookingSchedule';
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TYPES
 ─────────────────────────────────────────────────────────────────────────────── */
 interface BookingService {
-  name:     string;
-  price:    string;
-  duration: string;
+  name:          string;
+  price:         string;
+  duration:      string;
+  /** Optional legacy identifiers for clients that already use the master catalog. */
+  itemCode?:     string;
+  serviceItemID?: string;
 }
 
 interface BookingProvider {
@@ -29,9 +43,11 @@ interface BookingRequestBody {
   services:      BookingService[];
   providers:     BookingProvider[];
   categories?:   string | string[];
-  totalDuration: number;
-  totalPrice:    number;
-  notes?:        string;
+  totalDuration:   number;
+  totalPrice:      number;
+  notes?:          string;
+  /** Optional execution order/times selected by the public conflict modal. */
+  serviceSchedule?: BookingScheduleEntry[];
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -263,6 +279,480 @@ async function generateCusCode(): Promise<string> {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   LEGACY BOOKING BRIDGE
+   -----------------------------------------------------------------------------
+   The public page sends display values ("Colombo", service names and provider
+   names), while the appointment tables use branch/item/user codes. Resolve
+   those values here and write the header and details together. An unmatched
+   service/provider is rejected with a configuration error; display names are
+   never truncated into a legacy code.
+─────────────────────────────────────────────────────────────────────────────── */
+interface LegacyItem {
+  ItemCode: string;
+  ItemDes: string;
+  ItemPrintDes: string | null;
+}
+
+interface PreparedService {
+  serviceItemID: string;
+  itemPrice: number;
+  durationMin: number;
+}
+
+interface PreparedProvider extends BookingProvider {
+  techID: string;
+}
+
+interface LegacyCapacityRow {
+  BookingID: string;
+  StartMin: number;
+  TechID: string;
+  ServiceItemID: string;
+  Remarks: string | null;
+  DurationMin: number;
+  Qty: string | number | null;
+}
+
+interface ProviderWindow {
+  techID: string;
+  startMin: number;
+  endMin: number;
+}
+
+interface PreparedServiceScheduleEntry extends StoredBookingScheduleEntry {
+  techID: string;
+}
+
+class BookingConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BookingConfigurationError';
+  }
+}
+
+class ProviderCapacityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProviderCapacityError';
+  }
+}
+
+function toChar(value: unknown, length: number): string {
+  return String(value ?? '').substring(0, length).padEnd(length, ' ');
+}
+
+function normalizeLookup(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function parsePrice(value: unknown): number {
+  const parsed = Number(String(value ?? '').replace(/[^\d.-]/g, ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseDuration(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? '').replace(/[^\d-]/g, ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+}
+
+function slotToMinutes(timeValue: string): number {
+  const match = String(timeValue || '').trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return -1;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const period = match[3].toUpperCase();
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return -1;
+  if (period === 'AM' && hour === 12) hour = 0;
+  if (period === 'PM' && hour !== 12) hour += 12;
+  return hour * 60 + minute;
+}
+
+function hasOverlap(first: ProviderWindow, second: ProviderWindow): boolean {
+  return first.techID === second.techID &&
+    first.startMin < second.endMin &&
+    second.startMin < first.endMin;
+}
+
+function nextPublicGridStart(minutes: number): number {
+  return Math.ceil(minutes / 30) * 30;
+}
+
+function buildDefaultServiceSchedule(
+  services: Array<PreparedService & { techID: string }>,
+  startMin: number,
+): PreparedServiceScheduleEntry[] {
+  let cursor = startMin;
+
+  return services.map((service, serviceIndex) => {
+    const durationMin = parseDuration(service.durationMin);
+    const start = cursor;
+    const end = start + durationMin;
+    const nextTechID = services[serviceIndex + 1]?.techID?.trim() || '';
+
+    // A single technician moves directly into the next service. When the
+    // technician changes, the next service must begin on a public 30-minute
+    // slot; a 09:15 boundary is not a selectable slot.
+    cursor = serviceIndex < services.length - 1 && service.techID.trim() !== nextTechID
+      ? nextPublicGridStart(end)
+      : end;
+
+    return {
+      serviceIndex,
+      itemCode: service.serviceItemID.trim(),
+      techID: service.techID.trim(),
+      startMin: start,
+      endMin: end,
+    };
+  });
+}
+
+function normalizeServiceSchedule(
+  rawSchedule: unknown,
+  services: Array<PreparedService & { techID: string }>,
+  startMin: number,
+): PreparedServiceScheduleEntry[] {
+  const fallback = () => buildDefaultServiceSchedule(services, startMin);
+  if (!Array.isArray(rawSchedule) || rawSchedule.length !== services.length) {
+    return fallback();
+  }
+
+  const byIndex = new Map<number, BookingScheduleEntry>();
+  for (const rawEntry of rawSchedule) {
+    if (!rawEntry || typeof rawEntry !== 'object') return fallback();
+    const entry = rawEntry as Partial<BookingScheduleEntry>;
+    const serviceIndex = Number(entry.serviceIndex);
+    const entryStart = clockToMinutes(entry.startTime);
+    const entryEnd = clockToMinutes(entry.endTime);
+    if (
+      !Number.isInteger(serviceIndex) ||
+      serviceIndex < 0 ||
+      serviceIndex >= services.length ||
+      byIndex.has(serviceIndex) ||
+      entryStart < startMin ||
+      entryEnd <= entryStart
+    ) return fallback();
+
+    const expectedDuration = parseDuration(services[serviceIndex].durationMin);
+    if (entryEnd - entryStart !== expectedDuration) return fallback();
+    byIndex.set(serviceIndex, entry as BookingScheduleEntry);
+  }
+
+  if (byIndex.size !== services.length) return fallback();
+
+  /* Map insertion order is the execution order sent by the evaluator. Keep
+     it intact for persistence; callers that need an index lookup use
+     serviceIndex explicitly. */
+  return [...byIndex.entries()].map(([serviceIndex, entry]) => {
+    const service = services[serviceIndex];
+    return {
+      serviceIndex,
+      itemCode: service.serviceItemID.trim(),
+      techID: service.techID.trim(),
+      startMin: clockToMinutes(entry.startTime),
+      endMin: clockToMinutes(entry.endTime),
+    };
+  });
+}
+
+function publicProviderWindows(
+  services: Array<PreparedService & { techID: string }>,
+  startMin: number,
+  schedule?: PreparedServiceScheduleEntry[],
+): ProviderWindow[] {
+  const effectiveSchedule = schedule ?? buildDefaultServiceSchedule(services, startMin);
+  return services.flatMap((service, serviceIndex) => {
+    const techID = service.techID.trim();
+    if (!techID || techID === '0') return [];
+
+    const scheduled = effectiveSchedule.find((entry) => entry.serviceIndex === serviceIndex);
+    const duration = Math.max(30, service.durationMin || 30);
+    return [{
+      techID,
+      startMin: scheduled?.startMin ?? startMin,
+      endMin: (scheduled?.startMin ?? startMin) + duration,
+    }];
+  });
+}
+
+async function assertNoProviderCapacityConflict(
+  tx: Prisma.TransactionClient,
+  locCode: string,
+  date: string,
+  incoming: ProviderWindow[],
+  providerNames: Map<string, string>,
+): Promise<void> {
+  if (incoming.length === 0) return;
+
+  // Lock the branch row as well as the existing appointments. This keeps two
+  // simultaneous public no-confirmation requests from both passing an empty
+  // capacity check before either one inserts its booking.
+  await tx.$queryRaw`
+    SELECT LocCode
+    FROM tbl_locationmaster
+    WHERE RTRIM(LocCode) = ${locCode.trim()}
+    FOR UPDATE
+  `;
+
+  const rows = await tx.$queryRaw<LegacyCapacityRow[]>`
+    SELECT
+      RTRIM(h.BookingID) AS BookingID,
+      (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
+      RTRIM(d.TechID) AS TechID,
+      RTRIM(d.ServiceItemID) AS ServiceItemID,
+      h.Remarks AS Remarks,
+      COALESCE(NULLIF(i.DurationMin, 0), 30) AS DurationMin,
+      d.Qty AS Qty
+    FROM tbl_bookingheder h
+    JOIN tbl_bookingdetail d
+      ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
+    LEFT JOIN tbl_itemmaster i
+      ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
+     AND (RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
+       OR LEFT(RTRIM(i.ItemCode), 10) = RTRIM(d.ServiceItemID))
+    WHERE RTRIM(h.LocCode) = ${locCode.trim()}
+      AND DATE(h.BookingDate) = ${date}
+      AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL')
+    FOR UPDATE
+  `;
+
+  const existingByBookingAndProvider = new Map<string, ProviderWindow>();
+  const scheduledExistingWindows: ProviderWindow[] = [];
+  for (const row of rows) {
+    const techID = String(row.TechID || '').trim();
+    if (!techID || techID === '0') continue;
+
+    const bookingID = String(row.BookingID || '').trim();
+    const quantity = Number(row.Qty) > 0 ? Number(row.Qty) : 1;
+    const duration = Math.max(30, Number(row.DurationMin) || 30) * quantity;
+    const storedSchedule = decodeBookingSchedule(row.Remarks);
+    const scheduled = storedSchedule.find((entry) =>
+      entry.itemCode &&
+      normalizeLookup(entry.itemCode) === normalizeLookup(row.ServiceItemID),
+    );
+
+    if (scheduled) {
+      // Split and swapped public bookings carry the actual service start in
+      // Remarks. Keep each service as its own interval so a later service is
+      // not incorrectly moved back to the booking's overall start time.
+      scheduledExistingWindows.push({
+        techID,
+        startMin: scheduled.startMin,
+        endMin: scheduled.startMin + duration,
+      });
+      continue;
+    }
+
+    // Legacy rows without schedule metadata retain the original continuous
+    // per-booking/per-provider capacity behaviour.
+    const key = `${bookingID}|${techID}`;
+    const current = existingByBookingAndProvider.get(key);
+    const startMin = Number(row.StartMin) || 0;
+    if (current) {
+      current.endMin += duration;
+    } else {
+      existingByBookingAndProvider.set(key, {
+        techID,
+        startMin,
+        endMin: startMin + duration,
+      });
+    }
+  }
+
+  const existingWindows = [
+    ...existingByBookingAndProvider.values(),
+    ...scheduledExistingWindows,
+  ];
+
+  for (const incomingWindow of incoming) {
+    const conflict = existingWindows
+      .find((existingWindow) => hasOverlap(incomingWindow, existingWindow));
+    if (!conflict) continue;
+
+    const providerName = providerNames.get(incomingWindow.techID) || 'selected provider';
+    throw new ProviderCapacityError(
+      `${providerName} is already booked during the selected time. Please choose another provider or time.`,
+    );
+  }
+}
+
+function toBookingDateTime(dateValue: string, timeValue: string): string | null {
+  const dateMatch = String(dateValue || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const timeMatch = String(timeValue || '').trim().match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+  if (!dateMatch || !timeMatch) return null;
+
+  const year = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const day = Number(dateMatch[3]);
+  const calendarDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    calendarDate.getUTCFullYear() !== year ||
+    calendarDate.getUTCMonth() !== month - 1 ||
+    calendarDate.getUTCDate() !== day
+  ) return null;
+
+  let hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+  const period = timeMatch[3].toUpperCase();
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
+  if (period === 'AM' && hour === 12) hour = 0;
+  if (period === 'PM' && hour !== 12) hour += 12;
+
+  return `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]} ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`;
+}
+
+async function resolveLegacyBranch(location: string) {
+  const rows = await prisma.tbl_LocationMaster.findMany({
+    where: { Enable: true },
+    select: { LocCode: true, LocDes: true },
+  });
+  const wanted = normalizeLookup(location);
+  return rows.find((row) => {
+    const code = normalizeLookup(row.LocCode);
+    const description = normalizeLookup(row.LocDes);
+    return code === wanted || description === wanted ||
+      description.includes(wanted) || wanted.includes(description);
+  }) ?? null;
+}
+
+async function resolveLegacyServices(
+  services: BookingService[],
+  locCode: string,
+): Promise<PreparedService[]> {
+  const items = await prisma.tbl_ItemMaster.findMany({
+    where: { LocCode: locCode, ServiceItem: true, Enable: true },
+    select: {
+      ItemCode: true,
+      ItemDes: true,
+      ItemPrintDes: true,
+    },
+  }) as LegacyItem[];
+
+  const usedCodes = new Set<string>();
+
+  return services.map((service) => {
+    const requestedCode = String(service.itemCode || service.serviceItemID || '').trim();
+    const wantedName = normalizeLookup(service.name);
+    const item = items.find((candidate) => {
+      if (requestedCode && normalizeLookup(candidate.ItemCode) === normalizeLookup(requestedCode)) {
+        return true;
+      }
+      if (!wantedName) return false;
+      const candidateNames = [
+        normalizeLookup(candidate.ItemPrintDes),
+        normalizeLookup(candidate.ItemDes),
+      ].filter(Boolean);
+      return candidateNames.some((candidateName) =>
+        candidateName === wantedName ||
+        (candidateName.length >= 6 &&
+          (candidateName.startsWith(wantedName) || wantedName.startsWith(candidateName))),
+      );
+    });
+
+    if (!item) {
+      throw new BookingConfigurationError(
+        `Service "${service.name}" is not configured as a service item for the selected location.`,
+      );
+    }
+
+    const serviceItemID = item.ItemCode.trim();
+    if (!serviceItemID || serviceItemID.length > 10) {
+      throw new BookingConfigurationError(
+        `Service "${service.name}" has an invalid legacy item code for the selected location.`,
+      );
+    }
+    if (usedCodes.has(serviceItemID)) {
+      throw new BookingConfigurationError(
+        `Service "${service.name}" is selected more than once.`,
+      );
+    }
+    usedCodes.add(serviceItemID);
+
+    // Keep the public price in the booking detail. This change only moves the
+    // write path; pricing and duration policy remain outside its scope.
+    return {
+      serviceItemID,
+      itemPrice: parsePrice(service.price),
+      durationMin: parseDuration(service.duration),
+    };
+  });
+}
+
+async function resolveLegacyProviders(
+  providers: BookingProvider[],
+  locCode: string,
+): Promise<PreparedProvider[]> {
+  if (providers.length === 0) return [];
+
+  const users = await prisma.tbl_userdetails.findMany({
+    where: { Enable: true },
+    select: { UserId: true, UserName: true, WorkingLocID: true },
+  });
+  const belongsToBranch = (workingLocations: string): boolean => {
+    const locations = String(workingLocations || '')
+      .split(/[\s,]+/)
+      .map((value) => normalizeLookup(value))
+      .filter(Boolean);
+    return locations.length === 0 || locations.includes('0') || locations.includes(normalizeLookup(locCode));
+  };
+
+  return providers.map((provider) => {
+    const wanted = normalizeLookup(provider.name);
+    if (!wanted) {
+      throw new BookingConfigurationError('Every selected provider must have a configured name.');
+    }
+    const user = users.find((candidate) => {
+      const candidateName = normalizeLookup(candidate.UserName);
+      const nameMatches = candidateName === wanted ||
+        (candidateName.length >= 6 &&
+          (candidateName.startsWith(wanted) || wanted.startsWith(candidateName)));
+      return nameMatches && belongsToBranch(candidate.WorkingLocID);
+    });
+
+    if (!user || !user.UserId.trim() || user.UserId.trim().length > 10) {
+      throw new BookingConfigurationError(
+        `Provider "${provider.name}" is not configured for the selected location.`,
+      );
+    }
+    return { ...provider, techID: user.UserId.trim() };
+  });
+}
+
+async function resolveOnlineBookingTypeID(): Promise<string> {
+  try {
+    const types = await prisma.tbl_bookingtypes.findMany({
+      where: { Enabel: true },
+      select: { BooikingTypeID: true, BookingTypeDes: true },
+    });
+    const online = types.find((type) => normalizeLookup(type.BookingTypeDes).includes('online'));
+    return online?.BooikingTypeID?.trim() || 'BKT0000002';
+  } catch {
+    return 'BKT0000002';
+  }
+}
+
+async function generateBookingIDTx(
+  tx: Prisma.TransactionClient,
+  locCode: string,
+): Promise<string> {
+  const rows = await tx.$queryRaw<{ maxID: string | null }[]>`
+    SELECT MAX(RTRIM(BookingID)) AS maxID
+    FROM tbl_bookingheder
+    WHERE RTRIM(LocCode) = ${locCode.trim()}
+    FOR UPDATE
+  `;
+  const maxID = rows[0]?.maxID?.trim() || '';
+  const current = maxID.startsWith('BK') ? Number.parseInt(maxID.slice(2), 10) || 0 : 0;
+  return `BK${String(current + 1).padStart(7, '0')}`;
+}
+
+function isDuplicateKeyError(error: any): boolean {
+  const message = String(error?.message || '').toLowerCase();
+  return error?.code === 'P2002' ||
+    (error?.code === 'P2010' && (message.includes('1062') || message.includes('duplicate entry')));
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
    PAYLOAD VALIDATOR
 ─────────────────────────────────────────────────────────────────────────────── */
 function validateBookingBody(body: Partial<BookingRequestBody>): string | null {
@@ -302,7 +792,7 @@ function resolveCategories(raw: string | string[] | undefined): string {
 ─────────────────────────────────────────────────────────────────────────────── */
 function buildPlainText(data: {
   name:          string;
-  bookingId:     number;
+  bookingId:     string;
   mode:          string;
   location:      string;
   services:      BookingService[];
@@ -359,7 +849,7 @@ function buildConfirmedEmail(data: {
   name:          string;
   email:         string;
   phone:         string;
-  bookingId:     number;
+  bookingId:     string;
   location:      string;
   services:      BookingService[];
   providers:     BookingProvider[];
@@ -679,7 +1169,7 @@ function buildWithoutConfirmationEmail(data: {
   name:          string;
   email:         string;
   phone:         string;
-  bookingId:     number;
+  bookingId:     string;
   location:      string;
   services:      BookingService[];
   providers:     BookingProvider[];
@@ -965,7 +1455,7 @@ async function sendBookingEmail(
   subject:   string,
   html:      string,
   text:      string,
-  bookingId: number,
+  bookingId: string,
 ): Promise<void> {
   try {
     await transporter.sendMail({
@@ -1008,7 +1498,7 @@ export async function POST(req: NextRequest) {
     if (validationError) {
       return NextResponse.json(
         { success: false, message: validationError },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -1023,34 +1513,97 @@ export async function POST(req: NextRequest) {
       timeSlot,
       services,
       providers,
-      categories,
       totalDuration,
-      totalPrice,
       notes,
+      serviceSchedule,
     } = body as BookingRequestBody;
 
-    const resolvedGender     = resolveGender(gender);
-    const resolvedCategories = resolveCategories(categories);
+    const normalizedMode = String(mode || '').trim().toLowerCase();
+    const isWithoutConfirmation =
+      normalizedMode === 'without_confirmation' ||
+      normalizedMode === 'without confirmation' ||
+      normalizedMode === 'wo';
 
-    // ── 2. Upsert customer ────────────────────────────────────────────────────
+    // WC = with confirmation (the salon will call the customer).
+    // WO = without confirmation (the booking is accepted immediately).
+    const confirmationType = isWithoutConfirmation ? 'wo' : 'wc';
+    const legacyStatus = isWithoutConfirmation ? 'CONFIRMED' : 'PENDING';
+
+    // ── 2. Resolve public display values to legacy master values ──────────────
+    const branch = await resolveLegacyBranch(location);
+    if (!branch) {
+      return NextResponse.json(
+        { success: false, message: 'Selected location is not configured.' },
+        { status: 422 },
+      );
+    }
+
+    const resolvedServices = await resolveLegacyServices(
+      services,
+      branch.LocCode.trim(),
+    );
+    const resolvedProviders = await resolveLegacyProviders(
+      providers,
+      branch.LocCode.trim(),
+    );
+
+    // The public flow sends one provider per selected category. The legacy
+    // detail table stores one TechID per service row, so a single selected
+    // provider owns all service rows; otherwise service rows follow the
+    // provider order and use the last provider for any remaining rows.
+    const detailRows = resolvedServices.map((service, index) => ({
+      ...service,
+      techID: resolvedProviders.length === 0
+        ? '0'
+        : resolvedProviders.length === 1
+          ? resolvedProviders[0].techID
+          : resolvedProviders[Math.min(index, resolvedProviders.length - 1)].techID,
+    }));
+    const providerNames = new Map(
+      resolvedProviders.map((provider) => [provider.techID, provider.name]),
+    );
+
+    const bookingDateTime = toBookingDateTime(date, timeSlot);
+    if (!bookingDateTime) {
+      return NextResponse.json(
+        { success: false, message: 'A valid booking date and time are required.' },
+        { status: 400 },
+      );
+    }
+    const startMin = slotToMinutes(timeSlot);
+    if (startMin < 0) {
+      return NextResponse.json(
+        { success: false, message: 'A valid time slot is required.' },
+        { status: 400 },
+      );
+    }
+
+    const preparedServiceSchedule = normalizeServiceSchedule(
+      serviceSchedule,
+      detailRows,
+      startMin,
+    );
+
+    // ── 3. Upsert customer (existing public behaviour) ────────────────────────
     let customer = await prisma.tbl_CustomerMaster.findFirst({
       where: { CusEmail: email.trim().toLowerCase() },
     });
 
     if (!customer) {
       const placeholderHash = await bcrypt.hash(
-        `guest_${email}_${Date.now()}`, 10
+        `guest_${email}_${Date.now()}`,
+        10,
       );
       const cusCode = await generateCusCode();
 
       customer = await prisma.tbl_CustomerMaster.create({
         data: {
-          CusCode:  cusCode,
-          CusName:  name.trim(),
+          CusCode: cusCode,
+          CusName: name.trim(),
           CusEmail: email.trim().toLowerCase(),
-          RegTel:   phone.trim().slice(0, 15),
-          PSW:      placeholderHash,
-          Gender:   gender?.trim().slice(0, 50) ?? null,
+          RegTel: phone.trim().slice(0, 15),
+          PSW: placeholderHash,
+          Gender: gender?.trim().slice(0, 50) ?? null,
         },
       });
     } else {
@@ -1058,142 +1611,195 @@ export async function POST(req: NextRequest) {
         where: { CusCode: customer.CusCode },
         data: {
           CusName: name.trim(),
-          RegTel:  phone.trim().slice(0, 15),
-          Gender:  gender?.trim().slice(0, 50) || customer.Gender,
+          RegTel: phone.trim().slice(0, 15),
+          Gender: gender?.trim().slice(0, 50) || customer.Gender,
         },
       });
     }
 
-    // ── 3. Duplicate check ────────────────────────────────────────────────────
-    const requestedProviderNames = new Set(
-      providers.map(p => p.name.trim().toLowerCase())
+    const bookingTypeID = await resolveOnlineBookingTypeID();
+    const bookingRemarks = composeBookingRemarks(notes, preparedServiceSchedule);
+    let bookingID = '';
+    let detailRowCount = 0;
+
+    // ── 4. One atomic write to tbl_bookingheder + tbl_bookingdetail ───────────
+    // No public booking is created in the former public table anymore. Both legacy rows
+    // are committed or rolled back together, so the admin calendar sees the
+    // same booking the public customer flow created.
+    await prisma.$transaction(
+      async (tx) => {
+        // A WC request is intentionally allowed through: the salon will call
+        // the customer and resolve the slot manually. Only WO bookings claim
+        // capacity automatically and are rejected on overlap.
+        if (isWithoutConfirmation) {
+          await assertNoProviderCapacityConflict(
+            tx,
+            branch.LocCode.trim(),
+            date,
+            publicProviderWindows(detailRows, startMin, preparedServiceSchedule),
+            providerNames,
+          );
+        }
+
+        bookingID = await generateBookingIDTx(tx, branch.LocCode.trim());
+        const createdAt = new Date();
+        const publicActor = toChar('PUBLIC', 10);
+        const confirmed = isWithoutConfirmation ? 1 : 0;
+
+        await tx.$executeRaw`
+          INSERT INTO tbl_bookingheder (
+            LocCode,
+            BookingID,
+            CusCode,
+            BookingDate,
+            TxnDateTime,
+            BookingTypeID,
+            Status,
+            ConfirmationType,
+            AdvBookingPayMode,
+            AdvBookingAmount,
+            Remarks,
+            UserID,
+            CancelledDate,
+            CancelledBy,
+            Pax,
+            Confirmed,
+            ConfirmedBy,
+            ConfirmedDate,
+            CheckInTime,
+            BillingTime
+          ) VALUES (
+            ${toChar(branch.LocCode, 10)},
+            ${toChar(bookingID, 10)},
+            ${toChar(customer.CusCode, 10)},
+            ${bookingDateTime},
+            ${createdAt},
+            ${toChar(bookingTypeID, 10)},
+            ${toChar(legacyStatus, 10)},
+            ${toChar(confirmationType, 2)},
+            ${' '},
+            ${0},
+            ${bookingRemarks},
+            ${publicActor},
+            ${null},
+            ${' '},
+            ${1},
+            ${confirmed},
+            ${isWithoutConfirmation ? publicActor : ' '},
+            ${isWithoutConfirmation ? createdAt : null},
+            ${null},
+            ${null}
+          )
+        `;
+
+        detailRowCount = 0;
+        for (const service of detailRows) {
+          await tx.$executeRaw`
+            INSERT INTO tbl_bookingdetail (
+              LocCode,
+              BookingID,
+              GuessID,
+              ServiceItemID,
+              Qty,
+              ItemPrice,
+              TechID
+            ) VALUES (
+              ${toChar(branch.LocCode, 10)},
+              ${toChar(bookingID, 10)},
+              ${toChar('MAIN', 10)},
+              ${toChar(service.serviceItemID, 10)},
+              ${toChar('1', 10)},
+              ${service.itemPrice},
+              ${toChar(service.techID || '0', 10)}
+            )
+          `;
+          detailRowCount += 1;
+        }
+      },
+      { timeout: 15000 },
     );
 
-    const sameSlotBookings = await prisma.tbl_Bookings.findMany({
-      where: {
-        CusCode:     customer.CusCode,
-        BookingDate: date,
-        TimeSlot:    timeSlot,
-        Status:      { not: 'cancelled' },
-      },
-      select: { Providers: true, BookingId: true },
-    });
-
-    for (const existing of sameSlotBookings) {
-      let existingProviders: { name: string }[] = [];
-      try {
-        existingProviders = JSON.parse(existing.Providers || '[]');
-      } catch {
-        console.warn(
-          `[BOOKING_POST] Malformed Providers JSON on BookingId ${existing.BookingId}`
-        );
-        continue;
-      }
-
-      const hasConflict = existingProviders.some(ep =>
-        requestedProviderNames.has(ep.name.trim().toLowerCase())
-      );
-
-      if (hasConflict) {
-        return NextResponse.json(
-          {
-            success: false,
-            message: 'One or more of the selected providers is already booked at this time.',
-          },
-          { status: 409 }
-        );
-      }
-    }
-
-    // ── 4. Create booking ─────────────────────────────────────────────────────
-    const dbStatus = mode === 'without_confirmation'
-      ? 'without_confirmation'
-      : 'pending';
-
-    const booking = await prisma.tbl_Bookings.create({
-      data: {
-        CusCode:       customer.CusCode,
-        BookingMode:   mode === 'without_confirmation'
-                         ? 'without_confirmation'
-                         : 'confirmed',
-        Gender:        resolvedGender,
-        Location:      location,
-        Services:      JSON.stringify(services),
-        Categories:    resolvedCategories,
-        TotalDuration: totalDuration,
-        TotalPrice:    totalPrice,
-        Providers:     JSON.stringify(providers),
-        BookingDate:   date,
-        TimeSlot:      timeSlot,
-        SpecialNotes:  notes || null,
-        Status:        dbStatus,
-      },
-    });
-
-    // ── 5. Build shared payload ───────────────────────────────────────────────
+    // ── 5. Preserve the existing notification behaviour ───────────────────────
     const emailPayload = {
       name,
-      email:         email.trim().toLowerCase(),
-      phone:         phone.trim(),
-      bookingId:     booking.BookingId,
+      email: email.trim().toLowerCase(),
+      phone: phone.trim(),
+      bookingId: bookingID.trim(),
       location,
       services,
       providers,
       date,
       timeSlot,
       totalDuration: Number(totalDuration) || 0,
-      notes:         notes || null,
+      notes: notes || null,
     };
 
-    const plainText = buildPlainText({ ...emailPayload, mode });
-
-    // ── 5a. Email (fire and forget) ───────────────────────────────────────────
-    if (mode === 'without_confirmation') {
+    const plainText = buildPlainText({
+      ...emailPayload,
+      mode: isWithoutConfirmation ? 'without_confirmation' : 'confirmed',
+    });
+    if (isWithoutConfirmation) {
       const { subject, html } = buildWithoutConfirmationEmail(emailPayload);
-      sendBookingEmail(
-        emailPayload.email, subject, html, plainText, booking.BookingId
-      );
+      sendBookingEmail(emailPayload.email, subject, html, plainText, bookingID.trim());
     } else {
       const { subject, html } = buildConfirmedEmail(emailPayload);
-      sendBookingEmail(
-        emailPayload.email, subject, html, plainText, booking.BookingId
-      );
+      sendBookingEmail(emailPayload.email, subject, html, plainText, bookingID.trim());
     }
 
-    // ── 5b. SMS (fire and forget) ─────────────────────────────────────────────
     sendAppointmentSMS({
-      event:     'booked',
-      phone:     phone.trim(),
-      name:      name.trim(),
-      bookingId: `Ref #${booking.BookingId}`,
-      branch:    location,
+      event: 'booked',
+      phone: phone.trim(),
+      name: name.trim(),
+      bookingId: `Ref #${bookingID.trim()}`,
+      branch: location,
       date,
       timeSlot,
-    }).then(result => {
+    }).then((result) => {
       if (!result.success) {
-        console.error(
-          `[SMS_FAILED] BookingId=${booking.BookingId} error=${result.error}`
-        );
+        console.error(`[SMS_FAILED] BookingId=${bookingID.trim()} error=${result.error}`);
       }
-    }).catch(err => {
-      console.error('[SMS_UNHANDLED_ERROR]', err);
+    }).catch((error) => {
+      console.error('[SMS_UNHANDLED_ERROR]', error);
     });
 
-    // ── 6. Respond ────────────────────────────────────────────────────────────
     return NextResponse.json({
-      success:    true,
-      bookingId:  booking.BookingId,
+      success: true,
+      bookingId: bookingID.trim(),
       customerId: customer.CusCode,
-      message:    mode === 'without_confirmation'
+      confirmationType,
+      status: legacyStatus,
+      serviceRows: detailRowCount,
+      message: isWithoutConfirmation
         ? 'Booking registered without confirmation.'
         : 'Booking request received. We will call you shortly to confirm.',
     });
-
-  } catch (error) {
+  } catch (error: any) {
     console.error('[BOOKING_API_ERROR]', error);
+
+    if (error instanceof BookingConfigurationError) {
+      return NextResponse.json(
+        { success: false, message: error.message },
+        { status: 422 },
+      );
+    }
+
+    if (error instanceof ProviderCapacityError) {
+      return NextResponse.json(
+        { success: false, message: error.message },
+        { status: 409 },
+      );
+    }
+
+    if (isDuplicateKeyError(error)) {
+      return NextResponse.json(
+        { success: false, message: 'A booking conflict occurred. Please try submitting again.' },
+        { status: 409 },
+      );
+    }
+
     return NextResponse.json(
       { success: false, message: 'Internal server error. Please try again.' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -1224,10 +1830,72 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const bookings = await prisma.tbl_Bookings.findMany({
-      where:   { CusCode: customer.CusCode },
-      orderBy: { CreatedAt: 'desc' },
-      take:    10,
+    const headers = await prisma.tbl_bookingheder.findMany({
+      where: { CusCode: customer.CusCode },
+      orderBy: { BookingDate: 'desc' },
+      take: 10,
+    });
+
+    const detailGroups = await Promise.all(
+      headers.map((header) =>
+        prisma.tbl_bookingdetail.findMany({
+          where: {
+            LocCode: header.LocCode,
+            BookingID: header.BookingID,
+          },
+          orderBy: { ServiceItemID: 'asc' },
+        }),
+      ),
+    );
+
+    const bookings = headers.map((header, index) => {
+      const details = detailGroups[index];
+      const bookingDate = header.BookingDate;
+      const dateValue = bookingDate.toISOString().slice(0, 10);
+      const hour = bookingDate.getHours();
+      const minute = bookingDate.getMinutes();
+      const period = hour >= 12 ? 'PM' : 'AM';
+      const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+      const timeValue = `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
+      const serviceValue = details.map((detail) => ({
+        name: detail.ServiceItemID.trim(),
+        price: `LKR ${Number(detail.ItemPrice || 0).toLocaleString()}`,
+        duration: '',
+        category: '',
+      }));
+      const providerValue = details
+        .map((detail) => detail.TechID.trim())
+        .filter((techID) => techID && techID !== '0')
+        .filter((techID, providerIndex, all) => all.indexOf(techID) === providerIndex)
+        .map((name) => ({ name, role: '' }));
+      const serviceSchedule = decodeBookingSchedule(header.Remarks).map((entry) => ({
+        ...entry,
+        startTime: minutesToClock(entry.startMin),
+        endTime: minutesToClock(entry.endMin),
+      }));
+
+      return {
+        BookingId: header.BookingID.trim(),
+        CusCode: header.CusCode.trim(),
+        BookingMode: header.ConfirmationType.trim().toLowerCase() === 'wo'
+          ? 'without_confirmation'
+          : 'confirmed',
+        Gender: customer.Gender || '',
+        Location: header.LocCode.trim(),
+        Services: JSON.stringify(serviceValue),
+        Categories: '',
+        TotalDuration: 0,
+        TotalPrice: details.reduce((sum, detail) => sum + Number(detail.ItemPrice || 0), 0),
+        Providers: JSON.stringify(providerValue),
+        ServiceSchedule: serviceSchedule,
+        BookingDate: dateValue,
+        TimeSlot: timeValue,
+        SpecialNotes: stripBookingSchedule(header.Remarks) || null,
+        Status: header.Status.trim().toLowerCase(),
+        CreatedAt: header.TxnDateTime,
+        UpdatedAt: header.TxnDateTime,
+        ConfirmationType: header.ConfirmationType.trim(),
+      };
     });
 
     return NextResponse.json({ success: true, customer, bookings });

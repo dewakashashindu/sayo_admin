@@ -3588,11 +3588,13 @@ export default function ItemMasterPage() {
                           <input
                             className="frm-input"
                             type="number"
-                            value={current.durationMin}
+                            value={current.durationMin ?? 30}
                             onChange={(event) =>
                               updateItem(
                                 "durationMin",
-                                Number(event.target.value),
+                                event.target.value === ""
+                                  ? 30
+                                  : Number(event.target.value),
                               )
                             }
                             min={5}

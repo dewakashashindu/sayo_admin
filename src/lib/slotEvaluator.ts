@@ -16,6 +16,14 @@ export interface Provider {
   expertise: string[];
 }
 
+/** The persisted execution schedule for one selected service. */
+export interface ServiceScheduleEntry {
+  serviceIndex: number;
+  providerName: string;
+  startTime:    string;
+  endTime:      string;
+}
+
 export interface SwappedDetails {
   orderedServices: string[];
   reason:          string;
@@ -25,6 +33,7 @@ export interface SwappedDetails {
   gapMinutes:      number;
   nextFreeTime:    string;
   occupiedSlots:   string[];
+  schedule:        ServiceScheduleEntry[];
 }
 
 export interface SlotResult {
@@ -32,6 +41,8 @@ export interface SlotResult {
   isSequenceSwapped:        boolean;
   swappedDetails?:          SwappedDetails;
   recommendedOriginalTime?: string;
+  /** The service-by-service schedule when this result can be booked. */
+  serviceSchedule?:         ServiceScheduleEntry[];
   occupiedSlots:            string[];
   gapOnlyDetails?: {
     gapMinutes:    number;
@@ -39,6 +50,7 @@ export interface SlotResult {
     busyProvider:  string;
     busyService:   string;
     occupiedSlots: string[];
+    schedule:      ServiceScheduleEntry[];
   };
 }
 
@@ -97,9 +109,24 @@ export function parseDurationMins(duration: string): number {
    CHUNK HELPERS
 ───────────────────────────────────────────────────────────────────────────── */
 function occupiedChunks(startMinutes: number, durationMins: number): string[] {
+  if (durationMins <= 0) return [];
+
+  /*
+   * A service may end at (or start at) a non-30-minute boundary. Iterating
+   * from startMinutes and converting each value to a label drops values such
+   * as 09:15 because minutesToSlot(09:15) is intentionally null. Instead,
+   * walk the fixed 30-minute grid and include every cell whose interval
+   * intersects the real [start, end) service window.
+   */
   const chunks: string[] = [];
-  for (let t = startMinutes; t < startMinutes + durationMins; t += SLOT_INCREMENT) {
-    const label = minutesToSlot(t);
+  const endMinutes = startMinutes + durationMins;
+  const firstGridStart = Math.floor(startMinutes / SLOT_INCREMENT) * SLOT_INCREMENT;
+
+  for (let gridStart = firstGridStart; gridStart < endMinutes; gridStart += SLOT_INCREMENT) {
+    const gridEnd = gridStart + SLOT_INCREMENT;
+    if (gridStart >= endMinutes || gridEnd <= startMinutes) continue;
+
+    const label = minutesToSlot(gridStart);
     if (label) chunks.push(label);
   }
   return chunks;
@@ -118,6 +145,97 @@ function buildOccupiedSlots(
   return result;
 }
 
+function nextGridStart(minutes: number): number {
+  return Math.ceil(minutes / SLOT_INCREMENT) * SLOT_INCREMENT;
+}
+
+interface SequenceSegment {
+  serviceIndex: number;
+  providerName: string;
+  startMins:    number;
+  durationMins: number;
+}
+
+function scheduleFromSegments(segments: SequenceSegment[]): ServiceScheduleEntry[] {
+  return segments.map((segment) => ({
+    serviceIndex: segment.serviceIndex,
+    providerName: segment.providerName,
+    startTime:    minutesToDisplay(segment.startMins),
+    endTime:      minutesToDisplay(segment.startMins + segment.durationMins),
+  }));
+}
+
+/**
+ * Build the normal sequential schedule used when the customer books the
+ * original order (or chooses a recommended later slot).
+ *
+ * A single provider can move directly from one service into the next. When
+ * services use different providers, each next service must begin on a real
+ * 30-minute slot; a 09:15 boundary is therefore carried forward to 09:30.
+ */
+export function buildSequentialServiceSchedule(
+  startSlot: string,
+  providers: Provider[],
+  services: ServiceItem[],
+): ServiceScheduleEntry[] {
+  const startMins = slotToMinutes(startSlot);
+  if (startMins < 0 || providers.length === 0) return [];
+
+  let cursor = startMins;
+  return services.map((service, serviceIndex) => {
+    const provider = providers[Math.min(serviceIndex, providers.length - 1)];
+    const durationMins = parseDurationMins(service.duration);
+    const segment: ServiceScheduleEntry = {
+      serviceIndex,
+      providerName: provider?.name ?? '',
+      startTime: minutesToDisplay(cursor),
+      endTime: minutesToDisplay(cursor + durationMins),
+    };
+
+    const serviceEnd = cursor + durationMins;
+    cursor = providers.length === 1 ? serviceEnd : nextGridStart(serviceEnd);
+    return segment;
+  });
+}
+
+/**
+ * Build the legacy split-visit schedule. Each service starts at the selected
+ * anchor or at the second slot supplied by the modal when its provider is
+ * busy at the anchor. Services belonging to the same provider remain
+ * sequential instead of being placed on top of one another.
+ */
+export function buildSplitServiceSchedule(
+  firstSlot: string,
+  secondSlot: string,
+  providers: Provider[],
+  services: ServiceItem[],
+  providerSlots: Record<string, string[]>,
+): ServiceScheduleEntry[] {
+  const firstMins = slotToMinutes(firstSlot);
+  const secondMins = slotToMinutes(secondSlot);
+  if (firstMins < 0 || secondMins < 0 || providers.length === 0) return [];
+
+  const cursors = new Map<string, number>();
+  return services.map((service, serviceIndex) => {
+    const provider = providers[Math.min(serviceIndex, providers.length - 1)];
+    const providerName = provider?.name ?? '';
+    const preferredStart = (providerSlots[providerName] ?? []).includes(firstSlot)
+      ? secondMins
+      : firstMins;
+    const startMins = Math.max(preferredStart, cursors.get(providerName) ?? preferredStart);
+    const durationMins = parseDurationMins(service.duration);
+    const endMins = startMins + durationMins;
+    cursors.set(providerName, endMins);
+
+    return {
+      serviceIndex,
+      providerName,
+      startTime: minutesToDisplay(startMins),
+      endTime: minutesToDisplay(endMins),
+    };
+  });
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    PROVIDER AVAILABILITY
 ───────────────────────────────────────────────────────────────────────────── */
@@ -134,12 +252,13 @@ function isProviderFreeFor(
 
 function findNextFreeStart(
   providerName:  string,
-  fromMinutes:   number,
+  earliestStart: number,
   durationMins:  number,
   providerSlots: Record<string, string[]>,
 ): number | null {
+  /* Only return starts that actually exist in TIME_SLOTS. */
   for (
-    let t = fromMinutes + SLOT_INCREMENT;
+    let t = Math.max(SLOT_INCREMENT, nextGridStart(earliestStart));
     t <= LAST_SLOT_MINS;
     t += SLOT_INCREMENT
   ) {
@@ -175,10 +294,13 @@ function checkSequence(
     }
     const duration = parseDurationMins(svc.duration);
     if (!isProviderFreeFor(prov.name, cursor, duration, providerSlots)) {
-      const nextFreeAt = findNextFreeStart(prov.name, cursor, duration, providerSlots);
+      const nextFreeAt = findNextFreeStart(prov.name, cursor + 1, duration, providerSlots);
       return { ok: false, failIndex: i, failProvider: prov.name, failService: svc.name, nextFreeAt };
     }
-    cursor += duration;
+
+    const serviceEnd = cursor + duration;
+    /* A new provider can only start on one of the public 30-minute slots. */
+    cursor = i < services.length - 1 ? nextGridStart(serviceEnd) : serviceEnd;
   }
   return { ok: true };
 }
@@ -189,7 +311,9 @@ function checkSequence(
 interface GapResult {
   gapMinutes:   number;
   nextFreeTime: string;
-  segments:     Array<{ startMins: number; durationMins: number }>;
+  segments:     SequenceSegment[];
+  schedule:     ServiceScheduleEntry[];
+  complete:     boolean;
 }
 
 function calculateSequenceGap(
@@ -201,26 +325,35 @@ function calculateSequenceGap(
   let cursor             = baseMinutes;
   let totalGap           = 0;
   let secondServiceStart = baseMinutes;
-  const segments: Array<{ startMins: number; durationMins: number }> = [];
+  let complete            = true;
+  const segments: SequenceSegment[] = [];
 
   for (let i = 0; i < services.length; i++) {
     const duration   = parseDurationMins(services[i].duration);
     const serviceEnd = cursor + duration;
-    segments.push({ startMins: cursor, durationMins: duration });
+    segments.push({
+      serviceIndex: i,
+      providerName: providers[i]?.name ?? '',
+      startMins:    cursor,
+      durationMins: duration,
+    });
 
     if (i < services.length - 1) {
       const nextProvider = providers[i + 1];
       const nextDur      = parseDurationMins(services[i + 1].duration);
-      let earliestStart  = serviceEnd;
+      /* A service boundary that is not on the public grid moves to the next
+         real slot instead of becoming an uncheckable 09:15 start. */
+      let earliestStart  = nextGridStart(serviceEnd);
 
-      if (!isProviderFreeFor(nextProvider.name, serviceEnd, nextDur, providerSlots)) {
+      if (!isProviderFreeFor(nextProvider.name, earliestStart, nextDur, providerSlots)) {
         const found = findNextFreeStart(
           nextProvider.name,
-          serviceEnd - SLOT_INCREMENT,
+          earliestStart,
           nextDur,
           providerSlots,
         );
         if (found !== null) earliestStart = found;
+        else complete = false;
       }
 
       const gapHere = Math.max(0, earliestStart - serviceEnd);
@@ -236,6 +369,8 @@ function calculateSequenceGap(
     gapMinutes:   totalGap,
     nextFreeTime: minutesToDisplay(secondServiceStart),
     segments,
+    schedule:     scheduleFromSegments(segments),
+    complete,
   };
 }
 
@@ -261,6 +396,27 @@ function findRecommendedOriginalTime(
       providerSlots,
     );
     if (result.ok) return candidateSlot;
+  }
+  return undefined;
+}
+
+function findRecommendedSingleProviderTime(
+  fromSlot:      string,
+  providerName:   string,
+  durationMins:   number,
+  providerSlots: Record<string, string[]>,
+): string | undefined {
+  const fromIdx = TIME_SLOTS.indexOf(fromSlot as typeof TIME_SLOTS[number]);
+  if (fromIdx === -1) return undefined;
+
+  for (let i = fromIdx + 1; i < TIME_SLOTS.length; i++) {
+    const candidateSlot = TIME_SLOTS[i];
+    if (isProviderFreeFor(
+      providerName,
+      slotToMinutes(candidateSlot),
+      durationMins,
+      providerSlots,
+    )) return candidateSlot;
   }
   return undefined;
 }
@@ -352,6 +508,7 @@ function findWorkingPermutation(
       permServices,
       providerSlots,
     );
+    if (!gapResult.complete) continue;
     candidates.push({ perm, gapMinutes: gapResult.gapMinutes, gapResult });
   }
 
@@ -365,6 +522,10 @@ function findWorkingPermutation(
   const permProviders   = perm.map(i => providers[i]);
   const permServices    = perm.map(i => services[i]);
   const orderedServices = permServices.map(s => s.name);
+  const schedule        = gapResult.schedule.map((entry, position) => ({
+    ...entry,
+    serviceIndex: perm[position],
+  }));
   const occupiedSlots   = buildOccupiedSlots(gapResult.segments);
 
   const nextLabel =
@@ -385,6 +546,7 @@ function findWorkingPermutation(
     gapMinutes:    gapResult.gapMinutes,
     nextFreeTime:  gapResult.nextFreeTime,
     occupiedSlots,
+    schedule,
   };
 }
 
@@ -410,26 +572,64 @@ export function evaluateSlot(
     return { status: 'available', isSequenceSwapped: false, occupiedSlots: [] };
   }
 
+  const baseMins = slotToMinutes(slot);
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     ONE PROVIDER / MULTIPLE SERVICES
+     All services in one category are performed sequentially by the selected
+     provider. Do not reduce the service list to providers.length: that made a
+     second service disappear whenever one provider was selected.
+  ══════════════════════════════════════════════════════════════════════════ */
+  if (providers.length === 1) {
+    if (!providers[0]?.name) {
+      return { status: 'booked', isSequenceSwapped: false, occupiedSlots: [] };
+    }
+
+    const totalDuration = services.reduce(
+      (total, service) => total + parseDurationMins(service.duration),
+      0,
+    );
+    const free = isProviderFreeFor(
+      providers[0].name,
+      baseMins,
+      totalDuration,
+      providerSlots,
+    );
+    const serviceSchedule = buildSequentialServiceSchedule(slot, providers, services);
+
+    if (free) {
+      const slots = buildOccupiedSlots([
+        { startMins: baseMins, durationMins: totalDuration },
+      ]);
+      return {
+        status: 'available',
+        isSequenceSwapped: false,
+        serviceSchedule,
+        occupiedSlots: slots,
+      };
+    }
+
+    /* Keep a conflicted start visible as a partial result when a later public
+       slot can fit the full combined duration. This lets the existing
+       recommendation modal use the same real duration instead of silently
+       offering the first service only. */
+    const recommendedOriginalTime = findRecommendedSingleProviderTime(
+      slot,
+      providers[0].name,
+      totalDuration,
+      providerSlots,
+    );
+    return {
+      status: recommendedOriginalTime ? 'partial' : 'booked',
+      isSequenceSwapped: false,
+      recommendedOriginalTime,
+      occupiedSlots: [],
+    };
+  }
+
   const pairCount       = Math.min(providers.length, services.length);
   const pairedProviders = providers.slice(0, pairCount);
   const pairedServices  = services.slice(0, pairCount);
-  const baseMins        = slotToMinutes(slot);
-
-  /* ══════════════════════════════════════════════════════════════════════════
-     SINGLE SERVICE
-  ══════════════════════════════════════════════════════════════════════════ */
-  if (pairCount === 1) {
-    if (!pairedProviders[0]?.name) {
-      return { status: 'booked', isSequenceSwapped: false, occupiedSlots: [] };
-    }
-    const duration = parseDurationMins(pairedServices[0].duration);
-    const free     = isProviderFreeFor(pairedProviders[0].name, baseMins, duration, providerSlots);
-    if (free) {
-      const slots = buildOccupiedSlots([{ startMins: baseMins, durationMins: duration }]);
-      return { status: 'available', isSequenceSwapped: false, occupiedSlots: slots };
-    }
-    return { status: 'booked', isSequenceSwapped: false, occupiedSlots: [] };
-  }
 
   /* ══════════════════════════════════════════════════════════════════════════
      MULTI-SERVICE
@@ -439,9 +639,19 @@ export function evaluateSlot(
   const originalCheck = checkSequence(baseMins, pairedProviders, pairedServices, providerSlots);
 
   if (originalCheck.ok) {
-    const { segments } = calculateSequenceGap(baseMins, pairedProviders, pairedServices, providerSlots);
-    const slots = buildOccupiedSlots(segments);
-    return { status: 'available', isSequenceSwapped: false, occupiedSlots: slots };
+    const gapResult = calculateSequenceGap(
+      baseMins,
+      pairedProviders,
+      pairedServices,
+      providerSlots,
+    );
+    const slots = buildOccupiedSlots(gapResult.segments);
+    return {
+      status: 'available',
+      isSequenceSwapped: false,
+      serviceSchedule: gapResult.schedule,
+      occupiedSlots: slots,
+    };
   }
 
   /* Step 2: Try alternative permutations (R2 / R3) */
@@ -473,13 +683,14 @@ export function evaluateSlot(
         providerSlots,
       );
 
-      if (gapResult.gapMinutes > 0) {
+      if (gapResult.complete && gapResult.gapMinutes > 0) {
         gapOnlyDetails = {
           gapMinutes:    gapResult.gapMinutes,
           busyUntil:     minutesToDisplay(fail.nextFreeAt),
           busyProvider:  fail.failProvider,
           busyService:   fail.failService,
           occupiedSlots: buildOccupiedSlots(gapResult.segments),
+          schedule:      gapResult.schedule,
         };
       }
     }

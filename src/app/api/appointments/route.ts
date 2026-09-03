@@ -3,6 +3,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { sendAppointmentSMS } from "@/lib/sms";
+import {
+  composeBookingRemarks,
+  decodeBookingSchedule,
+  minutesToClock,
+  stripBookingSchedule,
+  type StoredBookingScheduleEntry,
+} from "@/lib/bookingSchedule";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +41,35 @@ class BookingConflictError extends Error {
     super(message);
     this.name = "BookingConflictError";
   }
+}
+
+class BookingNotFoundError extends Error {
+  constructor(message = "Booking not found") {
+    super(message);
+    this.name = "BookingNotFoundError";
+  }
+}
+
+class BookingValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BookingValidationError";
+  }
+}
+
+function technicianBelongsToBranch(
+  workingLocations: unknown,
+  locCode: string,
+): boolean {
+  const branch = trimValue(locCode).toUpperCase();
+  const locations = trimValue(workingLocations)
+    .split(/[\s,]+/)
+    .map((location) => location.trim().toUpperCase())
+    .filter(Boolean);
+
+  return Boolean(
+    branch && (locations.includes(branch) || locations.includes("ALL")),
+  );
 }
 
 /** Parse "HH:MM AM/PM" (or 24h "HH:MM") into minutes since midnight. */
@@ -157,6 +193,7 @@ function mapMode(raw: string): "pre_booked" | "without_confirmation" {
   const mode = trimValue(raw).toLowerCase();
 
   if (
+    mode === "wo" ||
     mode === "wi" ||
     mode === "walkin" ||
     mode === "walk-in" ||
@@ -165,6 +202,8 @@ function mapMode(raw: string): "pre_booked" | "without_confirmation" {
     return "without_confirmation";
   }
 
+  // Public bookings use WC for “with confirmation”. Keep all other legacy
+  // confirmation values on the existing pre-booked path.
   return "pre_booked";
 }
 
@@ -208,7 +247,7 @@ function appointmentTimeLabel(
 function extractNotes(remarks: string | null): string {
   if (!remarks) return "";
 
-  return remarks
+  return stripBookingSchedule(remarks)
     .replace(/Date:\d{4}-\d{2}-\d{2}/gi, "")
     .replace(/Time:[\d:]+\s*[AaPp][Mm]/gi, "")
     .trim();
@@ -263,6 +302,7 @@ interface RawItem {
   ItemCode: string;
   ItemDes: string;
   ItemPrintDes: string | null;
+  DurationMin: number | string | null;
   Category1: string | null;
   Category2: string | null;
   Category3: string | null;
@@ -273,6 +313,15 @@ interface RawTechnician {
   UserId: string;
   UserName: string;
   WorkingLocID: string | null;
+  qualificationCodes?: string[];
+  qualificationNames?: string[];
+  categoryCodes?: string[];
+}
+
+interface RawTechnicianQualification {
+  UserID: string;
+  SpecAreaID: string;
+  Specilities: string | null;
 }
 
 interface RawLocation {
@@ -298,37 +347,20 @@ interface RawSMSBooking {
   Remarks: string | null;
 }
 
-async function readHeaders(locCode?: string | null): Promise<RawHeader[]> {
-  if (locCode && locCode !== "ALL") {
-    return prisma.$queryRaw<RawHeader[]>`
-      SELECT
-        RTRIM(BookingID)        AS BookingID,
-        RTRIM(LocCode)          AS LocCode,
-        RTRIM(CusCode)          AS CusCode,
-        DATE_FORMAT(BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
-        TxnDateTime,
-        RTRIM(BookingTypeID)    AS BookingTypeID,
-        RTRIM(Status)           AS Status,
-        RTRIM(ConfirmationType) AS ConfirmationType,
-        RTRIM(AdvBookingPayMode) AS AdvBookingPayMode,
-        AdvBookingAmount,
-        Remarks,
-        RTRIM(UserID)           AS UserID,
-        CancelledDate,
-        RTRIM(CancelledBy)      AS CancelledBy,
-        Pax,
-        Confirmed,
-        RTRIM(ConfirmedBy)      AS ConfirmedBy,
-        ConfirmedDate,
-        CheckInTime,
-        BillingTime
-      FROM tbl_bookingheder
-      WHERE LocCode = ${locCode.trim()}
-      ORDER BY TxnDateTime DESC
-      LIMIT 500
-    `;
-  }
+async function readHeaders(
+  locCode?: string | null,
+  requestedDate?: string | null,
+): Promise<RawHeader[]> {
+  const hasLocationFilter = Boolean(locCode && locCode !== "ALL");
+  const hasDateFilter = Boolean(requestedDate);
+  const locationValue = locCode?.trim() || "";
+  const dateValue = requestedDate?.trim() || "";
+  const legacyDatePattern = `%Date:${dateValue}%`;
 
+  // Apply the optional date/branch predicates in SQL before LIMIT 500. The
+  // previous implementation limited the newest 500 headers first and only
+  // then filtered in JavaScript, which could hide an older appointment on the
+  // requested calendar date.
   return prisma.$queryRaw<RawHeader[]>`
     SELECT
       RTRIM(BookingID)        AS BookingID,
@@ -352,6 +384,16 @@ async function readHeaders(locCode?: string | null): Promise<RawHeader[]> {
       CheckInTime,
       BillingTime
     FROM tbl_bookingheder
+    WHERE
+      (${hasLocationFilter ? 1 : 0} = 0 OR RTRIM(LocCode) = ${locationValue})
+      AND (
+        ${hasDateFilter ? 1 : 0} = 0
+        OR DATE(BookingDate) = ${dateValue}
+        OR (
+          BookingDate IS NULL
+          AND Remarks LIKE ${legacyDatePattern}
+        )
+      )
     ORDER BY TxnDateTime DESC
     LIMIT 500
   `;
@@ -359,6 +401,109 @@ async function readHeaders(locCode?: string | null): Promise<RawHeader[]> {
 
 function quotedList(values: string[]): string {
   return values.map((value) => `'${value.replace(/'/g, "''")}'`).join(",");
+}
+
+interface ScheduleDetailPair {
+  detail: RawDetail;
+  entry: StoredBookingScheduleEntry;
+}
+
+function detailDuration(
+  detail: RawDetail,
+  itemDurationMap: Map<string, number>,
+): number {
+  const unitDuration =
+    itemDurationMap.get(trimValue(detail.ServiceItemID)) || 30;
+  const quantity = Number(detail.Qty) > 0 ? Number(detail.Qty) : 1;
+  return (Number(unitDuration) > 0 ? Number(unitDuration) : 30) * quantity;
+}
+
+/** Build a provider-aware schedule for legacy rows without saved metadata. */
+function buildFallbackSchedule(
+  details: RawDetail[],
+  itemDurationMap: Map<string, number>,
+  appointmentStartMin: number,
+): ScheduleDetailPair[] {
+  const cursors = new Map<string, number>();
+  const safeStart = appointmentStartMin >= 0 ? appointmentStartMin : 0;
+
+  return details.map((detail, serviceIndex) => {
+    const techID = trimValue(detail.TechID) || "0";
+    const providerKey = techID === "0" ? "__UNASSIGNED__" : techID;
+    const startHint = safeStart;
+    const startMin = Math.max(startHint, cursors.get(providerKey) ?? startHint);
+    const endMin = startMin + detailDuration(detail, itemDurationMap);
+    cursors.set(providerKey, endMin);
+
+    return {
+      detail,
+      entry: {
+        serviceIndex,
+        // Empty itemCode deliberately makes the detail index authoritative;
+        // the same service code may appear for more than one guest.
+        itemCode: "",
+        startMin,
+        endMin,
+      },
+    };
+  });
+}
+
+/**
+ * Use persisted service placement when it covers every detail row. If an old
+ * or malformed metadata line is incomplete, rebuild the whole booking from
+ * catalog durations instead of mixing two different timing models.
+ */
+function resolveSchedulePairs(
+  details: RawDetail[],
+  storedSchedule: StoredBookingScheduleEntry[],
+  itemDurationMap: Map<string, number>,
+  appointmentStartMin: number,
+): ScheduleDetailPair[] {
+  if (details.length === 0) return [];
+
+  const used = new Set<number>();
+  const pairs: ScheduleDetailPair[] = [];
+
+  details.forEach((detail, serviceIndex) => {
+    const code = trimValue(detail.ServiceItemID).toUpperCase();
+    const indexed = storedSchedule.findIndex(
+      (entry, entryIndex) =>
+        !used.has(entryIndex) &&
+        entry.serviceIndex === serviceIndex &&
+        (!entry.itemCode || entry.itemCode.trim().toUpperCase() === code),
+    );
+    const byCode =
+      indexed >= 0
+        ? indexed
+        : storedSchedule.findIndex(
+            (entry, entryIndex) =>
+              !used.has(entryIndex) &&
+              entry.itemCode &&
+              entry.itemCode.trim().toUpperCase() === code,
+          );
+    if (byCode < 0) return;
+
+    used.add(byCode);
+    const stored = storedSchedule[byCode];
+    const startMin = Number(stored.startMin);
+    if (!Number.isFinite(startMin)) return;
+    pairs.push({
+      detail,
+      entry: {
+        serviceIndex,
+        itemCode: "",
+        startMin,
+        // Catalog duration is authoritative even if an old metadata line has
+        // a stale end time.
+        endMin: startMin + detailDuration(detail, itemDurationMap),
+      },
+    });
+  });
+
+  return pairs.length === details.length
+    ? pairs
+    : buildFallbackSchedule(details, itemDurationMap, appointmentStartMin);
 }
 
 /* GET /api/appointments */
@@ -369,45 +514,93 @@ export async function GET(req: NextRequest) {
 
   if (searchParams.get("meta") === "filters") {
     try {
-      const [locations, categories, bookingTypes, technicians] =
-        await Promise.all([
-          prisma.$queryRaw<RawLocation[]>`
-            SELECT RTRIM(LocCode) AS LocCode, RTRIM(LocDes) AS LocDes
-            FROM tbl_locationmaster
-            WHERE Enable = 1
-            ORDER BY LocDes
-          `,
-          prisma.$queryRaw<RawCategory[]>`
-            SELECT RTRIM(CatCode) AS CatCode, RTRIM(CatDes) AS CatDes
-            FROM tbl_itemcategory1
-            WHERE Enable = 1
-            ORDER BY CatDes
-          `,
-          prisma.$queryRaw<RawBookingType[]>`
-            SELECT
-              RTRIM(BooikingTypeID) AS BooikingTypeID,
-              RTRIM(BookingTypeDes) AS BookingTypeDes
-            FROM tbl_bookingtypes
-            WHERE Enabel = 1
-            ORDER BY BookingTypeDes
-          `,
-          prisma.$queryRaw<RawTechnician[]>`
-            SELECT
-              RTRIM(UserId) AS UserId,
-              RTRIM(UserName) AS UserName,
-              RTRIM(WorkingLocID) AS WorkingLocID
-            FROM tbl_userdetails
-            WHERE Enable = 1
-            ORDER BY UserName
-          `,
-        ]);
+      const [
+        locations,
+        categories,
+        bookingTypes,
+        technicians,
+        technicianQualifications,
+      ] = await Promise.all([
+        prisma.$queryRaw<RawLocation[]>`
+          SELECT RTRIM(LocCode) AS LocCode, RTRIM(LocDes) AS LocDes
+          FROM tbl_locationmaster
+          WHERE Enable = 1
+          ORDER BY LocDes
+        `,
+        prisma.$queryRaw<RawCategory[]>`
+          SELECT RTRIM(CatCode) AS CatCode, RTRIM(CatDes) AS CatDes
+          FROM tbl_itemcategory1
+          WHERE Enable = 1
+          ORDER BY CatDes
+        `,
+        prisma.$queryRaw<RawBookingType[]>`
+          SELECT
+            RTRIM(BooikingTypeID) AS BooikingTypeID,
+            RTRIM(BookingTypeDes) AS BookingTypeDes
+          FROM tbl_bookingtypes
+          WHERE Enabel = 1
+          ORDER BY BookingTypeDes
+        `,
+        prisma.$queryRaw<RawTechnician[]>`
+          SELECT
+            RTRIM(UserId) AS UserId,
+            RTRIM(UserName) AS UserName,
+            RTRIM(WorkingLocID) AS WorkingLocID
+          FROM tbl_userdetails
+          WHERE Enable = 1
+          ORDER BY UserName
+        `,
+        prisma.$queryRaw<RawTechnicianQualification[]>`
+          SELECT
+            RTRIM(a.UserID) AS UserID,
+            RTRIM(a.SpecAreaID) AS SpecAreaID,
+            RTRIM(s.Specilities) AS Specilities
+          FROM tbl_technicianspecilityassignment a
+          LEFT JOIN tbl_technicianspecilities s
+            ON RTRIM(s.SpecAreaID) = RTRIM(a.SpecAreaID)
+        `,
+      ]);
+
+      const qualificationsByUser = new Map<
+        string,
+        { codes: string[]; names: string[] }
+      >();
+      technicianQualifications.forEach((qualification) => {
+        const userID = trimValue(qualification.UserID);
+        if (!userID) return;
+        const current = qualificationsByUser.get(userID) || {
+          codes: [],
+          names: [],
+        };
+        const code = trimValue(qualification.SpecAreaID);
+        const name = trimValue(qualification.Specilities);
+        if (code && !current.codes.includes(code)) current.codes.push(code);
+        if (name && !current.names.includes(name)) current.names.push(name);
+        qualificationsByUser.set(userID, current);
+      });
+
+      const enrichedTechnicians = technicians.map((technician) => {
+        const userID = trimValue(technician.UserId);
+        const qualifications = qualificationsByUser.get(userID) || {
+          codes: [],
+          names: [],
+        };
+        return {
+          ...technician,
+          qualificationCodes: qualifications.codes,
+          qualificationNames: qualifications.names,
+          // Keep this alias for consumers that already call the values
+          // category codes while the legacy table calls them SpecAreaIDs.
+          categoryCodes: qualifications.codes,
+        };
+      });
 
       return NextResponse.json({
         success: true,
         locations,
         categories,
         bookingTypes,
-        technicians,
+        technicians: enrichedTechnicians,
       });
     } catch (err: any) {
       console.error("[GET /api/appointments?meta=filters]", err);
@@ -419,7 +612,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const headers = await readHeaders(locCode);
+    const headers = await readHeaders(locCode, requestedDate);
 
     // BookingDate is now the source of truth. The Remarks fallback keeps old
     // rows created before BookingDate was added visible on the calendar.
@@ -485,6 +678,7 @@ export async function GET(req: NextRequest) {
           RTRIM(ItemCode)     AS ItemCode,
           RTRIM(ItemDes)      AS ItemDes,
           RTRIM(ItemPrintDes) AS ItemPrintDes,
+          COALESCE(NULLIF(DurationMin, 0), 30) AS DurationMin,
           RTRIM(Category1)    AS Category1,
           RTRIM(Category2)    AS Category2,
           RTRIM(Category3)    AS Category3,
@@ -529,7 +723,9 @@ export async function GET(req: NextRequest) {
     );
 
     const itemCategoryMap = new Map<string, string[]>();
+    const itemDurationMap = new Map<string, number>();
     items.forEach((item) => {
+      const itemCode = trimValue(item.ItemCode);
       const codes = [
         item.Category1,
         item.Category2,
@@ -538,7 +734,11 @@ export async function GET(req: NextRequest) {
       ]
         .map((code) => trimValue(code))
         .filter(Boolean);
-      itemCategoryMap.set(trimValue(item.ItemCode), codes);
+      itemCategoryMap.set(itemCode, codes);
+      itemDurationMap.set(
+        itemCode,
+        Number(item.DurationMin) > 0 ? Number(item.DurationMin) : 30,
+      );
     });
 
     const technicianMap = new Map<string, string>();
@@ -563,7 +763,7 @@ export async function GET(req: NextRequest) {
       const customer = customerMap.get(trimValue(header.CusCode));
       const bookingDetails = detailMap.get(`${branchCode}|${bookingID}`) ?? [];
 
-      const serviceNames = [
+      const originalServiceNames = [
         ...new Set(
           bookingDetails.map(
             (detail) =>
@@ -613,6 +813,92 @@ export async function GET(req: NextRequest) {
         header.Remarks,
       );
 
+      const storedSchedule = decodeBookingSchedule(header.Remarks);
+      const appointmentStartMin = slotToMinutes(appointmentTime);
+      const schedulePairs = resolveSchedulePairs(
+        bookingDetails,
+        storedSchedule,
+        itemDurationMap,
+        appointmentStartMin,
+      );
+      const orderedPairs = [...schedulePairs].sort(
+        (a, b) =>
+          a.entry.startMin - b.entry.startMin ||
+          a.entry.serviceIndex - b.entry.serviceIndex,
+      );
+      const serviceSchedule = orderedPairs.map(({ detail, entry }) => {
+        const itemCode = trimValue(detail.ServiceItemID);
+        const detailTechID = trimValue(detail.TechID);
+        return {
+          serviceIndex: entry.serviceIndex,
+          itemCode,
+          serviceName: itemMap.get(itemCode) || itemCode,
+          providerName:
+            detailTechID !== "0"
+              ? technicianMap.get(detailTechID) || detailTechID
+              : "Unassigned",
+          startTime: minutesToClock(entry.startMin),
+          endTime: minutesToClock(entry.endMin),
+        };
+      });
+
+      // Keep each provider's real occupied window independent. Parallel
+      // technicians therefore do not inflate the appointment's elapsed time.
+      const windowsByProvider = new Map<
+        string,
+        { startMin: number; endMin: number }[]
+      >();
+      let unassignedDuration = 0;
+      schedulePairs.forEach(({ detail, entry }) => {
+        const detailTechID = trimValue(detail.TechID);
+        const duration = entry.endMin - entry.startMin;
+        if (detailTechID === "0" || !detailTechID) {
+          unassignedDuration += duration;
+          return;
+        }
+        const windows = windowsByProvider.get(detailTechID) || [];
+        windows.push({ startMin: entry.startMin, endMin: entry.endMin });
+        windowsByProvider.set(detailTechID, windows);
+      });
+
+      const techWindows = [...windowsByProvider.entries()].flatMap(
+        ([techID, windows]) => {
+          const merged: { startMin: number; endMin: number }[] = [];
+          windows
+            .sort((a, b) => a.startMin - b.startMin)
+            .forEach((window) => {
+              const previous = merged[merged.length - 1];
+              if (previous && window.startMin <= previous.endMin) {
+                previous.endMin = Math.max(previous.endMin, window.endMin);
+              } else {
+                merged.push({ ...window });
+              }
+            });
+          return merged.map((window) => ({ techID, ...window }));
+        },
+      );
+
+      const scheduleStart = schedulePairs.length
+        ? Math.min(
+            ...schedulePairs.map((pair) => pair.entry.startMin),
+            appointmentStartMin >= 0 ? appointmentStartMin : Infinity,
+          )
+        : appointmentStartMin;
+      const scheduleEnd = schedulePairs.length
+        ? Math.max(...schedulePairs.map((pair) => pair.entry.endMin))
+        : scheduleStart;
+      const totalDuration =
+        scheduleStart >= 0 && scheduleEnd >= scheduleStart
+          ? scheduleEnd - scheduleStart
+          : 0;
+      const orderedServiceNames = serviceSchedule.length > 0
+        ? serviceSchedule.map((service) => service.serviceName)
+        : originalServiceNames;
+      const firstScheduledDetail = orderedPairs[0]?.detail;
+      const displayTechID = trimValue(firstScheduledDetail?.TechID) || techID;
+      const displayProviderName =
+        serviceSchedule[0]?.providerName || providerName;
+
       return {
         id: bookingID,
         bookingID,
@@ -622,10 +908,13 @@ export async function GET(req: NextRequest) {
         clientPhone: trimValue(customer?.RegTel),
         clientEmail: trimValue(customer?.CusEmail),
         gender: trimValue(customer?.Gender),
-        providerName,
-        techID,
-        serviceName: serviceNames.join(", ") || "Service",
-        serviceNames,
+        providerName: displayProviderName,
+        techID: displayTechID,
+        serviceName: orderedServiceNames.join(", ") || "Service",
+        serviceNames: orderedServiceNames,
+        serviceSchedule,
+        techWindows,
+        unassignedDuration,
         date: appointmentDate,
         bookingDate: appointmentDate,
         timeSlot: appointmentTime,
@@ -635,7 +924,7 @@ export async function GET(req: NextRequest) {
         categoryCodes,
         techIDs,
         location: branchCode,
-        duration: Math.max(30, 30 * bookingDetails.length),
+        duration: totalDuration,
         price: totalPrice,
         notes: extractNotes(header.Remarks),
         guests,
@@ -678,206 +967,471 @@ export async function PATCH(req: NextRequest) {
     }
 
     const actor = toChar(body.userID || body.updatedBy || "ADMIN", 10);
-    const status = body.status ? mapStatusToDb(body.status) : null;
-    const hasScheduleChange = Boolean(body.date || body.timeSlot);
+    const status =
+      body.status !== undefined &&
+      body.status !== null &&
+      trimValue(body.status)
+        ? mapStatusToDb(body.status)
+        : null;
+    const hasScheduleChange = Boolean(
+      trimValue(body.date) || trimValue(body.timeSlot),
+    );
+    const hasTechID =
+      body.techID !== undefined && body.techID !== null &&
+      trimValue(body.techID) !== "";
+    const hasProviderName =
+      body.providerName !== undefined && body.providerName !== null &&
+      trimValue(body.providerName) !== "";
+    const hasTechnicianChange = hasTechID || hasProviderName;
+    const requestedTechnicianValue = hasTechID
+      ? body.techID
+      : hasProviderName
+        ? body.providerName
+        : undefined;
+
     let previousDate: string | null = null;
     let previousTimeSlot: string | null = null;
     let rescheduledDate: string | null = null;
     let rescheduledTimeSlot: string | null = null;
 
-    if (status) {
-      if (status === "CONFIRMED") {
-        await prisma.$executeRaw`
-          UPDATE tbl_bookingheder
-          SET
-            Status = ${toChar(status, 10)},
-            Confirmed = 1,
-            ConfirmedBy = ${actor},
-            ConfirmedDate = NOW()
-          WHERE BookingID = ${bookingID}
-            AND LocCode = ${locCode}
-        `;
-      } else if (status === "CANCELLED") {
-        await prisma.$executeRaw`
-          UPDATE tbl_bookingheder
-          SET
-            Status = ${toChar(status, 10)},
-            CancelledDate = NOW(),
-            CancelledBy = ${actor}
-          WHERE BookingID = ${bookingID}
-            AND LocCode = ${locCode}
-        `;
-      } else if (status === "ONGOING") {
-        await prisma.$executeRaw`
-          UPDATE tbl_bookingheder
-          SET
-            Status = ${toChar(status, 10)},
-            CheckInTime = NOW()
-          WHERE BookingID = ${bookingID}
-            AND LocCode = ${locCode}
-        `;
-      } else {
-        await prisma.$executeRaw`
-          UPDATE tbl_bookingheder
-          SET Status = ${toChar(status, 10)}
-          WHERE BookingID = ${bookingID}
-            AND LocCode = ${locCode}
-        `;
-      }
-    }
-
-    if (hasScheduleChange) {
-      const rows = await prisma.$queryRaw<
-        { Remarks: string | null; BookingDate: Date | string | null }[]
+    // All reads that determine the candidate schedule, the conflict check, and
+    // the eventual header/detail/status writes live in one transaction. In
+    // particular, do not update Status before a reschedule conflict is known to
+    // be clear: a failed reschedule must leave the whole booking untouched.
+    await prisma.$transaction(async (tx) => {
+      const headerRows = await tx.$queryRaw<
+        {
+          Remarks: string | null;
+          BookingDate: Date | string | null;
+          Status: string | null;
+        }[]
       >`
         SELECT
           Remarks,
-          DATE_FORMAT(BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate
+          DATE_FORMAT(BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
+          RTRIM(Status) AS Status
         FROM tbl_bookingheder
-        WHERE BookingID = ${bookingID}
-          AND LocCode = ${locCode}
+        WHERE RTRIM(BookingID) = ${bookingID}
+          AND RTRIM(LocCode) = ${locCode}
         LIMIT 1
+        FOR UPDATE
       `;
 
-      if (!rows[0]) {
-        return NextResponse.json(
-          { success: false, error: "Booking not found" },
-          { status: 404 },
-        );
-      }
+      if (!headerRows[0]) throw new BookingNotFoundError();
 
-      const currentRemarks = rows[0].Remarks || "";
+      const currentRemarks = headerRows[0].Remarks || "";
       const currentDate =
-        dateOnly(rows[0].BookingDate) || extractDateFromRemarks(currentRemarks);
+        dateOnly(headerRows[0].BookingDate) ||
+        extractDateFromRemarks(currentRemarks);
       const currentTime = appointmentTimeLabel(
-        rows[0].BookingDate,
+        headerRows[0].BookingDate,
         currentRemarks,
       );
-      previousDate = currentDate;
-      previousTimeSlot = currentTime;
+      const currentStatus = trimValue(headerRows[0].Status).toUpperCase();
+      const storedSchedule = decodeBookingSchedule(currentRemarks);
+      const oldStartMin = slotToMinutes(currentTime);
+
+      if (hasScheduleChange) {
+        previousDate = currentDate;
+        previousTimeSlot = currentTime;
+      }
 
       const newDate = trimValue(body.date) || currentDate || "";
       const newTime = trimValue(body.timeSlot) || currentTime;
-      const bookingDateTime = toBookingDateTime(newDate, newTime);
-      const notes = extractNotes(currentRemarks);
-      const newRemarks = notes.substring(0, 500) || " ";
+      const newStartMin = slotToMinutes(newTime);
+      const bookingDateTime = hasScheduleChange
+        ? toBookingDateTime(newDate, newTime)
+        : null;
 
-      if (!bookingDateTime) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "A valid booking date and time are required",
-          },
-          { status: 422 },
+      if (hasScheduleChange && !bookingDateTime) {
+        throw new BookingValidationError(
+          "A valid booking date and time are required",
         );
       }
 
-      rescheduledDate = newDate;
-      rescheduledTimeSlot = newTime;
-
-      // ── Server-side conflict guard (race-safe) ────────────────────────────
-      // Rescheduling must not move a booking onto a technician's already
-      // booked slot. The target date's headers are locked with FOR UPDATE and
-      // overlaps are re-checked inside the SAME transaction that updates the
-      // row, so concurrent reschedules serialize instead of racing.
-      const selfDetailRows = await prisma.$queryRaw<{ TechID: string }[]>`
-        SELECT RTRIM(TechID) AS TechID
-        FROM tbl_bookingdetail
-        WHERE RTRIM(BookingID) = ${bookingID}
-          AND RTRIM(LocCode) = ${locCode}
-      `;
-
-      const selfTechCounts = new Map<string, number>();
-      for (const row of selfDetailRows) {
-        const tech = trimValue(row.TechID);
-        if (!tech || tech === "0") continue;
-        selfTechCounts.set(tech, (selfTechCounts.get(tech) || 0) + 1);
+      if (hasScheduleChange) {
+        rescheduledDate = newDate;
+        rescheduledTimeSlot = newTime;
       }
 
-      const newStartMin = slotToMinutes(newTime);
+      // Resolve a calendar display name to the canonical UserId before it is
+      // used for the conflict check or written to tbl_bookingdetail. The
+      // explicit "0" / "Unassigned" path keeps the existing unassigned admin
+      // booking flow intact.
+      let targetTechID: string | null = null;
+      if (hasTechnicianChange) {
+        const requestedTechID = trimValue(requestedTechnicianValue);
+        const isUnassigned =
+          !requestedTechID ||
+          requestedTechID === "0" ||
+          requestedTechID.toUpperCase() === "UNASSIGNED";
 
-      if (selfTechCounts.size > 0 && newStartMin >= 0) {
-        await prisma.$transaction(async (tx) => {
-          const lockRows = await tx.$queryRaw<
-            { BookingID: string; StartMin: number; TechID: string }[]
+        if (isUnassigned) {
+          targetTechID = "0";
+        } else {
+          const technicianRows = await tx.$queryRaw<
+            {
+              UserId: string;
+              UserName: string;
+              WorkingLocID: string | null;
+            }[]
           >`
             SELECT
-              h.BookingID,
-              (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
-              RTRIM(d.TechID) AS TechID
-            FROM tbl_bookingheder h
-            JOIN tbl_bookingdetail d
-              ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
-            WHERE RTRIM(h.LocCode) = ${locCode.trim()}
-              AND DATE(h.BookingDate) = ${newDate}
-              AND RTRIM(h.Status) <> 'CANCELLED'
-              AND RTRIM(h.BookingID) <> ${bookingID}
-            FOR UPDATE
+              RTRIM(UserId) AS UserId,
+              RTRIM(UserName) AS UserName,
+              RTRIM(WorkingLocID) AS WorkingLocID
+            FROM tbl_userdetails
+            WHERE Enable = 1
+              AND (
+                UPPER(RTRIM(UserId)) = UPPER(${requestedTechID})
+                OR UPPER(RTRIM(UserName)) = UPPER(${requestedTechID})
+              )
+            ORDER BY
+              CASE
+                WHEN UPPER(RTRIM(UserId)) = UPPER(${requestedTechID}) THEN 0
+                ELSE 1
+              END,
+              UserId
+            LIMIT 1
           `;
 
-          const byKey = new Map<string, { start: number; count: number }>();
-          for (const row of lockRows) {
-            const tech = trimValue(row.TechID);
-            if (!tech || tech === "0") continue;
-            const key = `${trimValue(row.BookingID)}|${tech}`;
-            const entry = byKey.get(key);
-            if (entry) entry.count += 1;
-            else byKey.set(key, { start: Number(row.StartMin) || 0, count: 1 });
+          const technician = technicianRows[0];
+          if (!technician) {
+            throw new BookingValidationError(
+              `Technician "${requestedTechID}" was not found or is inactive`,
+            );
           }
-
-          const conflictingTechs: string[] = [];
-          for (const [techID, count] of selfTechCounts) {
-            const selfEnd = newStartMin + Math.max(30, 30 * count);
-            for (const [key, e] of byKey) {
-              if (!key.endsWith(`|${techID}`)) continue;
-              const otherEnd = e.start + Math.max(30, 30 * e.count);
-              if (newStartMin < otherEnd && e.start < selfEnd) {
-                conflictingTechs.push(techID);
-              }
-            }
-          }
-
-          if (conflictingTechs.length > 0) {
-            throw new BookingConflictError(
-              `Technician ${conflictingTechs[0]} is already booked on ${newDate} at the requested time. Choose another technician or time slot.`,
+          if (!technicianBelongsToBranch(technician.WorkingLocID, locCode)) {
+            throw new BookingValidationError(
+              `Technician "${trimValue(technician.UserId)}" is not assigned to branch ${locCode}`,
             );
           }
 
-          // BookingDate stores the complete schedule date and time. Remarks now
-          // contains notes only; old Date:/Time: prefixes are removed on edit.
-          await tx.$executeRaw`
-            UPDATE tbl_bookingheder
-            SET
-              BookingDate = ${bookingDateTime},
-              Remarks = ${newRemarks}
-            WHERE BookingID = ${bookingID}
-              AND LocCode = ${locCode}
-          `;
-        });
+          targetTechID = trimValue(technician.UserId);
+        }
+      }
+
+      const selfDetailRows = await tx.$queryRaw<
+        (RawDetail & { DurationMin: number | string | null })[]
+      >`
+        SELECT
+          RTRIM(d.BookingID) AS BookingID,
+          RTRIM(d.LocCode) AS LocCode,
+          RTRIM(d.GuessID) AS GuessID,
+          RTRIM(d.ServiceItemID) AS ServiceItemID,
+          d.Qty AS Qty,
+          0 AS ItemPrice,
+          RTRIM(d.TechID) AS TechID,
+          COALESCE(NULLIF(i.DurationMin, 0), 30) AS DurationMin
+        FROM tbl_bookingdetail d
+        LEFT JOIN tbl_ItemMaster i
+          ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
+         AND RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
+        WHERE RTRIM(d.BookingID) = ${bookingID}
+          AND RTRIM(d.LocCode) = ${locCode}
+        FOR UPDATE
+      `;
+      const selfDetails = selfDetailRows.map((row) => ({
+        ...row,
+        ItemPrice: Number(row.ItemPrice) || 0,
+      }));
+      const selfDurationMap = new Map<string, number>(
+        selfDetailRows.map((row) => [
+          trimValue(row.ServiceItemID),
+          Number(row.DurationMin) > 0 ? Number(row.DurationMin) : 30,
+        ]),
+      );
+
+      // The existing persisted placement is retained for a date/time-only
+      // move. When a booking is assigned to another technician, all of its
+      // detail rows are moved together (the existing PATCH behaviour), so
+      // rebuild the placement sequentially for that target provider. This
+      // preserves same-provider sequential work and avoids retaining parallel
+      // starts that belonged to the previous provider assignment.
+      const effectiveDetails: RawDetail[] =
+        targetTechID !== null
+          ? selfDetails.map((detail) => ({
+              ...detail,
+              TechID: targetTechID,
+            }))
+          : selfDetails;
+      const originalPairs = resolveSchedulePairs(
+        selfDetails,
+        storedSchedule,
+        selfDurationMap,
+        oldStartMin,
+      );
+      const scheduleShift =
+        hasScheduleChange && oldStartMin >= 0 && newStartMin >= 0
+          ? newStartMin - oldStartMin
+          : 0;
+
+      let candidatePairs: ScheduleDetailPair[];
+      let scheduleToSave: StoredBookingScheduleEntry[] | null = null;
+
+      if (targetTechID !== null) {
+        const targetStartMin = newStartMin >= 0 ? newStartMin : oldStartMin;
+        candidatePairs = buildFallbackSchedule(
+          effectiveDetails,
+          selfDurationMap,
+          targetStartMin,
+        );
+        scheduleToSave = candidatePairs.map(({ entry }) => ({ ...entry }));
       } else {
-        // BookingDate stores the complete schedule date and time. Remarks now
-        // contains notes only; old Date:/Time: prefixes are removed on edit.
-        await prisma.$executeRaw`
+        candidatePairs = originalPairs.map(({ detail, entry }) => ({
+          detail,
+          entry: {
+            ...entry,
+            startMin: entry.startMin + scheduleShift,
+            endMin: entry.endMin + scheduleShift,
+          },
+        }));
+        if (hasScheduleChange) {
+          scheduleToSave = storedSchedule.map((entry) => ({
+            ...entry,
+            startMin: entry.startMin + scheduleShift,
+            endMin: entry.endMin + scheduleShift,
+          }));
+        }
+      }
+
+      const candidateWindows = candidatePairs
+        .map(({ detail, entry }) => {
+          const techID = trimValue(detail.TechID);
+          if (!techID || techID === "0") return null;
+
+          return {
+            techID,
+            startMin: entry.startMin,
+            // DurationMin is read from tbl_ItemMaster above. Never derive the
+            // occupancy from detailCount or a fixed 30-minute block.
+            endMin: entry.startMin + detailDuration(detail, selfDurationMap),
+          };
+        })
+        .filter(
+          (
+            window,
+          ): window is { techID: string; startMin: number; endMin: number } =>
+            Boolean(window),
+        );
+      const candidateStartMin =
+        newStartMin >= 0 ? newStartMin : oldStartMin;
+
+      if (candidateWindows.length > 0 && candidateStartMin >= 0) {
+        // Lock every competing non-cancelled booking on the target date before
+        // reading its occupancy. A concurrent reschedule therefore cannot pass
+        // this check at the same time and commit an overlapping assignment.
+        const lockRows = await tx.$queryRaw<
+          (RawDetail & {
+            StartMin: number;
+            Remarks: string | null;
+            DurationMin: number | string | null;
+          })[]
+        >`
+          SELECT
+            RTRIM(h.BookingID) AS BookingID,
+            RTRIM(h.LocCode) AS LocCode,
+            RTRIM(d.GuessID) AS GuessID,
+            RTRIM(d.ServiceItemID) AS ServiceItemID,
+            d.Qty AS Qty,
+            0 AS ItemPrice,
+            RTRIM(d.TechID) AS TechID,
+            (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
+            h.Remarks AS Remarks,
+            COALESCE(NULLIF(i.DurationMin, 0), 30) AS DurationMin
+          FROM tbl_bookingheder h
+          JOIN tbl_bookingdetail d
+            ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
+          LEFT JOIN tbl_ItemMaster i
+            ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
+           AND RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
+          WHERE RTRIM(h.LocCode) = ${locCode}
+            AND DATE(h.BookingDate) = ${newDate}
+            AND UPPER(RTRIM(h.Status)) <> 'CANCELLED'
+            AND RTRIM(h.BookingID) <> ${bookingID}
+          FOR UPDATE
+        `;
+
+        const rowsByBooking = new Map<
+          string,
+          {
+            startMin: number;
+            remarks: string | null;
+            details: RawDetail[];
+            durations: Map<string, number>;
+          }
+        >();
+        lockRows.forEach((row) => {
+          const id = trimValue(row.BookingID);
+          const current = rowsByBooking.get(id) || {
+            startMin: Number(row.StartMin) || 0,
+            remarks: row.Remarks,
+            details: [],
+            durations: new Map<string, number>(),
+          };
+          current.details.push({
+            ...row,
+            ItemPrice: Number(row.ItemPrice) || 0,
+          });
+          current.durations.set(
+            trimValue(row.ServiceItemID),
+            Number(row.DurationMin) > 0 ? Number(row.DurationMin) : 30,
+          );
+          rowsByBooking.set(id, current);
+        });
+
+        const otherWindows: {
+          techID: string;
+          startMin: number;
+          endMin: number;
+        }[] = [];
+        rowsByBooking.forEach((booking) => {
+          const pairs = resolveSchedulePairs(
+            booking.details,
+            decodeBookingSchedule(booking.remarks),
+            booking.durations,
+            booking.startMin,
+          );
+          pairs.forEach(({ detail, entry }) => {
+            const techID = trimValue(detail.TechID);
+            if (!techID || techID === "0") return;
+            otherWindows.push({
+              techID,
+              startMin: entry.startMin,
+              endMin:
+                entry.startMin +
+                detailDuration(detail, booking.durations),
+            });
+          });
+        });
+
+        const conflict = candidateWindows.find((candidate) =>
+          otherWindows.some(
+            (other) =>
+              candidate.techID.toUpperCase() === other.techID.toUpperCase() &&
+              candidate.startMin < other.endMin &&
+              other.startMin < candidate.endMin,
+          ),
+        );
+
+        if (conflict) {
+          throw new BookingConflictError(
+            `Technician ${conflict.techID} is already booked on ${newDate} at the requested time. Choose another technician or time slot.`,
+          );
+        }
+      }
+
+      const shouldUpdateSchedule = hasScheduleChange || hasTechnicianChange;
+      const newRemarks = shouldUpdateSchedule
+        ? composeBookingRemarks(
+            extractNotes(currentRemarks),
+            scheduleToSave ?? storedSchedule,
+          )
+        : currentRemarks;
+
+      // No database write occurs above this point except row locks. From here
+      // on all related header/detail/status changes are part of this same
+      // transaction, so any later failure rolls them back together.
+      if (targetTechID !== null) {
+        await tx.$executeRaw`
+          UPDATE tbl_bookingdetail
+          SET TechID = ${toChar(targetTechID, 10)}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+      }
+
+      if (hasScheduleChange) {
+        // BookingDate stores the complete schedule date and time. Remarks keeps
+        // notes and schedule metadata only; old Date:/Time: prefixes are
+        // removed on edit.
+        await tx.$executeRaw`
           UPDATE tbl_bookingheder
           SET
             BookingDate = ${bookingDateTime},
             Remarks = ${newRemarks}
-          WHERE BookingID = ${bookingID}
-            AND LocCode = ${locCode}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+      } else if (hasTechnicianChange) {
+        // A technician-only reassignment also needs its rebuilt placement
+        // persisted so a later GET does not infer the old provider's timing.
+        await tx.$executeRaw`
+          UPDATE tbl_bookingheder
+          SET Remarks = ${newRemarks}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
         `;
       }
-    }
 
-    if (body.techID || body.providerName) {
-      const newTechID = trimValue(body.techID || body.providerName) || "0";
+      // A cancelled booking is historical data, not a disposable row. A
+      // successful schedule/provider change reactivates it as PENDING while
+      // retaining the same header/detail row. Active statuses clear stale
+      // cancellation markers; CANCELLED always clears confirmation markers.
+      const reactivateCancelled =
+        !status &&
+        currentStatus === "CANCELLED" &&
+        (hasScheduleChange || hasTechnicianChange);
+      const statusToApply = status || (reactivateCancelled ? "PENDING" : null);
 
-      await prisma.$executeRaw`
-        UPDATE tbl_bookingdetail
-        SET TechID = ${toChar(newTechID, 10)}
-        WHERE BookingID = ${bookingID}
-          AND LocCode = ${locCode}
-      `;
-    }
+      if (statusToApply === "CONFIRMED") {
+        await tx.$executeRaw`
+          UPDATE tbl_bookingheder
+          SET
+            Status = ${toChar("CONFIRMED", 10)},
+            Confirmed = 1,
+            ConfirmedBy = ${actor},
+            ConfirmedDate = NOW(),
+            CancelledDate = NULL,
+            CancelledBy = ${toChar("", 10)}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+      } else if (statusToApply === "CANCELLED") {
+        await tx.$executeRaw`
+          UPDATE tbl_bookingheder
+          SET
+            Status = ${toChar("CANCELLED", 10)},
+            Confirmed = 0,
+            ConfirmedBy = ${toChar("", 10)},
+            ConfirmedDate = NULL,
+            CancelledDate = NOW(),
+            CancelledBy = ${actor}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+      } else if (statusToApply === "ONGOING") {
+        await tx.$executeRaw`
+          UPDATE tbl_bookingheder
+          SET
+            Status = ${toChar("ONGOING", 10)},
+            Confirmed = 1,
+            ConfirmedBy = CASE
+              WHEN COALESCE(RTRIM(ConfirmedBy), '') = '' THEN ${actor}
+              ELSE ConfirmedBy
+            END,
+            ConfirmedDate = COALESCE(ConfirmedDate, NOW()),
+            CancelledDate = NULL,
+            CancelledBy = ${toChar("", 10)},
+            CheckInTime = COALESCE(CheckInTime, NOW())
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+      } else if (statusToApply === "PENDING") {
+        await tx.$executeRaw`
+          UPDATE tbl_bookingheder
+          SET
+            Status = ${toChar("PENDING", 10)},
+            Confirmed = 0,
+            ConfirmedBy = ${toChar("", 10)},
+            ConfirmedDate = NULL,
+            CancelledDate = NULL,
+            CancelledBy = ${toChar("", 10)}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+      }
+    });
 
     const smsEvent: "confirmed" | "cancelled" | "rescheduled" | null =
       status === "CONFIRMED"
@@ -939,8 +1493,8 @@ export async function PATCH(req: NextRequest) {
         });
 
         if (!smsResult.success) {
-          // The database update is already complete. SMS failure must not make
-          // the status/reschedule request look unsuccessful.
+          // The database transaction is already complete. SMS failure must not
+          // make the status/reschedule request look unsuccessful.
           console.error(
             `[BOOKING] SMS was not sent for ${bookingID}: ${smsResult.error}`,
           );
@@ -959,6 +1513,18 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json(
         { success: false, error: err.message },
         { status: 409 },
+      );
+    }
+    if (err instanceof BookingNotFoundError) {
+      return NextResponse.json(
+        { success: false, error: err.message },
+        { status: 404 },
+      );
+    }
+    if (err instanceof BookingValidationError) {
+      return NextResponse.json(
+        { success: false, error: err.message },
+        { status: 422 },
       );
     }
 

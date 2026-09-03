@@ -1,3 +1,4 @@
+// src/app/booking/page.tsx
 'use client';
 
 import { useState, useEffect, useRef, useMemo, type Dispatch, type SetStateAction } from 'react';
@@ -6,8 +7,12 @@ import ConflictModal, {
   ConflictModalData,
   ProviderAvailability,
 } from '@/components/ConflictModal';
-import { evaluateSlot } from '@/lib/slotEvaluator';
-import type { SlotResult } from '@/lib/slotEvaluator';
+import {
+  buildSequentialServiceSchedule,
+  buildSplitServiceSchedule,
+  evaluateSlot,
+} from '@/lib/slotEvaluator';
+import type { ServiceScheduleEntry, SlotResult } from '@/lib/slotEvaluator';
 import {
   t, svc as svcName, role as roleName, cat as catName, loc as locName,
   monthNames, dayNames, formatDateL, durStr, fmtDur, type Lang,
@@ -1850,6 +1855,9 @@ export default function BookingPage() {
   const [loadingSlots,  setLoadingSlots]  = useState(false);
   const [slotsError,    setSlotsError]    = useState('');
   const [conflictModal, setConflictModal] = useState<ConflictModalData | null>(null);
+  /* The chosen swap/split schedule is submitted with the booking so the
+     server can persist each service's actual execution time. */
+  const [serviceSchedule, setServiceSchedule] = useState<ServiceScheduleEntry[]>([]);
 
   /* ── R5: hover state ── */
   const [hoveredSlot,        setHoveredSlot]        = useState<string | null>(null);
@@ -1967,7 +1975,13 @@ export default function BookingPage() {
   function handleSlotClick(slot: string) {
     const result = classifySlot(slot);
     if (result.status === 'booked')    return;
-    if (result.status === 'available') { setTimeSlot(slot); return; }
+    if (result.status === 'available') {
+      setServiceSchedule(
+        result.serviceSchedule ?? buildSequentialServiceSchedule(slot, providers, services),
+      );
+      setTimeSlot(slot);
+      return;
+    }
 
     const sm = timeToMinutes(slot);
 
@@ -2050,11 +2064,17 @@ export default function BookingPage() {
       setConflictModal(null);
       return;
     }
+    setServiceSchedule(
+      result.serviceSchedule ?? buildSequentialServiceSchedule(slot, providers, services),
+    );
     setTimeSlot(slot);
     setConflictModal(null);
   }
 
   function handleBookSplit(sel: string, next: string) {
+    setServiceSchedule(
+      buildSplitServiceSchedule(sel, next, providers, services, providerSlots),
+    );
     setTimeSlot(sel);
     const freeAt  = providers.filter(p => !(providerSlots[p.name] ?? []).includes(sel)).map(p => p.name).join(', ');
     const laterAt = providers.filter(p =>  (providerSlots[p.name] ?? []).includes(sel)).map(p => p.name).join(', ');
@@ -2065,6 +2085,13 @@ export default function BookingPage() {
 
   function handleBookSwapped(slot: string) {
     const sd       = conflictModal?.slotResult?.swappedDetails;
+    const gd       = conflictModal?.slotResult?.gapOnlyDetails;
+    const selectedSchedule =
+      sd?.schedule ??
+      gd?.schedule ??
+      buildSequentialServiceSchedule(slot, providers, services);
+    setServiceSchedule(selectedSchedule);
+
     const swapNote = sd?.orderedServices?.length
       ? `[Sequence Swap] Services run in this order at ${slot}: ${sd.orderedServices.join(' → ')}`
       : services.length === 2
@@ -2086,11 +2113,11 @@ export default function BookingPage() {
 
   function handleModeChange(m: BookingMode) {
     setMode(m); setTimeSlot(''); setBookedSlots(new Set()); setProviderSlots({});
-    setHoveredSlot(null); setPersistedHighlight(new Set());
+    setHoveredSlot(null); setPersistedHighlight(new Set()); setServiceSchedule([]);
   }
   function handleDateChange(iso: string) {
     setDate(iso); setTimeSlot('');
-    setHoveredSlot(null); setPersistedHighlight(new Set());
+    setHoveredSlot(null); setPersistedHighlight(new Set()); setServiceSchedule([]);
   }
 
   /* ── Provider rules:
@@ -2117,7 +2144,17 @@ export default function BookingPage() {
   const accentColor = mode === 'without_confirmation' ? tokens.color.green : tokens.color.gold;
   const btnClass    = mode === 'without_confirmation' ? 'btn-green' : 'btn-gold';
 
-  const toggleService  = (svc: ServiceItem) => setServices(prev => prev.some(s => s.name === svc.name && s.price === svc.price) ? prev.filter(s => !(s.name === svc.name && s.price === svc.price)) : [...prev, svc]);
+  const toggleService = (svc: ServiceItem) => {
+    setServices(prev =>
+      prev.some(s => s.name === svc.name && s.price === svc.price)
+        ? prev.filter(s => !(s.name === svc.name && s.price === svc.price))
+        : [...prev, svc],
+    );
+    setTimeSlot('');
+    setServiceSchedule([]);
+    setHoveredSlot(null);
+    setPersistedHighlight(new Set());
+  };
 
   function toggleProvider(p: Provider) {
     setProviders(prev => {
@@ -2151,11 +2188,18 @@ export default function BookingPage() {
       return next;
     });
     setTimeSlot('');
+    setServiceSchedule([]);
     setHoveredSlot(null);
     setPersistedHighlight(new Set());
   }
 
-  const handleLocChange = (locSel: string)  => { setLocation(locSel); setProviders([]); setTimeSlot(''); setHoveredSlot(null); };
+  const handleLocChange = (locSel: string)  => {
+    setLocation(locSel);
+    setProviders([]);
+    setTimeSlot('');
+    setServiceSchedule([]);
+    setHoveredSlot(null);
+  };
 
   /* ── submit ── */
   const handleConfirm = async () => {
@@ -2167,6 +2211,9 @@ export default function BookingPage() {
         services: services.map(s => ({ name: s.name, price: s.price, duration: s.duration, category: s.category })),
         categories: selectedCats, totalDuration: totalMins, totalPrice,
         providers: providers.map(p => ({ name: p.name, role: p.role })),
+        serviceSchedule: serviceSchedule.length > 0
+          ? serviceSchedule
+          : buildSequentialServiceSchedule(timeSlot, providers, services),
         date, timeSlot, notes: notes.trim() || null,
       };
       const res = await fetch('/api/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -2182,7 +2229,7 @@ export default function BookingPage() {
     setServices([]); setProviders([]); setDate(''); setTimeSlot(''); setNotes('');
     setConfirmed(false); setLoading(false); setApiError(''); setBookingId(null);
     setBookedSlots(new Set()); setProviderSlots({}); setSlotsError(''); setConflictModal(null);
-    setHoveredSlot(null);
+    setHoveredSlot(null); setServiceSchedule([]);
   };
 
   /* ══════════════════════════════════════
