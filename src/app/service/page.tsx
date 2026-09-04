@@ -1,3 +1,4 @@
+// src/app/service/page.tsx
 "use client";
 
 import React, {
@@ -13,6 +14,14 @@ import AdminSidebar, { SIDEBAR_CSS } from "@/components/AdminSidebar";
 /* ═══════════════════════════════════════════════════════
    INTERFACES
 ═══════════════════════════════════════════════════════ */
+type MofValue = "M" | "F" | "O";
+
+const MOF_OPTIONS: { value: MofValue; label: string }[] = [
+  { value: "M", label: "Male" },
+  { value: "F", label: "Female" },
+  { value: "O", label: "Other" },
+];
+
 interface LocationDetail {
   locCode: string;
   locName: string;
@@ -28,6 +37,7 @@ interface Item {
   locCode: string;
   itemCode: string;
   serviceItem: boolean;
+  mof: MofValue;
   semiFinishedProd: boolean;
   itemDes: string;
   itemPrintDes: string;
@@ -131,6 +141,7 @@ function emptyItem(): Item {
     locCode: "",
     itemCode: "",
     serviceItem: false,
+    mof: "O",
     semiFinishedProd: false,
     itemDes: "",
     itemPrintDes: "",
@@ -150,7 +161,7 @@ function emptyItem(): Item {
     stockBalance: 0,
     expiryItem: false,
     retailPrice: 0,
-    durationMin: 30,
+    durationMin: 0,
     wsApp: false,
     wsQty: 0,
     wsPrice: 0,
@@ -812,6 +823,10 @@ function FlagsCard({
 
     if (definition.key === "serviceItem" && newValue) {
       onChange("semiFinishedProd", false as Item["semiFinishedProd"]);
+    }
+
+    if (definition.key === "serviceItem" && !newValue) {
+      onChange("durationMin", 0);
     }
 
     if (definition.key === "semiFinishedProd" && newValue) {
@@ -3392,6 +3407,63 @@ export default function ItemMasterPage() {
                           </select>
                         </FieldRow>
                       </div>
+                      <div
+                        style={{
+                          marginTop: 12,
+                          paddingTop: 12,
+                          borderTop: "1px solid #edf1f1",
+                        }}
+                      >
+                        <FieldRow label="Applicable Gender (MOF)">
+                          <div
+                            role="radiogroup"
+                            aria-label="Applicable gender"
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 10,
+                            }}
+                          >
+                            {MOF_OPTIONS.map((option) => (
+                              <label
+                                key={option.value}
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 7,
+                                  minHeight: 36,
+                                  padding: "0 12px",
+                                  border: `1.5px solid ${
+                                    current.mof === option.value
+                                      ? "#1e3a40"
+                                      : "#d1d9da"
+                                  }`,
+                                  borderRadius: 8,
+                                  background:
+                                    current.mof === option.value
+                                      ? "#eef5f5"
+                                      : "#fff",
+                                  color: "#1f2937",
+                                  fontSize: 12.5,
+                                  fontWeight: 600,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <input
+                                  type="radio"
+                                  name="item-mof"
+                                  value={option.value}
+                                  checked={current.mof === option.value}
+                                  onChange={() =>
+                                    updateItem("mof", option.value)
+                                  }
+                                />
+                                {option.label}
+                              </label>
+                            ))}
+                          </div>
+                        </FieldRow>
+                      </div>
                     </Card>
 
                     <Card
@@ -3584,21 +3656,22 @@ export default function ItemMasterPage() {
                             min={0}
                           />
                         </FieldRow>
-                        <FieldRow label="Duration (Minutes)">
+                        <FieldRow label="Service Duration (Minutes)">
                           <input
                             className="frm-input"
                             type="number"
-                            value={current.durationMin ?? 30}
+                            value={current.serviceItem ? current.durationMin : 0}
                             onChange={(event) =>
                               updateItem(
                                 "durationMin",
                                 event.target.value === ""
-                                  ? 30
+                                  ? 0
                                   : Number(event.target.value),
                               )
                             }
-                            min={5}
+                            min={0}
                             step={5}
+                            disabled={!current.serviceItem}
                           />
                         </FieldRow>
                       </div>

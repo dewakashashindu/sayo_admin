@@ -1,4 +1,5 @@
 // src/app/api/bookings/route.ts
+// src/app/api/bookings/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
@@ -291,6 +292,7 @@ interface LegacyItem {
   ItemCode: string;
   ItemDes: string;
   ItemPrintDes: string | null;
+  SerDuration: number | string | null;
 }
 
 interface PreparedService {
@@ -309,6 +311,8 @@ interface LegacyCapacityRow {
   TechID: string;
   ServiceItemID: string;
   Remarks: string | null;
+  ScheduleStartMin: number | string | null;
+  ScheduleEndMin: number | string | null;
   DurationMin: number;
   Qty: string | number | null;
 }
@@ -484,16 +488,6 @@ async function assertNoProviderCapacityConflict(
 ): Promise<void> {
   if (incoming.length === 0) return;
 
-  // Lock the branch row as well as the existing appointments. This keeps two
-  // simultaneous public no-confirmation requests from both passing an empty
-  // capacity check before either one inserts its booking.
-  await tx.$queryRaw`
-    SELECT LocCode
-    FROM tbl_locationmaster
-    WHERE RTRIM(LocCode) = ${locCode.trim()}
-    FOR UPDATE
-  `;
-
   const rows = await tx.$queryRaw<LegacyCapacityRow[]>`
     SELECT
       RTRIM(h.BookingID) AS BookingID,
@@ -501,10 +495,12 @@ async function assertNoProviderCapacityConflict(
       RTRIM(d.TechID) AS TechID,
       RTRIM(d.ServiceItemID) AS ServiceItemID,
       h.Remarks AS Remarks,
-      COALESCE(NULLIF(i.DurationMin, 0), 30) AS DurationMin,
+      d.ScheduleStartMin AS ScheduleStartMin,
+      d.ScheduleEndMin AS ScheduleEndMin,
+      COALESCE(NULLIF(i.SerDuration, 0), 30) AS DurationMin,
       d.Qty AS Qty
     FROM tbl_bookingheder h
-    JOIN tbl_bookingdetail d
+    JOIN tbl_bookingservicedetail d
       ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
     LEFT JOIN tbl_itemmaster i
       ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
@@ -525,20 +521,27 @@ async function assertNoProviderCapacityConflict(
     const bookingID = String(row.BookingID || '').trim();
     const quantity = Number(row.Qty) > 0 ? Number(row.Qty) : 1;
     const duration = Math.max(30, Number(row.DurationMin) || 30) * quantity;
+    const columnStart = Number(row.ScheduleStartMin);
+    const columnEnd = Number(row.ScheduleEndMin);
     const storedSchedule = decodeBookingSchedule(row.Remarks);
-    const scheduled = storedSchedule.find((entry) =>
+    const legacyScheduled = storedSchedule.find((entry) =>
       entry.itemCode &&
       normalizeLookup(entry.itemCode) === normalizeLookup(row.ServiceItemID),
     );
+    const scheduledStart =
+      Number.isFinite(columnStart) && Number.isFinite(columnEnd) && columnEnd > columnStart
+        ? columnStart
+        : legacyScheduled?.startMin;
 
-    if (scheduled) {
-      // Split and swapped public bookings carry the actual service start in
-      // Remarks. Keep each service as its own interval so a later service is
-      // not incorrectly moved back to the booking's overall start time.
+    if (scheduledStart !== undefined && Number.isFinite(scheduledStart)) {
+      // New rows carry the actual service placement in service-detail columns.
+      // Older rows are still read from the legacy Remarks metadata. Keep each
+      // service as its own interval so a later service is not moved back to
+      // the booking's overall start time.
       scheduledExistingWindows.push({
         techID,
-        startMin: scheduled.startMin,
-        endMin: scheduled.startMin + duration,
+        startMin: scheduledStart,
+        endMin: scheduledStart + duration,
       });
       continue;
     }
@@ -625,6 +628,7 @@ async function resolveLegacyServices(
       ItemCode: true,
       ItemDes: true,
       ItemPrintDes: true,
+      SerDuration: true,
     },
   }) as LegacyItem[];
 
@@ -668,12 +672,13 @@ async function resolveLegacyServices(
     }
     usedCodes.add(serviceItemID);
 
-    // Keep the public price in the booking detail. This change only moves the
-    // write path; pricing and duration policy remain outside its scope.
+    // Price and duration come from the Item Master. The public payload may
+    // contain display values, but it must never override the catalog duration
+    // used by availability and overlap checks.
     return {
       serviceItemID,
       itemPrice: parsePrice(service.price),
-      durationMin: parseDuration(service.duration),
+      durationMin: parseDuration(item.SerDuration),
     };
   });
 }
@@ -731,18 +736,58 @@ async function resolveOnlineBookingTypeID(): Promise<string> {
   }
 }
 
+/**
+ * Serialize booking-ID allocation for a branch. Locking the location row also
+ * protects the first booking, when no booking header exists yet.
+ */
+async function lockBookingIDNamespaceTx(
+  tx: Prisma.TransactionClient,
+  locCode: string,
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT LocCode
+    FROM tbl_locationmaster
+    WHERE RTRIM(LocCode) = ${locCode.trim()}
+    LIMIT 1
+    FOR UPDATE
+  `;
+}
+
 async function generateBookingIDTx(
   tx: Prisma.TransactionClient,
   locCode: string,
 ): Promise<string> {
-  const rows = await tx.$queryRaw<{ maxID: string | null }[]>`
-    SELECT MAX(RTRIM(BookingID)) AS maxID
-    FROM tbl_bookingheder
-    WHERE RTRIM(LocCode) = ${locCode.trim()}
-    FOR UPDATE
+  // A legacy or rolled-back header can still have a child row. Use both
+  // service and transaction details so the allocator never reuses an ID
+  // occupied by any booking table.
+  const rows = await tx.$queryRaw<
+    { maxNumber: number | bigint | string | null }[]
+  >`
+    SELECT COALESCE(
+      MAX(CAST(SUBSTRING(RTRIM(existing_ids.BookingID), 3) AS UNSIGNED)),
+      0
+    ) AS maxNumber
+    FROM (
+      SELECT BookingID
+      FROM tbl_bookingheder
+      WHERE RTRIM(LocCode) = ${locCode.trim()}
+      UNION ALL
+      SELECT BookingID
+      FROM tbl_bookingservicedetail
+      WHERE RTRIM(LocCode) = ${locCode.trim()}
+      UNION ALL
+      SELECT BookingID
+      FROM tbl_bookingtxndetail
+      WHERE RTRIM(LocCode) = ${locCode.trim()}
+    ) AS existing_ids
+    WHERE RTRIM(existing_ids.BookingID) REGEXP '^BK[0-9]+$'
   `;
-  const maxID = rows[0]?.maxID?.trim() || '';
-  const current = maxID.startsWith('BK') ? Number.parseInt(maxID.slice(2), 10) || 0 : 0;
+
+  const current = Number(rows[0]?.maxNumber ?? 0);
+  if (!Number.isSafeInteger(current) || current >= 99_999_999) {
+    throw new Error(`Booking ID sequence is exhausted for branch ${locCode.trim()}`);
+  }
+
   return `BK${String(current + 1).padStart(7, '0')}`;
 }
 
@@ -1618,16 +1663,21 @@ export async function POST(req: NextRequest) {
     }
 
     const bookingTypeID = await resolveOnlineBookingTypeID();
-    const bookingRemarks = composeBookingRemarks(notes, preparedServiceSchedule);
+    // Remarks stores human notes only; service placement is saved per detail row.
+    const bookingRemarks = composeBookingRemarks(notes, []);
     let bookingID = '';
     let detailRowCount = 0;
 
-    // ── 4. One atomic write to tbl_bookingheder + tbl_bookingdetail ───────────
-    // No public booking is created in the former public table anymore. Both legacy rows
-    // are committed or rolled back together, so the admin calendar sees the
-    // same booking the public customer flow created.
+    // ── 4. Atomic write to header + service detail + transaction detail ───────
+    // The views are read-only projections. All three base-table rows are
+    // committed or rolled back together so the public flow and admin calendar
+    // always see the same booking.
     await prisma.$transaction(
       async (tx) => {
+        // Use the branch row as the shared booking-ID/capacity lock. This is
+        // required even for WC, which does not claim provider capacity.
+        await lockBookingIDNamespaceTx(tx, branch.LocCode.trim());
+
         // A WC request is intentionally allowed through: the salon will call
         // the customer and resolve the slot manually. Only WO bookings claim
         // capacity automatically and are rejected on overlap.
@@ -1660,13 +1710,7 @@ export async function POST(req: NextRequest) {
             AdvBookingAmount,
             Remarks,
             UserID,
-            CancelledDate,
-            CancelledBy,
             Pax,
-            Confirmed,
-            ConfirmedBy,
-            ConfirmedDate,
-            CheckInTime,
             BillingTime
           ) VALUES (
             ${toChar(branch.LocCode, 10)},
@@ -1681,28 +1725,54 @@ export async function POST(req: NextRequest) {
             ${0},
             ${bookingRemarks},
             ${publicActor},
+            ${1},
+            ${null}
+          )
+        `;
+
+        await tx.$executeRaw`
+          INSERT INTO tbl_bookingtxndetail (
+            LocCode,
+            BookingID,
+            GuessID,
+            BookingDate,
+            CancelledDate,
+            CancelledBy,
+            Confirmed,
+            ConfirmedBy,
+            ConfirmedDate,
+            CheckInTime
+          ) VALUES (
+            ${toChar(branch.LocCode, 10)},
+            ${toChar(bookingID, 10)},
+            ${toChar('MAIN', 10)},
+            ${bookingDateTime},
             ${null},
             ${' '},
-            ${1},
             ${confirmed},
             ${isWithoutConfirmation ? publicActor : ' '},
             ${isWithoutConfirmation ? createdAt : null},
-            ${null},
             ${null}
           )
         `;
 
         detailRowCount = 0;
-        for (const service of detailRows) {
+        for (const [serviceIndex, service] of detailRows.entries()) {
+          const schedule = preparedServiceSchedule.find(
+            (entry) => entry.serviceIndex === serviceIndex,
+          );
           await tx.$executeRaw`
-            INSERT INTO tbl_bookingdetail (
+            INSERT INTO tbl_bookingservicedetail (
               LocCode,
               BookingID,
               GuessID,
               ServiceItemID,
               Qty,
               ItemPrice,
-              TechID
+              TechID,
+              ScheduleIndex,
+              ScheduleStartMin,
+              ScheduleEndMin
             ) VALUES (
               ${toChar(branch.LocCode, 10)},
               ${toChar(bookingID, 10)},
@@ -1710,7 +1780,10 @@ export async function POST(req: NextRequest) {
               ${toChar(service.serviceItemID, 10)},
               ${toChar('1', 10)},
               ${service.itemPrice},
-              ${toChar(service.techID || '0', 10)}
+              ${toChar(service.techID || '0', 10)},
+              ${schedule?.serviceIndex ?? serviceIndex},
+              ${schedule?.startMin ?? null},
+              ${schedule?.endMin ?? null}
             )
           `;
           detailRowCount += 1;
@@ -1806,105 +1879,305 @@ export async function POST(req: NextRequest) {
 
 /* ─────────────────────────────────────────────────────────────────────────────
    GET — fetch bookings by email
+   -----------------------------------------------------------------------------
+   The three booking views are the read model. Writes still target their base
+   tables because MySQL views are projections and are not the write contract.
 ─────────────────────────────────────────────────────────────────────────────── */
+interface PublicHeaderRow {
+  BookingID: string;
+  LocCode: string;
+  CusCode: string;
+  BookingDate: Date | string;
+  BookingTypeID: string;
+  Status: string;
+  ConfirmationType: string;
+  Remarks: string | null;
+  TxnDateTime: Date | string;
+}
+
+interface PublicServiceDetailRow {
+  BookingID: string;
+  LocCode: string;
+  GuessID: string;
+  ServiceItemID: string;
+  ServiceItem: boolean | number | string | null;
+  MOF: string | null;
+  SerDuration: number | string | null;
+  ItemDes: string | null;
+  Qty: string | number | null;
+  ItemPrice: number | string | null;
+  TechID: string | null;
+  ScheduleIndex: number | string | null;
+  ScheduleStartMin: number | string | null;
+  ScheduleEndMin: number | string | null;
+  UserName: string | null;
+}
+
+interface PublicTxnDetailRow {
+  BookingID: string;
+  LocCode: string;
+  GuessID: string;
+  Confirmed: boolean | number | string | null;
+  ConfirmedBy: string | null;
+  ConfirmedDate: Date | string | null;
+  CancelledBy: string | null;
+  CancelledDate: Date | string | null;
+  CheckInTime: Date | string | null;
+}
+
+function dateOnlyValue(value: unknown): string {
+  if (typeof value === 'string') {
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
+  }
+
+  const parsed = value instanceof Date ? value : new Date(value as any);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
+}
+
+function timeLabelValue(value: unknown): string {
+  if (typeof value === 'string') {
+    const match = value.match(/[ T](\d{1,2}):(\d{2})(?::\d{2})?/);
+    if (match) {
+      let hour = Number(match[1]);
+      const minute = Number(match[2]);
+      if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+        const period = hour >= 12 ? 'PM' : 'AM';
+        hour %= 12;
+        if (hour === 0) hour = 12;
+        return `${hour}:${String(minute).padStart(2, '0')} ${period}`;
+      }
+    }
+  }
+
+  const parsed = value instanceof Date ? value : new Date(value as any);
+  if (Number.isNaN(parsed.getTime())) return '';
+  const period = parsed.getHours() >= 12 ? 'PM' : 'AM';
+  let hour = parsed.getHours() % 12;
+  if (hour === 0) hour = 12;
+  return `${hour}:${String(parsed.getMinutes()).padStart(2, '0')} ${period}`;
+}
+
+function eventDateValue(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const raw = value instanceof Date
+    ? value.toISOString().replace('T', ' ').slice(0, 19)
+    : String(value);
+  if (raw.startsWith('1900-01-01')) return null;
+  const parsed = value instanceof Date ? value : new Date(value as any);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function isTruthyDatabaseValue(value: unknown): boolean {
+  return value === true || Number(value) === 1 || value === 'true';
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const email = searchParams.get('email');
+    const email = searchParams.get('email')?.trim().toLowerCase();
 
     if (!email) {
       return NextResponse.json(
         { success: false, message: 'Email is required.' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const customer = await prisma.tbl_CustomerMaster.findFirst({
-      where: { CusEmail: email.toLowerCase() },
+      where: { CusEmail: email },
     });
 
     if (!customer) {
       return NextResponse.json(
         { success: false, message: 'No customer found with this email.' },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    const headers = await prisma.tbl_bookingheder.findMany({
-      where: { CusCode: customer.CusCode },
-      orderBy: { BookingDate: 'desc' },
-      take: 10,
-    });
+    const headers = await prisma.$queryRaw<PublicHeaderRow[]>`
+      SELECT
+        BookingID,
+        LocCode,
+        CusCode,
+        BookingDate,
+        BookingTypeID,
+        Status,
+        ConfirmationType,
+        Remarks,
+        TxnDateTime
+      FROM Vw_BookingHeader
+      WHERE RTRIM(CusCode) = ${customer.CusCode.trim()}
+      ORDER BY BookingDate DESC
+      LIMIT 10
+    `;
 
-    const detailGroups = await Promise.all(
-      headers.map((header) =>
-        prisma.tbl_bookingdetail.findMany({
-          where: {
-            LocCode: header.LocCode,
-            BookingID: header.BookingID,
+    const groups = await Promise.all(
+      headers.map(async (header) => {
+        const bookingID = header.BookingID.trim();
+        const locCode = header.LocCode.trim();
+        const [details, txnDetails] = await Promise.all([
+          prisma.$queryRaw<PublicServiceDetailRow[]>`
+            SELECT
+              BookingID,
+              LocCode,
+              GuessID,
+              ServiceItemID,
+              ServiceItem,
+              MOF,
+              SerDuration,
+              ItemDes,
+              Qty,
+              ItemPrice,
+              TechID,
+              ScheduleIndex,
+              ScheduleStartMin,
+              ScheduleEndMin,
+              UserName
+            FROM Vw_BookingServiceDetail
+            WHERE RTRIM(BookingID) = ${bookingID}
+              AND RTRIM(LocCode) = ${locCode}
+            ORDER BY CASE WHEN ScheduleIndex IS NULL THEN 1 ELSE 0 END,
+                     ScheduleIndex ASC,
+                     ServiceItemID ASC
+          `,
+          prisma.$queryRaw<PublicTxnDetailRow[]>`
+            SELECT
+              BookingID,
+              LocCode,
+              GuessID,
+              Confirmed,
+              ConfirmedBy,
+              ConfirmedDate,
+              CancelledBy,
+              CancelledDate,
+              CheckInTime
+            FROM Vw_BookingTxnDetail
+            WHERE RTRIM(BookingID) = ${bookingID}
+              AND RTRIM(LocCode) = ${locCode}
+            ORDER BY GuessID ASC
+          `,
+        ]);
+
+        const serviceValue = details.map((detail) => {
+          const durationMin = parseDuration(detail.SerDuration);
+          const quantity = Number(detail.Qty) > 0 ? Number(detail.Qty) : 1;
+          return {
+            name: detail.ItemDes?.trim() || detail.ServiceItemID.trim(),
+            itemCode: detail.ServiceItemID.trim(),
+            price: `LKR ${Number(detail.ItemPrice || 0).toLocaleString()}`,
+            duration: fmtMins(durationMin),
+            durationMin,
+            quantity,
+            gender: detail.MOF?.trim() || 'O',
+            category: '',
+          };
+        });
+
+        const providerValue = details
+          .map((detail) => ({
+            id: detail.TechID?.trim() || '0',
+            name: detail.UserName?.trim() || detail.TechID?.trim() || '',
+            role: '',
+          }))
+          .filter((provider) => provider.id && provider.id !== '0')
+          .filter((provider, providerIndex, all) =>
+            all.findIndex((candidate) => candidate.id === provider.id) === providerIndex,
+          );
+
+        const columnSchedule = details.map((detail, detailIndex) => {
+          const startMin = Number(detail.ScheduleStartMin);
+          const endMin = Number(detail.ScheduleEndMin);
+          if (!Number.isFinite(startMin) || !Number.isFinite(endMin) || endMin <= startMin) {
+            return null;
+          }
+          const storedIndex = Number(detail.ScheduleIndex);
+          return {
+            serviceIndex: Number.isInteger(storedIndex) && storedIndex >= 0
+              ? storedIndex
+              : detailIndex,
+            itemCode: detail.ServiceItemID.trim(),
+            startMin,
+            endMin,
+          };
+        });
+        // New rows use detail columns. Keep decoding the old Remarks metadata
+        // only as a compatibility fallback for bookings created before this
+        // migration.
+        const nonNullColumnSchedule = columnSchedule.filter(
+          (entry): entry is NonNullable<(typeof columnSchedule)[number]> =>
+            entry !== null,
+        );
+        const storedSchedule = nonNullColumnSchedule.length === details.length
+          ? nonNullColumnSchedule
+          : decodeBookingSchedule(header.Remarks);
+        const serviceSchedule = storedSchedule.map((entry) => ({
+          ...entry,
+          startTime: minutesToClock(entry.startMin),
+          endTime: minutesToClock(entry.endMin),
+        }));
+        const confirmedRow = txnDetails.find((detail) =>
+          isTruthyDatabaseValue(detail.Confirmed),
+        );
+        const cancelledRow = txnDetails.find((detail) =>
+          eventDateValue(detail.CancelledDate) !== null,
+        );
+
+        return {
+          header,
+          details,
+          txnDetails,
+          booking: {
+            BookingId: bookingID,
+            CusCode: header.CusCode.trim(),
+            BookingMode: header.ConfirmationType.trim().toLowerCase() === 'wo'
+              ? 'without_confirmation'
+              : 'confirmed',
+            Gender: customer.Gender || '',
+            Location: locCode,
+            Services: JSON.stringify(serviceValue),
+            Categories: '',
+            TotalDuration: details.reduce((sum, detail) => {
+              const duration = parseDuration(detail.SerDuration);
+              const quantity = Number(detail.Qty) > 0 ? Number(detail.Qty) : 1;
+              return sum + duration * quantity;
+            }, 0),
+            TotalPrice: details.reduce(
+              (sum, detail) => sum + Number(detail.ItemPrice || 0),
+              0,
+            ),
+            Providers: JSON.stringify(providerValue),
+            ServiceSchedule: serviceSchedule,
+            BookingDate: dateOnlyValue(header.BookingDate),
+            TimeSlot: timeLabelValue(header.BookingDate),
+            SpecialNotes: stripBookingSchedule(header.Remarks) || null,
+            Status: header.Status.trim().toLowerCase(),
+            CreatedAt: header.TxnDateTime,
+            UpdatedAt: header.TxnDateTime,
+            ConfirmationType: header.ConfirmationType.trim(),
+            Confirmed: Boolean(confirmedRow),
+            ConfirmedBy: confirmedRow?.ConfirmedBy?.trim() || '',
+            ConfirmedDate: eventDateValue(confirmedRow?.ConfirmedDate),
+            CancelledBy: cancelledRow?.CancelledBy?.trim() || '',
+            CancelledDate: eventDateValue(cancelledRow?.CancelledDate),
+            CheckInTime: eventDateValue(
+              txnDetails.find((detail) => eventDateValue(detail.CheckInTime) !== null)?.CheckInTime,
+            ),
           },
-          orderBy: { ServiceItemID: 'asc' },
-        }),
-      ),
+        };
+      }),
     );
 
-    const bookings = headers.map((header, index) => {
-      const details = detailGroups[index];
-      const bookingDate = header.BookingDate;
-      const dateValue = bookingDate.toISOString().slice(0, 10);
-      const hour = bookingDate.getHours();
-      const minute = bookingDate.getMinutes();
-      const period = hour >= 12 ? 'PM' : 'AM';
-      const hour12 = hour % 12 === 0 ? 12 : hour % 12;
-      const timeValue = `${hour12}:${String(minute).padStart(2, '0')} ${period}`;
-      const serviceValue = details.map((detail) => ({
-        name: detail.ServiceItemID.trim(),
-        price: `LKR ${Number(detail.ItemPrice || 0).toLocaleString()}`,
-        duration: '',
-        category: '',
-      }));
-      const providerValue = details
-        .map((detail) => detail.TechID.trim())
-        .filter((techID) => techID && techID !== '0')
-        .filter((techID, providerIndex, all) => all.indexOf(techID) === providerIndex)
-        .map((name) => ({ name, role: '' }));
-      const serviceSchedule = decodeBookingSchedule(header.Remarks).map((entry) => ({
-        ...entry,
-        startTime: minutesToClock(entry.startMin),
-        endTime: minutesToClock(entry.endMin),
-      }));
-
-      return {
-        BookingId: header.BookingID.trim(),
-        CusCode: header.CusCode.trim(),
-        BookingMode: header.ConfirmationType.trim().toLowerCase() === 'wo'
-          ? 'without_confirmation'
-          : 'confirmed',
-        Gender: customer.Gender || '',
-        Location: header.LocCode.trim(),
-        Services: JSON.stringify(serviceValue),
-        Categories: '',
-        TotalDuration: 0,
-        TotalPrice: details.reduce((sum, detail) => sum + Number(detail.ItemPrice || 0), 0),
-        Providers: JSON.stringify(providerValue),
-        ServiceSchedule: serviceSchedule,
-        BookingDate: dateValue,
-        TimeSlot: timeValue,
-        SpecialNotes: stripBookingSchedule(header.Remarks) || null,
-        Status: header.Status.trim().toLowerCase(),
-        CreatedAt: header.TxnDateTime,
-        UpdatedAt: header.TxnDateTime,
-        ConfirmationType: header.ConfirmationType.trim(),
-      };
+    return NextResponse.json({
+      success: true,
+      customer,
+      bookings: groups.map((group) => group.booking),
     });
-
-    return NextResponse.json({ success: true, customer, bookings });
-
   } catch (error) {
     console.error('[BOOKING_GET_ERROR]', error);
     return NextResponse.json(
       { success: false, message: 'Internal server error.' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

@@ -1,6 +1,4 @@
 // src/app/api/appointmentform/route.ts
-
-
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient, Prisma } from "@prisma/client";
 import nodemailer from "nodemailer";
@@ -216,22 +214,60 @@ async function generateCusCode(): Promise<string> {
   return `CUS${padNum(num + 1, 7)}`;
 }
 
+/**
+ * Serialize booking-ID allocation for a branch. The location master row is
+ * present for every enabled branch and gives empty branches a lockable row;
+ * locking only existing booking headers cannot protect the first booking.
+ */
+async function lockBookingIDNamespaceTx(
+  tx: Prisma.TransactionClient,
+  locCode: string,
+): Promise<void> {
+  await tx.$queryRaw`
+    SELECT LocCode
+    FROM tbl_locationmaster
+    WHERE RTRIM(LocCode) = ${locCode.trim()}
+    LIMIT 1
+    FOR UPDATE
+  `;
+}
+
 async function generateBookingIDTx(
   tx: Prisma.TransactionClient,
   locCode: string,
 ): Promise<string> {
-  const result = await tx.$queryRaw<{ maxID: string | null }[]>`
-    SELECT MAX(RTRIM(BookingID)) AS maxID
-    FROM tbl_bookingheder
-    WHERE RTRIM(LocCode) = ${locCode.trim()}
-    FOR UPDATE
+  // Include service and transaction rows as well as headers. A failed/legacy
+  // write can leave either child row behind, and looking at headers alone would
+  // repeatedly generate BK0000001 until the retry limit is exhausted.
+  const result = await tx.$queryRaw<
+    { maxNumber: number | bigint | string | null }[]
+  >`
+    SELECT COALESCE(
+      MAX(CAST(SUBSTRING(RTRIM(existing_ids.BookingID), 3) AS UNSIGNED)),
+      0
+    ) AS maxNumber
+    FROM (
+      SELECT BookingID
+      FROM tbl_bookingheder
+      WHERE RTRIM(LocCode) = ${locCode.trim()}
+      UNION ALL
+      SELECT BookingID
+      FROM tbl_bookingservicedetail
+      WHERE RTRIM(LocCode) = ${locCode.trim()}
+      UNION ALL
+      SELECT BookingID
+      FROM tbl_bookingtxndetail
+      WHERE RTRIM(LocCode) = ${locCode.trim()}
+    ) AS existing_ids
+    WHERE RTRIM(existing_ids.BookingID) REGEXP '^BK[0-9]+$'
   `;
 
-  const maxID = result[0]?.maxID;
-  if (!maxID || !maxID.startsWith("BK")) return "BK0000001";
+  const current = Number(result[0]?.maxNumber ?? 0);
+  if (!Number.isSafeInteger(current) || current >= 99_999_999) {
+    throw new Error(`Booking ID sequence is exhausted for branch ${locCode.trim()}`);
+  }
 
-  const num = parseInt(maxID.replace("BK", "").trim(), 10) || 0;
-  return `BK${padNum(num + 1, 7)}`;
+  return `BK${padNum(current + 1, 7)}`;
 }
 
 function isDuplicateKeyError(err: any): boolean {
@@ -829,7 +865,7 @@ export async function GET(req: NextRequest) {
           ItemDes: true,
           ItemPrintDes: true,
           Retailprice: true,
-          DurationMin: true,
+          SerDuration: true,
           Category1: true,
           Category2: true,
           Category3: true,
@@ -892,7 +928,7 @@ export async function GET(req: NextRequest) {
           itemDes,
           itemPrintDes: s.ItemPrintDes?.trim() || itemDes,
           price: Number(s.Retailprice ?? 0),
-          durationMin: Number(s.DurationMin) > 0 ? Number(s.DurationMin) : 30,
+          durationMin: Number(s.SerDuration) > 0 ? Number(s.SerDuration) : 30,
           category1,
           category1Label: c1Map[category1] || category1,
           category2,
@@ -981,9 +1017,9 @@ export async function GET(req: NextRequest) {
 
 const MAX_BOOKING_ID_RETRIES = 5;
 
-// Event timestamps are nullable in the database. A booking that has not yet
-// been cancelled, confirmed, checked in, or billed must store NULL rather
-// than the fake date 1900-01-01 (a DATETIME column cannot store a space).
+// Booking event dates are nullable. Text actor fields use a single space when
+// an event has not happened yet; DATETIME fields use SQL NULL instead of a
+// fake 1900-01-01 value.
 
 export async function POST(req: NextRequest) {
   let body: BookingPayload;
@@ -1118,7 +1154,7 @@ export async function POST(req: NextRequest) {
         ItemDes: string;
         ItemPrintDes: string | null;
         Retailprice: number;
-        DurationMin: number;
+        SerDuration: number;
         ServiceItem: boolean | number | string;
         Enable: boolean | number | string;
         Category1: string | null;
@@ -1132,14 +1168,14 @@ export async function POST(req: NextRequest) {
         RTRIM(ItemDes) AS ItemDes,
         RTRIM(ItemPrintDes) AS ItemPrintDes,
         Retailprice AS Retailprice,
-        COALESCE(NULLIF(DurationMin, 0), 30) AS DurationMin,
+        COALESCE(NULLIF(SerDuration, 0), 30) AS SerDuration,
         ServiceItem AS ServiceItem,
         Enable AS Enable,
         RTRIM(Category1) AS Category1,
         RTRIM(Category2) AS Category2,
         RTRIM(Category3) AS Category3,
         RTRIM(Category4) AS Category4
-      FROM tbl_ItemMaster
+      FROM tbl_itemmaster
       WHERE RTRIM(LocCode) = ${locCode}
         AND RTRIM(ItemCode) IN (${Prisma.join(allItemCodes)})
     `;
@@ -1458,7 +1494,7 @@ export async function POST(req: NextRequest) {
       itemDurationMap = Object.fromEntries(
         itemRows.map((i) => [
           normalizedQualification(i.ItemCode),
-          Number(i.DurationMin) > 0 ? Number(i.DurationMin) : 30,
+          Number(i.SerDuration) > 0 ? Number(i.SerDuration) : 30,
         ]),
       );
 
@@ -1503,10 +1539,12 @@ export async function POST(req: NextRequest) {
       (itemCode) => itemDurationMap[normalizedQualification(itemCode)] || 30,
       slotToMinutes(appointmentTime),
     );
-    const appointmentRemarks = composeBookingRemarks(
-      appointmentNotes,
-      persistedSchedule,
+    const persistedScheduleByIndex = new Map(
+      persistedSchedule.map((entry) => [entry.serviceIndex, entry]),
     );
+    // Remarks contains human notes only. Actual service placement is stored on
+    // tbl_bookingservicedetail so the legacy header stays readable.
+    const appointmentRemarks = composeBookingRemarks(appointmentNotes, []);
 
     let bookingID = "";
     let detailRowCount = 0;
@@ -1535,6 +1573,11 @@ export async function POST(req: NextRequest) {
       try {
         await prisma.$transaction(
           async (tx) => {
+            // Allocate IDs and run the conflict check under the same branch
+            // lock. This also serializes the empty-branch case, where there
+            // are no existing booking rows for SELECT ... FOR UPDATE to lock.
+            await lockBookingIDNamespaceTx(tx, locCode);
+
             // ── Server-side conflict guard (race-safe) ──────────────────────
             // Lock every non-cancelled header row for this branch + date. A
             // concurrent submission from another receptionist blocks here
@@ -1545,11 +1588,11 @@ export async function POST(req: NextRequest) {
                 h.BookingID,
                 (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
                 RTRIM(d.TechID) AS TechID,
-                COALESCE(SUM(COALESCE(NULLIF(i.DurationMin, 0), 30)), 30) AS TotalMin
+                COALESCE(SUM(COALESCE(NULLIF(i.SerDuration, 0), 30)), 30) AS TotalMin
               FROM tbl_bookingheder h
-              JOIN tbl_bookingdetail d
+              JOIN tbl_bookingservicedetail d
                 ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
-              LEFT JOIN tbl_ItemMaster i
+              LEFT JOIN tbl_itemmaster i
                 ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
                AND RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
               WHERE RTRIM(h.LocCode) = ${locCode.trim()}
@@ -1560,7 +1603,7 @@ export async function POST(req: NextRequest) {
             `;
 
             // Existing occupancy: per (booking, technician) → real duration
-            // (Σ tbl_itemmaster.DurationMin for that technician's rows).
+            // (Σ tbl_itemmaster.SerDuration for that technician's rows).
             const byKey = new Map<string, { start: number; total: number }>();
             for (const row of conflictRows) {
               const tech = trimValue(row.TechID);
@@ -1623,13 +1666,7 @@ export async function POST(req: NextRequest) {
                 AdvBookingAmount,
                 Remarks,
                 UserID,
-                CancelledDate,
-                CancelledBy,
                 Pax,
-                Confirmed,
-                ConfirmedBy,
-                ConfirmedDate,
-                CheckInTime,
                 BillingTime
               ) VALUES (
                 ${toChar(locCode, 10)},
@@ -1644,32 +1681,57 @@ export async function POST(req: NextRequest) {
                 ${body.advBookingAmount ?? 0},
                 ${appointmentRemarks},
                 ${userID},
-                ${initiallyCancelled ? createdAt : null},
-                ${initiallyCancelled ? eventActor : " "},
                 ${body.guests.length},
-                ${initiallyConfirmed ? 1 : 0},
-                ${initiallyConfirmed ? eventActor : " "},
-                ${initiallyConfirmed ? createdAt : null},
-                ${initiallyOngoing ? createdAt : null},
                 ${null}
               )
             `;
 
             detailRowCount = 0;
+            let globalServiceIndex = 0;
 
             for (const guest of body.guests) {
               const guessID = toChar(guest.guessID, 10);
 
+              await tx.$executeRaw`
+                INSERT INTO tbl_bookingtxndetail (
+                  LocCode,
+                  BookingID,
+                  GuessID,
+                  BookingDate,
+                  CancelledDate,
+                  CancelledBy,
+                  Confirmed,
+                  ConfirmedBy,
+                  ConfirmedDate,
+                  CheckInTime
+                ) VALUES (
+                  ${toChar(locCode, 10)},
+                  ${toChar(bookingID, 10)},
+                  ${guessID},
+                  ${bookingDateTime},
+                  ${initiallyCancelled ? createdAt : null},
+                  ${initiallyCancelled ? eventActor : " "},
+                  ${initiallyConfirmed ? 1 : 0},
+                  ${initiallyConfirmed ? eventActor : " "},
+                  ${initiallyConfirmed ? createdAt : null},
+                  ${initiallyOngoing ? createdAt : null}
+                )
+              `;
+
               for (const svc of guest.services) {
+                const schedule = persistedScheduleByIndex.get(globalServiceIndex);
                 await tx.$executeRaw`
-                  INSERT INTO tbl_bookingdetail (
+                  INSERT INTO tbl_bookingservicedetail (
                     LocCode,
                     BookingID,
                     GuessID,
                     ServiceItemID,
                     Qty,
                     ItemPrice,
-                    TechID
+                    TechID,
+                    ScheduleIndex,
+                    ScheduleStartMin,
+                    ScheduleEndMin
                   ) VALUES (
                     ${toChar(locCode, 10)},
                     ${toChar(bookingID, 10)},
@@ -1677,10 +1739,14 @@ export async function POST(req: NextRequest) {
                     ${toChar(svc.serviceItemID, 10)},
                     ${toChar(String(svc.qty ?? 1), 10)},
                     ${svc.itemPrice ?? 0},
-                    ${toChar(svc.techID || "0", 10)}
+                    ${toChar(svc.techID || "0", 10)},
+                    ${schedule?.serviceIndex ?? globalServiceIndex},
+                    ${schedule?.startMin ?? null},
+                    ${schedule?.endMin ?? null}
                   )
                 `;
 
+                globalServiceIndex++;
                 detailRowCount++;
               }
             }

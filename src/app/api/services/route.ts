@@ -1,3 +1,4 @@
+// src/app/api/services/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 
@@ -44,6 +45,20 @@ function num(value: unknown, fallback = 0): number {
 
 function bool(value: unknown, fallback = false): boolean {
   return value === undefined || value === null ? fallback : Boolean(value);
+}
+
+type MofValue = "M" | "F" | "O";
+
+function normalizeMof(value: unknown): MofValue {
+  const normalized = text(value).toUpperCase();
+  if (normalized === "M" || normalized === "MALE") return "M";
+  if (normalized === "F" || normalized === "FEMALE") return "F";
+  return "O";
+}
+
+function normalizeServiceDuration(value: unknown, isService: boolean): number {
+  if (!isService) return 0;
+  return Math.max(0, Math.floor(num(value)));
 }
 
 export async function GET() {
@@ -153,6 +168,7 @@ export async function GET() {
         locCode: item.LocCode.trim(),
         itemCode,
         serviceItem: item.ServiceItem,
+        mof: normalizeMof(item.MOF),
         itemDes: item.ItemDes,
         itemPrintDes: item.ItemPrintDes.trim(),
         masterUnitID: item.MasterUnitID.trim(),
@@ -172,10 +188,9 @@ export async function GET() {
         stockBalance: num(item.StockBalance),
         expiryItem: item.ExpiryItem,
         retailPrice: num(item.Retailprice),
-        // Older item rows may not have a valid duration yet. Always return a
-        // number so the service form stays controlled and bookings have a
-        // sensible fallback duration.
-        durationMin: num(item.DurationMin) > 0 ? num(item.DurationMin) : 30,
+        // SerDuration is stored as zero by default. Booking/availability code
+        // applies its existing 30-minute fallback when a service has no value.
+        durationMin: Math.max(0, num(item.SerDuration)),
         wsApp: item.WSApp,
         wsQty: num(item.WSQty),
         wsPrice: num(item.WSPrice),
@@ -256,6 +271,7 @@ export async function POST(req: NextRequest) {
     }
 
     const itemCode = body.itemCode.trim().toUpperCase();
+    const serviceItem = bool(body.serviceItem);
     const requestedDetails: LocationInput[] = Array.isArray(
       body.locationDetails,
     )
@@ -326,7 +342,8 @@ export async function POST(req: NextRequest) {
             data: {
               LocCode: target.code,
               ItemCode: itemCode,
-              ServiceItem: bool(body.serviceItem),
+              ServiceItem: serviceItem,
+              MOF: normalizeMof(body.mof ?? body.gender),
               ItemDes: text(body.itemDes),
               ItemPrintDes: text(body.itemPrintDes, " "),
               MasterUnitID: text(body.masterUnitID, "UNT03"),
@@ -356,7 +373,10 @@ export async function POST(req: NextRequest) {
               PackSize: num(body.packSize),
               PackPrice: num(body.packPrice),
               SemiFinishedProd: bool(body.semiFinishedProd),
-              DurationMin: num(body.durationMin) > 0 ? num(body.durationMin) : 30,
+              SerDuration: normalizeServiceDuration(
+                body.serDuration ?? body.durationMin,
+                serviceItem,
+              ),
               ItemPic: picBuffer,
               CreateBy: text(body.createBy, "ADMIN"),
               UpdBy: text(body.updBy, "ADMIN"),

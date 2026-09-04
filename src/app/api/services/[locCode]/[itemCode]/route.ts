@@ -1,3 +1,4 @@
+// src/app/api/services/[locCode]/[itemCode]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 
@@ -54,6 +55,20 @@ function num(value: unknown, fallback = 0): number {
 
 function bool(value: unknown, fallback = false): boolean {
   return value === undefined || value === null ? fallback : Boolean(value);
+}
+
+type MofValue = "M" | "F" | "O";
+
+function normalizeMof(value: unknown): MofValue {
+  const normalized = text(value).toUpperCase();
+  if (normalized === "M" || normalized === "MALE") return "M";
+  if (normalized === "F" || normalized === "FEMALE") return "F";
+  return "O";
+}
+
+function normalizeServiceDuration(value: unknown, isService: boolean): number {
+  if (!isService) return 0;
+  return Math.max(0, Math.floor(num(value)));
 }
 
 function imageToBuffer(value: unknown): Buffer | null | undefined {
@@ -160,9 +175,18 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         }
 
         const picBuffer = imageToBuffer(body.itemPic);
+        const serviceItem = bool(body.serviceItem);
+        const hasMof =
+          (body.mof !== undefined && body.mof !== null) ||
+          (body.gender !== undefined && body.gender !== null);
+        const hasDuration =
+          body.serDuration !== undefined || body.durationMin !== undefined;
         const commonData = {
           ItemCode: itemCode,
-          ServiceItem: bool(body.serviceItem),
+          ServiceItem: serviceItem,
+          MOF: hasMof
+            ? normalizeMof(body.mof ?? body.gender)
+            : normalizeMof(baseRow.MOF),
           ItemDes: text(body.itemDes),
           ItemPrintDes: text(body.itemPrintDes, " "),
           MasterUnitID: text(body.masterUnitID, "UNT03"),
@@ -185,7 +209,14 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
           PackSize: num(body.packSize),
           PackPrice: num(body.packPrice),
           SemiFinishedProd: bool(body.semiFinishedProd),
-          DurationMin: num(body.durationMin) || 30,
+          SerDuration: serviceItem
+            ? hasDuration
+              ? normalizeServiceDuration(
+                  body.serDuration ?? body.durationMin,
+                  true,
+                )
+              : Math.max(0, Number(baseRow.SerDuration) || 0)
+            : 0,
           UpdBy: text(body.updBy, "ADMIN"),
           ...(picBuffer !== undefined ? { ItemPic: picBuffer } : {}),
         };

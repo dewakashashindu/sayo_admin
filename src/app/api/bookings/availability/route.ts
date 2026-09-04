@@ -74,50 +74,34 @@ async function loadLegacyBookings(date: string, locCode?: string): Promise<Legac
   if (locCode) {
     return prisma.$queryRaw<LegacyAvailabilityRow[]>`
       SELECT
-        RTRIM(h.BookingID) AS BookingID,
-        (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
-        RTRIM(d.TechID) AS TechID,
-        RTRIM(d.ServiceItemID) AS ServiceItemID,
-        RTRIM(u.UserName) AS ProviderName,
-        h.Remarks AS Remarks,
-        COALESCE(NULLIF(i.DurationMin, 0), 30) AS DurationMin,
-        d.Qty AS Qty
-      FROM tbl_bookingheder h
-      JOIN tbl_bookingdetail d
-        ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
-      LEFT JOIN tbl_itemmaster i
-        ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
-       AND (RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
-         OR LEFT(RTRIM(i.ItemCode), 10) = RTRIM(d.ServiceItemID))
-      LEFT JOIN tbl_userdetails u
-        ON RTRIM(u.UserId) = RTRIM(d.TechID)
-      WHERE DATE(h.BookingDate) = ${date}
-        AND RTRIM(h.LocCode) = ${locCode}
-        AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL')
+        RTRIM(BookingID) AS BookingID,
+        (HOUR(BookingDate) * 60 + MINUTE(BookingDate)) AS StartMin,
+        RTRIM(TechID) AS TechID,
+        RTRIM(ServiceItemID) AS ServiceItemID,
+        RTRIM(UserName) AS ProviderName,
+        Remarks AS Remarks,
+        COALESCE(NULLIF(SerDuration, 0), 30) AS DurationMin,
+        Qty AS Qty
+      FROM Vw_BookingServiceDetail
+      WHERE DATE(BookingDate) = ${date}
+        AND RTRIM(LocCode) = ${locCode}
+        AND UPPER(RTRIM(Status)) NOT IN ('CANCELLED', 'CANCEL')
     `;
   }
 
   return prisma.$queryRaw<LegacyAvailabilityRow[]>`
     SELECT
-      RTRIM(h.BookingID) AS BookingID,
-      (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
-      RTRIM(d.TechID) AS TechID,
-      RTRIM(d.ServiceItemID) AS ServiceItemID,
-      RTRIM(u.UserName) AS ProviderName,
-      h.Remarks AS Remarks,
-      COALESCE(NULLIF(i.DurationMin, 0), 30) AS DurationMin,
-      d.Qty AS Qty
-    FROM tbl_bookingheder h
-    JOIN tbl_bookingdetail d
-      ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
-    LEFT JOIN tbl_ItemMaster i
-      ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
-     AND (RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
-       OR LEFT(RTRIM(i.ItemCode), 10) = RTRIM(d.ServiceItemID))
-    LEFT JOIN tbl_userdetails u
-      ON RTRIM(u.UserId) = RTRIM(d.TechID)
-    WHERE DATE(h.BookingDate) = ${date}
-      AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL')
+      RTRIM(BookingID) AS BookingID,
+      (HOUR(BookingDate) * 60 + MINUTE(BookingDate)) AS StartMin,
+      RTRIM(TechID) AS TechID,
+      RTRIM(ServiceItemID) AS ServiceItemID,
+      RTRIM(UserName) AS ProviderName,
+      Remarks AS Remarks,
+      COALESCE(NULLIF(SerDuration, 0), 30) AS DurationMin,
+      Qty AS Qty
+    FROM Vw_BookingServiceDetail
+    WHERE DATE(BookingDate) = ${date}
+      AND UPPER(RTRIM(Status)) NOT IN ('CANCELLED', 'CANCEL')
   `;
 }
 

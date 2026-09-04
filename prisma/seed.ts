@@ -1,3 +1,4 @@
+// prisma/seed.ts
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -171,6 +172,7 @@ async function main() {
       LocCode: loc.LocCode,
       ItemCode: itemCode,
       ServiceItem: i % 4 === 0,
+      MOF: 'O',
       ItemDes: `${base.name} - Vol ${Math.ceil(i / 10)}`,
       ItemPrintDes: `${base.name}`.substring(0, 50),
       MasterUnitID: unit.MasterUnitID,
@@ -190,6 +192,7 @@ async function main() {
       StockBalance: Math.floor(Math.random() * 100) + 10,
       ExpiryItem: i % 2 === 0,
       Retailprice: retailPrice,
+      SerDuration: 0,
       WSApp: true,
       WSQty: 5,
       WSPrice: retailPrice * 0.9,

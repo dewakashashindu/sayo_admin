@@ -1,3 +1,5 @@
+// prisma/schema.prisma
+// Item Master fields: MOF stores M/F/O and SerDuration stores service minutes.
 generator client {
   provider      = "prisma-client-js"
   binaryTargets = ["native", "windows", "debian-openssl-3.0.x"]
@@ -102,6 +104,7 @@ model Tbl_ItemMaster {
   LocCode          String   @db.Char(10)
   ItemCode         String   @db.Char(15)
   ServiceItem      Boolean  @default(false)
+  MOF              String   @default("O") @db.Char(1)
   ItemDes          String   @db.VarChar(50)
   ItemPrintDes     String   @default(" ") @db.VarChar(50)
   MasterUnitID     String   @db.Char(10)
@@ -129,7 +132,7 @@ model Tbl_ItemMaster {
   PackPrice        Float    @default(0)
   SemiFinishedProd Boolean  @default(false)
   ItemPic          Bytes?
-  DurationMin      Int      @default(30) @db.Int
+  SerDuration      Int      @default(0) @db.Int
   CreateDate       DateTime @default(now()) @db.DateTime(0)
   CreateBy         String   @default("0") @db.Char(10)
   UpdDate          DateTime @default(now()) @updatedAt @db.DateTime(0)
@@ -422,16 +425,36 @@ model tbl_billtaxes {
   @@id([LocCode, BillNo, TaxCode])
 }
 
-model tbl_bookingdetail {
-  LocCode       String @db.Char(10)
-  BookingID     String @db.Char(10)
-  GuessID       String @db.Char(10)
-  ServiceItemID String @db.Char(10)
-  Qty           String @db.Char(10)
-  ItemPrice     Float  @default(0)
-  TechID        String @db.Char(10)
+model tbl_bookingservicedetail {
+  LocCode         String @db.Char(10)
+  BookingID       String @db.Char(10)
+  GuessID         String @db.Char(10)
+  ServiceItemID   String @db.Char(10)
+  Qty             String @db.Char(10)
+  ItemPrice       Float  @default(0)
+  TechID          String @db.Char(10)
+  ScheduleIndex   Int?
+  ScheduleStartMin Int?
+  ScheduleEndMin   Int?
 
   @@id([LocCode, BookingID, GuessID, ServiceItemID])
+  @@map("tbl_bookingservicedetail")
+}
+
+model tbl_bookingtxndetail {
+  LocCode       String   @db.Char(10)
+  BookingID     String   @db.Char(10)
+  GuessID       String   @db.Char(10)
+  BookingDate   DateTime @db.DateTime(0)
+  CancelledDate DateTime? @db.DateTime(0)
+  CancelledBy   String     @default(" ") @db.Char(10)
+  Confirmed     Boolean    @default(false)
+  ConfirmedBy   String     @default(" ") @db.Char(10)
+  ConfirmedDate DateTime?  @db.DateTime(0)
+  CheckInTime   DateTime?  @db.DateTime(0)
+
+  @@id([LocCode, BookingID, GuessID])
+  @@map("tbl_bookingtxndetail")
 }
 
 model tbl_bookingheder {
@@ -447,16 +470,8 @@ model tbl_bookingheder {
   Remarks           String   @default(" ") @db.VarChar(500)
   UserID            String   @default("0") @db.Char(10)
   TxnDateTime       DateTime @default(now()) @db.DateTime(0)
-
-
-  CancelledDate     DateTime?
-  CancelledBy       String   @default(" ") @db.VarChar(10)
   Pax               Int
-  Confirmed         Boolean
-  ConfirmedBy       String   @default(" ") @db.Char(10)
-  ConfirmedDate     DateTime?
-  CheckInTime       DateTime?
-  BillingTime       DateTime?
+  BillingTime       DateTime? @db.DateTime(0)
 
   @@id([LocCode, BookingID])
 }

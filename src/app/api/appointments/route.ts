@@ -1,7 +1,7 @@
 // src/app/api/appointments/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { sendAppointmentSMS } from "@/lib/sms";
 import {
   composeBookingRemarks,
@@ -108,6 +108,11 @@ function dateOnly(value: unknown): string | null {
 
 function dateTimeIso(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
+
+  const raw = value instanceof Date
+    ? value.toISOString().replace("T", " ").slice(0, 19)
+    : String(value);
+  if (raw.startsWith("1900-01-01")) return null;
 
   const parsed = new Date(value as any);
   if (Number.isNaN(parsed.getTime())) return null;
@@ -254,7 +259,7 @@ function extractNotes(remarks: string | null): string {
 }
 
 function isTrue(value: unknown): boolean {
-  return value === true || value === 1 || value === "1" || value === "true";
+  return value === true || Number(value) === 1 || value === "true";
 }
 
 interface RawHeader {
@@ -288,6 +293,16 @@ interface RawDetail {
   Qty: string | number;
   ItemPrice: number | string;
   TechID: string;
+  ScheduleIndex?: number | string | null;
+  ScheduleStartMin?: number | string | null;
+  ScheduleEndMin?: number | string | null;
+  ItemDes?: string | null;
+  ItemPrintDes?: string | null;
+  SerDuration?: number | string | null;
+  Category1?: string | null;
+  Category2?: string | null;
+  Category3?: string | null;
+  Category4?: string | null;
 }
 
 interface RawCustomer {
@@ -357,44 +372,66 @@ async function readHeaders(
   const dateValue = requestedDate?.trim() || "";
   const legacyDatePattern = `%Date:${dateValue}%`;
 
-  // Apply the optional date/branch predicates in SQL before LIMIT 500. The
-  // previous implementation limited the newest 500 headers first and only
-  // then filtered in JavaScript, which could hide an older appointment on the
-  // requested calendar date.
+  // Header and transaction data are read through the database views. The
+  // transaction aggregation restores the status-event fields that the old
+  // header table carried while keeping TxnDetail authoritative.
   return prisma.$queryRaw<RawHeader[]>`
     SELECT
-      RTRIM(BookingID)        AS BookingID,
-      RTRIM(LocCode)          AS LocCode,
-      RTRIM(CusCode)          AS CusCode,
-      DATE_FORMAT(BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
-      TxnDateTime,
-      RTRIM(BookingTypeID)    AS BookingTypeID,
-      RTRIM(Status)           AS Status,
-      RTRIM(ConfirmationType) AS ConfirmationType,
-      RTRIM(AdvBookingPayMode) AS AdvBookingPayMode,
-      AdvBookingAmount,
-      Remarks,
-      RTRIM(UserID)           AS UserID,
-      CancelledDate,
-      RTRIM(CancelledBy)      AS CancelledBy,
-      Pax,
-      Confirmed,
-      RTRIM(ConfirmedBy)      AS ConfirmedBy,
-      ConfirmedDate,
-      CheckInTime,
-      BillingTime
-    FROM tbl_bookingheder
+      RTRIM(h.BookingID) AS BookingID,
+      RTRIM(h.LocCode) AS LocCode,
+      RTRIM(h.CusCode) AS CusCode,
+      h.BookingDate AS BookingDate,
+      h.TxnDateTime AS TxnDateTime,
+      RTRIM(h.BookingTypeID) AS BookingTypeID,
+      RTRIM(h.Status) AS Status,
+      RTRIM(h.ConfirmationType) AS ConfirmationType,
+      RTRIM(h.AdvBookingPayMode) AS AdvBookingPayMode,
+      h.AdvBookingAmount AS AdvBookingAmount,
+      h.Remarks AS Remarks,
+      RTRIM(h.UserID) AS UserID,
+      MAX(
+        CASE
+          WHEN t.CancelledDate > '1900-01-01 00:00:00' THEN t.CancelledDate
+          ELSE NULL
+        END
+      ) AS CancelledDate,
+      MAX(CASE WHEN t.CancelledDate > '1900-01-01 00:00:00' THEN RTRIM(t.CancelledBy) ELSE NULL END) AS CancelledBy,
+      h.Pax AS Pax,
+      COALESCE(MAX(t.Confirmed), 0) AS Confirmed,
+      MAX(CASE WHEN t.Confirmed = 1 THEN RTRIM(t.ConfirmedBy) ELSE NULL END) AS ConfirmedBy,
+      MAX(CASE WHEN t.ConfirmedDate > '1900-01-01 00:00:00' THEN t.ConfirmedDate ELSE NULL END) AS ConfirmedDate,
+      MAX(CASE WHEN t.CheckInTime > '1900-01-01 00:00:00' THEN t.CheckInTime ELSE NULL END) AS CheckInTime,
+      h.BillingTime AS BillingTime
+    FROM Vw_BookingHeader h
+    LEFT JOIN Vw_BookingTxnDetail t
+      ON RTRIM(t.LocCode) = RTRIM(h.LocCode)
+     AND RTRIM(t.BookingID) = RTRIM(h.BookingID)
     WHERE
-      (${hasLocationFilter ? 1 : 0} = 0 OR RTRIM(LocCode) = ${locationValue})
+      (${hasLocationFilter ? 1 : 0} = 0 OR RTRIM(h.LocCode) = ${locationValue})
       AND (
         ${hasDateFilter ? 1 : 0} = 0
-        OR DATE(BookingDate) = ${dateValue}
+        OR DATE(h.BookingDate) = ${dateValue}
         OR (
-          BookingDate IS NULL
-          AND Remarks LIKE ${legacyDatePattern}
+          h.BookingDate IS NULL
+          AND h.Remarks LIKE ${legacyDatePattern}
         )
       )
-    ORDER BY TxnDateTime DESC
+    GROUP BY
+      h.BookingID,
+      h.LocCode,
+      h.CusCode,
+      h.BookingDate,
+      h.TxnDateTime,
+      h.BookingTypeID,
+      h.Status,
+      h.ConfirmationType,
+      h.AdvBookingPayMode,
+      h.AdvBookingAmount,
+      h.Remarks,
+      h.UserID,
+      h.Pax,
+      h.BillingTime
+    ORDER BY h.TxnDateTime DESC
     LIMIT 500
   `;
 }
@@ -416,6 +453,44 @@ function detailDuration(
     itemDurationMap.get(trimValue(detail.ServiceItemID)) || 30;
   const quantity = Number(detail.Qty) > 0 ? Number(detail.Qty) : 1;
   return (Number(unitDuration) > 0 ? Number(unitDuration) : 30) * quantity;
+}
+
+function hasDetailSchedule(detail: RawDetail): boolean {
+  const startMin = Number(detail.ScheduleStartMin);
+  const endMin = Number(detail.ScheduleEndMin);
+  return Number.isFinite(startMin) && Number.isFinite(endMin) && endMin > startMin;
+}
+
+/** New rows store placement on each service row; older rows use Remarks. */
+function orderDetailsForSchedule(details: RawDetail[]): RawDetail[] {
+  const hasIndexes = details.some((detail) => {
+    const index = Number(detail.ScheduleIndex);
+    return Number.isInteger(index) && index >= 0;
+  });
+  if (!hasIndexes) return details;
+
+  return [...details].sort((first, second) => {
+    const firstIndex = Number(first.ScheduleIndex);
+    const secondIndex = Number(second.ScheduleIndex);
+    const firstValid = Number.isInteger(firstIndex) && firstIndex >= 0;
+    const secondValid = Number.isInteger(secondIndex) && secondIndex >= 0;
+    if (firstValid && secondValid) return firstIndex - secondIndex;
+    if (firstValid) return -1;
+    if (secondValid) return 1;
+    return trimValue(first.ServiceItemID).localeCompare(trimValue(second.ServiceItemID));
+  });
+}
+
+function scheduleFromDetailColumns(
+  details: RawDetail[],
+): StoredBookingScheduleEntry[] | null {
+  if (details.length === 0 || !details.every(hasDetailSchedule)) return null;
+  return details.map((detail, serviceIndex) => ({
+    serviceIndex,
+    itemCode: "",
+    startMin: Number(detail.ScheduleStartMin),
+    endMin: Number(detail.ScheduleEndMin),
+  }));
 }
 
 /** Build a provider-aware schedule for legacy rows without saved metadata. */
@@ -647,8 +722,18 @@ export async function GET(req: NextRequest) {
         RTRIM(ServiceItemID) AS ServiceItemID,
         Qty,
         ItemPrice,
-        RTRIM(TechID)        AS TechID
-      FROM tbl_bookingdetail
+        RTRIM(TechID)        AS TechID,
+        ScheduleIndex,
+        ScheduleStartMin,
+        ScheduleEndMin,
+        RTRIM(ItemDes)       AS ItemDes,
+        RTRIM(ItemPrintDes)  AS ItemPrintDes,
+        SerDuration,
+        RTRIM(Category1)     AS Category1,
+        RTRIM(Category2)     AS Category2,
+        RTRIM(Category3)     AS Category3,
+        RTRIM(Category4)     AS Category4
+      FROM Vw_BookingServiceDetail
       WHERE RTRIM(BookingID) IN (${bidIn})
         AND RTRIM(LocCode)   IN (${locIn})
     `);
@@ -667,27 +752,19 @@ export async function GET(req: NextRequest) {
       WHERE RTRIM(CusCode) IN (${quotedList(cusCodeList)})
     `);
 
-    const itemCodeList = [
-      ...new Set(details.map((detail) => trimValue(detail.ServiceItemID))),
-    ];
-    let items: RawItem[] = [];
-
-    if (itemCodeList.length > 0) {
-      items = await prisma.$queryRawUnsafe<RawItem[]>(`
-        SELECT
-          RTRIM(ItemCode)     AS ItemCode,
-          RTRIM(ItemDes)      AS ItemDes,
-          RTRIM(ItemPrintDes) AS ItemPrintDes,
-          COALESCE(NULLIF(DurationMin, 0), 30) AS DurationMin,
-          RTRIM(Category1)    AS Category1,
-          RTRIM(Category2)    AS Category2,
-          RTRIM(Category3)    AS Category3,
-          RTRIM(Category4)    AS Category4
-        FROM tbl_itemmaster
-        WHERE RTRIM(ItemCode) IN (${quotedList(itemCodeList)})
-          AND RTRIM(LocCode)  IN (${locIn})
-      `);
-    }
+    // The service-detail view already joins ItemMaster, including the new
+    // MOF/SerDuration values and category codes. Build the lookup from that
+    // read model instead of querying the old ItemMaster duration column.
+    const items: RawItem[] = details.map((detail) => ({
+      ItemCode: trimValue(detail.ServiceItemID),
+      ItemDes: trimValue(detail.ItemDes) || trimValue(detail.ServiceItemID),
+      ItemPrintDes: trimValue(detail.ItemPrintDes) || null,
+      DurationMin: detail.SerDuration ?? 0,
+      Category1: detail.Category1 ?? null,
+      Category2: detail.Category2 ?? null,
+      Category3: detail.Category3 ?? null,
+      Category4: detail.Category4 ?? null,
+    }));
 
     const techIDList = [
       ...new Set(
@@ -761,7 +838,9 @@ export async function GET(req: NextRequest) {
       const bookingID = trimValue(header.BookingID);
       const branchCode = trimValue(header.LocCode);
       const customer = customerMap.get(trimValue(header.CusCode));
-      const bookingDetails = detailMap.get(`${branchCode}|${bookingID}`) ?? [];
+      const bookingDetails = orderDetailsForSchedule(
+        detailMap.get(`${branchCode}|${bookingID}`) ?? [],
+      );
 
       const originalServiceNames = [
         ...new Set(
@@ -813,7 +892,9 @@ export async function GET(req: NextRequest) {
         header.Remarks,
       );
 
-      const storedSchedule = decodeBookingSchedule(header.Remarks);
+      const storedSchedule =
+        scheduleFromDetailColumns(bookingDetails) ??
+        decodeBookingSchedule(header.Remarks);
       const appointmentStartMin = slotToMinutes(appointmentTime);
       const schedulePairs = resolveSchedulePairs(
         bookingDetails,
@@ -952,6 +1033,62 @@ export async function GET(req: NextRequest) {
   }
 }
 
+async function ensureTxnRowsTx(
+  tx: Prisma.TransactionClient,
+  locCode: string,
+  bookingID: string,
+): Promise<void> {
+  // Migration creates these rows for existing bookings. This INSERT IGNORE is
+  // an additional guard for a legacy booking that has no guest transaction
+  // row, so status updates never silently affect zero rows.
+  await tx.$executeRaw`
+    INSERT IGNORE INTO tbl_bookingtxndetail (
+      LocCode,
+      BookingID,
+      GuessID,
+      BookingDate,
+      CancelledDate,
+      CancelledBy,
+      Confirmed,
+      ConfirmedBy,
+      ConfirmedDate,
+      CheckInTime
+    )
+    SELECT
+      h.LocCode,
+      h.BookingID,
+      COALESCE(NULLIF(RTRIM(d.GuessID), ''), 'MAIN'),
+      h.BookingDate,
+      CASE
+        WHEN UPPER(RTRIM(h.Status)) IN ('CANCELLED', 'CANCEL') THEN NOW()
+        ELSE ${null}
+      END,
+      ' ',
+      CASE
+        WHEN UPPER(RTRIM(h.Status)) IN ('CONFIRMED', 'CONFIRM', 'ONGOING', 'IN PROGRESS') THEN 1
+        ELSE 0
+      END,
+      ' ',
+      CASE
+        WHEN UPPER(RTRIM(h.Status)) IN ('CONFIRMED', 'CONFIRM', 'ONGOING', 'IN PROGRESS') THEN NOW()
+        ELSE ${null}
+      END,
+      CASE
+        WHEN UPPER(RTRIM(h.Status)) IN ('ONGOING', 'IN PROGRESS') THEN NOW()
+        ELSE ${null}
+      END
+    FROM tbl_bookingheder h
+    LEFT JOIN (
+      SELECT DISTINCT LocCode, BookingID, RTRIM(GuessID) AS GuessID
+      FROM tbl_bookingservicedetail
+    ) d
+      ON d.LocCode = h.LocCode
+     AND d.BookingID = h.BookingID
+    WHERE RTRIM(h.LocCode) = ${locCode}
+      AND RTRIM(h.BookingID) = ${bookingID}
+  `;
+}
+
 /* PATCH /api/appointments */
 export async function PATCH(req: NextRequest) {
   try {
@@ -1028,8 +1165,10 @@ export async function PATCH(req: NextRequest) {
         currentRemarks,
       );
       const currentStatus = trimValue(headerRows[0].Status).toUpperCase();
-      const storedSchedule = decodeBookingSchedule(currentRemarks);
+      const remarksSchedule = decodeBookingSchedule(currentRemarks);
       const oldStartMin = slotToMinutes(currentTime);
+
+      await ensureTxnRowsTx(tx, locCode, bookingID);
 
       if (hasScheduleChange) {
         previousDate = currentDate;
@@ -1055,7 +1194,7 @@ export async function PATCH(req: NextRequest) {
       }
 
       // Resolve a calendar display name to the canonical UserId before it is
-      // used for the conflict check or written to tbl_bookingdetail. The
+      // used for the conflict check or written to tbl_bookingservicedetail. The
       // explicit "0" / "Unassigned" path keeps the existing unassigned admin
       // booking flow intact.
       let targetTechID: string | null = null;
@@ -1122,19 +1261,26 @@ export async function PATCH(req: NextRequest) {
           d.Qty AS Qty,
           0 AS ItemPrice,
           RTRIM(d.TechID) AS TechID,
-          COALESCE(NULLIF(i.DurationMin, 0), 30) AS DurationMin
-        FROM tbl_bookingdetail d
-        LEFT JOIN tbl_ItemMaster i
+          d.ScheduleIndex AS ScheduleIndex,
+          d.ScheduleStartMin AS ScheduleStartMin,
+          d.ScheduleEndMin AS ScheduleEndMin,
+          COALESCE(NULLIF(i.SerDuration, 0), 30) AS DurationMin
+        FROM tbl_bookingservicedetail d
+        LEFT JOIN tbl_itemmaster i
           ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
          AND RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
         WHERE RTRIM(d.BookingID) = ${bookingID}
           AND RTRIM(d.LocCode) = ${locCode}
         FOR UPDATE
       `;
-      const selfDetails = selfDetailRows.map((row) => ({
-        ...row,
-        ItemPrice: Number(row.ItemPrice) || 0,
-      }));
+      const selfDetails = orderDetailsForSchedule(
+        selfDetailRows.map((row) => ({
+          ...row,
+          ItemPrice: Number(row.ItemPrice) || 0,
+        })),
+      );
+      const storedSchedule =
+        scheduleFromDetailColumns(selfDetails) ?? remarksSchedule;
       const selfDurationMap = new Map<string, number>(
         selfDetailRows.map((row) => [
           trimValue(row.ServiceItemID),
@@ -1167,7 +1313,6 @@ export async function PATCH(req: NextRequest) {
           : 0;
 
       let candidatePairs: ScheduleDetailPair[];
-      let scheduleToSave: StoredBookingScheduleEntry[] | null = null;
 
       if (targetTechID !== null) {
         const targetStartMin = newStartMin >= 0 ? newStartMin : oldStartMin;
@@ -1176,7 +1321,6 @@ export async function PATCH(req: NextRequest) {
           selfDurationMap,
           targetStartMin,
         );
-        scheduleToSave = candidatePairs.map(({ entry }) => ({ ...entry }));
       } else {
         candidatePairs = originalPairs.map(({ detail, entry }) => ({
           detail,
@@ -1186,13 +1330,6 @@ export async function PATCH(req: NextRequest) {
             endMin: entry.endMin + scheduleShift,
           },
         }));
-        if (hasScheduleChange) {
-          scheduleToSave = storedSchedule.map((entry) => ({
-            ...entry,
-            startMin: entry.startMin + scheduleShift,
-            endMin: entry.endMin + scheduleShift,
-          }));
-        }
       }
 
       const candidateWindows = candidatePairs
@@ -1203,7 +1340,7 @@ export async function PATCH(req: NextRequest) {
           return {
             techID,
             startMin: entry.startMin,
-            // DurationMin is read from tbl_ItemMaster above. Never derive the
+            // SerDuration is read from tbl_ItemMaster above. Never derive the
             // occupancy from detailCount or a fixed 30-minute block.
             endMin: entry.startMin + detailDuration(detail, selfDurationMap),
           };
@@ -1236,13 +1373,16 @@ export async function PATCH(req: NextRequest) {
             d.Qty AS Qty,
             0 AS ItemPrice,
             RTRIM(d.TechID) AS TechID,
+            d.ScheduleIndex AS ScheduleIndex,
+            d.ScheduleStartMin AS ScheduleStartMin,
+            d.ScheduleEndMin AS ScheduleEndMin,
             (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
             h.Remarks AS Remarks,
-            COALESCE(NULLIF(i.DurationMin, 0), 30) AS DurationMin
+            COALESCE(NULLIF(i.SerDuration, 0), 30) AS DurationMin
           FROM tbl_bookingheder h
-          JOIN tbl_bookingdetail d
+          JOIN tbl_bookingservicedetail d
             ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
-          LEFT JOIN tbl_ItemMaster i
+          LEFT JOIN tbl_itemmaster i
             ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
            AND RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
           WHERE RTRIM(h.LocCode) = ${locCode}
@@ -1263,7 +1403,12 @@ export async function PATCH(req: NextRequest) {
         >();
         lockRows.forEach((row) => {
           const id = trimValue(row.BookingID);
-          const current = rowsByBooking.get(id) || {
+          const current: {
+            startMin: number;
+            remarks: string | null;
+            details: RawDetail[];
+            durations: Map<string, number>;
+          } = rowsByBooking.get(id) || {
             startMin: Number(row.StartMin) || 0,
             remarks: row.Remarks,
             details: [],
@@ -1286,9 +1431,13 @@ export async function PATCH(req: NextRequest) {
           endMin: number;
         }[] = [];
         rowsByBooking.forEach((booking) => {
+          const orderedDetails = orderDetailsForSchedule(booking.details);
+          const storedSchedule =
+            scheduleFromDetailColumns(orderedDetails) ??
+            decodeBookingSchedule(booking.remarks);
           const pairs = resolveSchedulePairs(
-            booking.details,
-            decodeBookingSchedule(booking.remarks),
+            orderedDetails,
+            storedSchedule,
             booking.durations,
             booking.startMin,
           );
@@ -1323,27 +1472,40 @@ export async function PATCH(req: NextRequest) {
 
       const shouldUpdateSchedule = hasScheduleChange || hasTechnicianChange;
       const newRemarks = shouldUpdateSchedule
-        ? composeBookingRemarks(
-            extractNotes(currentRemarks),
-            scheduleToSave ?? storedSchedule,
-          )
+        ? composeBookingRemarks(extractNotes(currentRemarks), [])
         : currentRemarks;
 
-      // No database write occurs above this point except row locks. From here
-      // on all related header/detail/status changes are part of this same
-      // transaction, so any later failure rolls them back together.
+      // Any transaction-row backfill above is part of this same transaction.
+      // From here on all related header/detail/status changes are also grouped,
+      // so any later failure rolls every change back together.
       if (targetTechID !== null) {
         await tx.$executeRaw`
-          UPDATE tbl_bookingdetail
+          UPDATE tbl_bookingservicedetail
           SET TechID = ${toChar(targetTechID, 10)}
           WHERE RTRIM(BookingID) = ${bookingID}
             AND RTRIM(LocCode) = ${locCode}
         `;
       }
 
+      if (shouldUpdateSchedule) {
+        for (const { detail, entry } of candidatePairs) {
+          await tx.$executeRaw`
+            UPDATE tbl_bookingservicedetail
+            SET
+              ScheduleIndex = ${entry.serviceIndex},
+              ScheduleStartMin = ${entry.startMin},
+              ScheduleEndMin = ${entry.endMin}
+            WHERE RTRIM(BookingID) = ${bookingID}
+              AND RTRIM(LocCode) = ${locCode}
+              AND RTRIM(GuessID) = ${trimValue(detail.GuessID)}
+              AND RTRIM(ServiceItemID) = ${trimValue(detail.ServiceItemID)}
+          `;
+        }
+      }
+
       if (hasScheduleChange) {
         // BookingDate stores the complete schedule date and time. Remarks keeps
-        // notes and schedule metadata only; old Date:/Time: prefixes are
+        // human notes only; old schedule metadata and Date:/Time: prefixes are
         // removed on edit.
         await tx.$executeRaw`
           UPDATE tbl_bookingheder
@@ -1374,15 +1536,30 @@ export async function PATCH(req: NextRequest) {
         (hasScheduleChange || hasTechnicianChange);
       const statusToApply = status || (reactivateCancelled ? "PENDING" : null);
 
+      if (hasScheduleChange) {
+        // TxnDetail stores the booking date as well as the event timestamps.
+        await tx.$executeRaw`
+          UPDATE tbl_bookingtxndetail
+          SET BookingDate = ${bookingDateTime}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+      }
+
       if (statusToApply === "CONFIRMED") {
         await tx.$executeRaw`
           UPDATE tbl_bookingheder
+          SET Status = ${toChar("CONFIRMED", 10)}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+        await tx.$executeRaw`
+          UPDATE tbl_bookingtxndetail
           SET
-            Status = ${toChar("CONFIRMED", 10)},
             Confirmed = 1,
             ConfirmedBy = ${actor},
             ConfirmedDate = NOW(),
-            CancelledDate = NULL,
+            CancelledDate = ${null},
             CancelledBy = ${toChar("", 10)}
           WHERE RTRIM(BookingID) = ${bookingID}
             AND RTRIM(LocCode) = ${locCode}
@@ -1390,11 +1567,16 @@ export async function PATCH(req: NextRequest) {
       } else if (statusToApply === "CANCELLED") {
         await tx.$executeRaw`
           UPDATE tbl_bookingheder
+          SET Status = ${toChar("CANCELLED", 10)}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+        await tx.$executeRaw`
+          UPDATE tbl_bookingtxndetail
           SET
-            Status = ${toChar("CANCELLED", 10)},
             Confirmed = 0,
             ConfirmedBy = ${toChar("", 10)},
-            ConfirmedDate = NULL,
+            ConfirmedDate = ${null},
             CancelledDate = NOW(),
             CancelledBy = ${actor}
           WHERE RTRIM(BookingID) = ${bookingID}
@@ -1403,29 +1585,45 @@ export async function PATCH(req: NextRequest) {
       } else if (statusToApply === "ONGOING") {
         await tx.$executeRaw`
           UPDATE tbl_bookingheder
+          SET Status = ${toChar("ONGOING", 10)}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+        await tx.$executeRaw`
+          UPDATE tbl_bookingtxndetail
           SET
-            Status = ${toChar("ONGOING", 10)},
             Confirmed = 1,
             ConfirmedBy = CASE
               WHEN COALESCE(RTRIM(ConfirmedBy), '') = '' THEN ${actor}
               ELSE ConfirmedBy
             END,
-            ConfirmedDate = COALESCE(ConfirmedDate, NOW()),
-            CancelledDate = NULL,
+            ConfirmedDate = CASE
+              WHEN ConfirmedDate IS NULL OR ConfirmedDate <= '1900-01-01 00:00:00' THEN NOW()
+              ELSE ConfirmedDate
+            END,
+            CancelledDate = ${null},
             CancelledBy = ${toChar("", 10)},
-            CheckInTime = COALESCE(CheckInTime, NOW())
+            CheckInTime = CASE
+              WHEN CheckInTime IS NULL OR CheckInTime <= '1900-01-01 00:00:00' THEN NOW()
+              ELSE CheckInTime
+            END
           WHERE RTRIM(BookingID) = ${bookingID}
             AND RTRIM(LocCode) = ${locCode}
         `;
       } else if (statusToApply === "PENDING") {
         await tx.$executeRaw`
           UPDATE tbl_bookingheder
+          SET Status = ${toChar("PENDING", 10)}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+        await tx.$executeRaw`
+          UPDATE tbl_bookingtxndetail
           SET
-            Status = ${toChar("PENDING", 10)},
             Confirmed = 0,
             ConfirmedBy = ${toChar("", 10)},
-            ConfirmedDate = NULL,
-            CancelledDate = NULL,
+            ConfirmedDate = ${null},
+            CancelledDate = ${null},
             CancelledBy = ${toChar("", 10)}
           WHERE RTRIM(BookingID) = ${bookingID}
             AND RTRIM(LocCode) = ${locCode}
