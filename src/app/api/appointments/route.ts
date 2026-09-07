@@ -10,6 +10,9 @@ import {
   stripBookingSchedule,
   type StoredBookingScheduleEntry,
 } from "@/lib/bookingSchedule";
+import {
+  BOOKING_SERVICE_DETAIL_FROM_SQL,
+} from "@/lib/bookingReadModel";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -402,8 +405,8 @@ async function readHeaders(
       MAX(CASE WHEN t.ConfirmedDate > '1900-01-01 00:00:00' THEN t.ConfirmedDate ELSE NULL END) AS ConfirmedDate,
       MAX(CASE WHEN t.CheckInTime > '1900-01-01 00:00:00' THEN t.CheckInTime ELSE NULL END) AS CheckInTime,
       h.BillingTime AS BillingTime
-    FROM Vw_BookingHeader h
-    LEFT JOIN Vw_BookingTxnDetail t
+    FROM tbl_bookingheder h
+    LEFT JOIN tbl_bookingtxndetail t
       ON RTRIM(t.LocCode) = RTRIM(h.LocCode)
      AND RTRIM(t.BookingID) = RTRIM(h.BookingID)
     WHERE
@@ -716,26 +719,26 @@ export async function GET(req: NextRequest) {
 
     const details = await prisma.$queryRawUnsafe<RawDetail[]>(`
       SELECT
-        RTRIM(BookingID)     AS BookingID,
-        RTRIM(LocCode)       AS LocCode,
-        RTRIM(GuessID)       AS GuessID,
-        RTRIM(ServiceItemID) AS ServiceItemID,
-        Qty,
-        ItemPrice,
-        RTRIM(TechID)        AS TechID,
-        ScheduleIndex,
-        ScheduleStartMin,
-        ScheduleEndMin,
-        RTRIM(ItemDes)       AS ItemDes,
-        RTRIM(ItemPrintDes)  AS ItemPrintDes,
-        SerDuration,
-        RTRIM(Category1)     AS Category1,
-        RTRIM(Category2)     AS Category2,
-        RTRIM(Category3)     AS Category3,
-        RTRIM(Category4)     AS Category4
-      FROM Vw_BookingServiceDetail
-      WHERE RTRIM(BookingID) IN (${bidIn})
-        AND RTRIM(LocCode)   IN (${locIn})
+        RTRIM(h.BookingID)     AS BookingID,
+        RTRIM(h.LocCode)       AS LocCode,
+        RTRIM(d.GuessID)       AS GuessID,
+        RTRIM(d.ServiceItemID) AS ServiceItemID,
+        d.Qty,
+        d.ItemPrice,
+        RTRIM(d.TechID)        AS TechID,
+        d.ScheduleIndex,
+        d.ScheduleStartMin,
+        d.ScheduleEndMin,
+        RTRIM(i.ItemDes)       AS ItemDes,
+        RTRIM(i.ItemPrintDes)  AS ItemPrintDes,
+        i.SerDuration,
+        RTRIM(i.Category1)     AS Category1,
+        RTRIM(i.Category2)     AS Category2,
+        RTRIM(i.Category3)     AS Category3,
+        RTRIM(i.Category4)     AS Category4
+      ${BOOKING_SERVICE_DETAIL_FROM_SQL}
+      WHERE RTRIM(h.BookingID) IN (${bidIn})
+        AND RTRIM(h.LocCode)   IN (${locIn})
     `);
 
     const cusCodeList = [

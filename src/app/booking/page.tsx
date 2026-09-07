@@ -1,8 +1,15 @@
 // src/app/booking/page.tsx
 'use client';
 
-import { useState, useEffect, useRef, useMemo, type Dispatch, type SetStateAction } from 'react';
+import { useState, useEffect, useRef, useMemo, createContext, useContext, type Dispatch, type SetStateAction } from 'react';
 import { useRouter } from 'next/navigation';
+import {
+  buildCatalogFromApi,
+  type Catalog,
+  type CatalogApiResponse,
+  type CatalogService,
+  type CatalogProvider,
+} from '@/lib/bookingCatalog';
 import ConflictModal, {
   ConflictModalData,
   ProviderAvailability,
@@ -177,6 +184,26 @@ const TIME_SLOTS = [
   '03:00 PM','03:30 PM','04:00 PM','04:30 PM',
   '05:00 PM','05:30 PM','06:00 PM',
 ];
+
+/* ─────────────────────────────────────────
+   CATALOG (DB-driven, with curated fallback)
+   The booking page used to be driven entirely by the hard-coded constants
+   below. It now sources services / providers / branches / categories from
+   GET /api/booking-catalog. `DEFAULT_CATALOG` keeps the curated list so the
+   page still works when the endpoint fails or the DB is empty.
+───────────────────────────────────────── */
+const DEFAULT_CATALOG: Catalog = {
+  locations: LOCATIONS.map((name) => ({ code: name, name })),
+  categories: CATEGORIES,
+  // The curated service/provider entries carry exactly the fields the UI reads.
+  servicesByCategory: ALL_SERVICES as unknown as Record<string, CatalogService[]>,
+  providersByLocation: PROVIDERS as unknown as Record<string, CatalogProvider[]>,
+};
+
+const CatalogContext = createContext<Catalog>(DEFAULT_CATALOG);
+function useCatalog(): Catalog {
+  return useContext(CatalogContext);
+}
 
 /* ─────────────────────────────────────────
    HELPERS
@@ -403,7 +430,10 @@ const globalCss = `
   .info-box-green{background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.3); border-radius:0.625rem;padding:0.65rem 0.9rem;font-size:0.75rem;color:rgba(255,255,255,0.65);font-family:var(--app-font);line-height:1.55;}
   .api-error{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);border-radius:0.625rem;padding:0.7rem 1rem;font-size:0.78rem;color:#ef4444;font-family:var(--app-font);line-height:1.55;margin-bottom:1rem;}
   .divider{height:1px;background:rgba(255,255,255,0.09);margin:1.2rem 0;}
-  .loc-card{cursor:pointer;border-radius:0.875rem;border:1.5px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);padding:0.9rem 1.1rem;display:flex;align-items:center;justify-content:space-between;gap:0.75rem;transition:all 0.22s;flex:1;min-width:0;}
+  .loc-cards-wrap{display:flex;gap:0.65rem;overflow-x:auto;flex-wrap:nowrap;padding:0.1rem 0.1rem 0.55rem;scroll-snap-type:x proximity;scrollbar-width:none;}
+  .loc-cards-wrap::-webkit-scrollbar{display:none;}
+  .loc-cards-wrap .loc-card{flex:0 0 auto;scroll-snap-align:start;}
+  .loc-card{cursor:pointer;border-radius:0.875rem;border:1.5px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);padding:0.9rem 1.1rem;display:flex;align-items:center;justify-content:space-between;gap:0.75rem;transition:all 0.22s;flex:0 0 auto;min-width:9.75rem;}
   .loc-card:hover{border-color:rgba(184,134,11,0.5);background:rgba(184,134,11,0.08);transform:translateY(-1px);}
   .loc-card-active{border-color:#B8860B !important;background:rgba(184,134,11,0.14) !important;}
   .spinner-sm{width:1rem;height:1rem;border:2px solid rgba(34,197,94,0.3);border-top-color:#22c55e;border-radius:50%;display:inline-block;animation:spin 0.7s linear infinite;}
@@ -420,8 +450,9 @@ const globalCss = `
     .time-grid{grid-template-columns:repeat(3,1fr) !important;}
     .appt-header-right{align-items:flex-start !important;text-align:left !important;}
     .phone-plain-input{text-align:left !important;}
-    .loc-cards-wrap{flex-direction:column !important;}
-    .time-section-header{flex-direction:column;align-items:flex-start;}
+    .loc-cards-wrap{padding-bottom:0.7rem;}
+    .loc-card{min-width:8.75rem;}
+    .time-section-header{flex-direction:column;align-items:flex-start;}   
   }
 
   /* ── Multi-booking tab ── */
@@ -1154,10 +1185,11 @@ function MultiGuestEditor({
 
   const isMe          = index === 0;
   const label         = guestLabel(index, lang);
-  const serviceList   = ALL_SERVICES[guest.activeCat] ?? [];
+  const { servicesByCategory, providersByLocation, categories } = useCatalog();
+  const serviceList   = servicesByCategory[guest.activeCat] ?? [];
   const guestCats     = Array.from(new Set(guest.services.map(s => s.category)));
   const catFilter     = guestCats.length > 0 ? guestCats : [guest.activeCat];
-  const branchProvs   = location ? (PROVIDERS[location] ?? []) : [];
+  const branchProvs   = location ? (providersByLocation[location] ?? []) : [];
   const filteredProvs = branchProvs.filter(p => p.expertise.some(e => catFilter.includes(e)));
   const isMultiCat    = guestCats.length > 1;
   const maxProvs      = isMultiCat ? guestCats.length : 1;
@@ -1325,7 +1357,7 @@ function MultiGuestEditor({
           <div style={{ marginBottom: '0.6rem' }}>
             <div className="mg-section-title"><Ico.Scissors s={12} /> {t(lang, 'multi.servicesFor')}</div>
             <div className="cat-tabs-wrap" style={{ margin: '0.35rem 0 0.75rem' }}>
-              {CATEGORIES.map(catSel => {
+              {categories.map(catSel => {
                 const has = guestCats.includes(catSel);
                 return (
                   <button key={catSel} type="button" className={`cat-tab ${guest.activeCat === catSel ? 'cat-tab-active' : 'cat-tab-inactive'}`} onClick={() => onPatch({ activeCat: catSel })}>
@@ -1338,7 +1370,7 @@ function MultiGuestEditor({
               {serviceList.map(s => {
                 const active = guest.services.some(x => x.name === s.name && x.price === s.price);
                 return (
-                  <div key={`${guest.id}-${s.name}`} className={`svc-card${active ? ' svc-card-active' : ''}`} onClick={() => toggleSvc(s)} role="button" aria-pressed={active}>
+                  <div key={`${guest.id}-${s.name}-${s.price}`} className={`svc-card${active ? ' svc-card-active' : ''}`} onClick={() => toggleSvc(s)} role="button" aria-pressed={active}>
                     <div>
                       <p style={{ color: tokens.color.whiteMuted, fontSize: '0.85rem', fontWeight: 500, fontFamily: tokens.font.family }}>{svcName(lang, s.name)}</p>
                       <p style={{ color: tokens.color.whiteFaint, fontSize: '0.71rem', marginTop: '0.12rem', display: 'flex', alignItems: 'center', gap: '0.25rem', fontFamily: tokens.font.family }}><Ico.Clock s={11} />{durStr(lang, s.duration)}</p>
@@ -1448,6 +1480,7 @@ function MultiBookingPanel({
   contactEmail: string;
   setEmail: Dispatch<SetStateAction<string>>;
 }) {
+  const { locations } = useCatalog();
   const [mode, setMode] = useState<BookingMode>('confirmed');
   const [location, setLocation] = useState('');
   const [guests, setGuests] = useState<MultiGuest[]>([newMultiGuest()]);
@@ -1568,7 +1601,7 @@ function MultiBookingPanel({
           phone: contactPhone.trim(),
           gender: genderLabelEn(g.gender as GenderValue),
           location, mode,
-          services: g.services.map(s => ({ name: s.name, price: s.price, duration: s.duration, category: s.category })),
+          services: g.services.map(s => ({ name: s.name, price: s.price, duration: s.duration, category: s.category, itemCode: (s as CatalogService).itemCode || undefined })),
           categories: cats,
           totalDuration: mins,
           totalPrice: price,
@@ -1681,7 +1714,7 @@ function MultiBookingPanel({
                 </div>
                 <div className="mg-body" style={{ borderTop: 'none', paddingTop: 0 }}>
                   {g.services.map(s => (
-                    <div key={s.name} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.35rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem' }}>
+                    <div key={`${s.name}-${s.price}`} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', padding: '0.35rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.8rem' }}>
                       <span style={{ color: tokens.color.whiteMuted, fontFamily: tokens.font.family }}>{svcName(lang, s.name)}</span>
                       <span style={{ color: tokens.color.whiteFaint, fontFamily: tokens.font.family, flexShrink: 0 }}>{durStr(lang, s.duration)} · {s.price}</span>
                     </div>
@@ -1742,8 +1775,8 @@ function MultiBookingPanel({
 
         {/* branch */}
         <Label text={t(lang, 's1.branchLocation')} />
-        <div className="loc-cards-wrap" style={{ display: 'flex', gap: '0.65rem', marginBottom: '1.2rem', flexWrap: 'wrap' }}>
-          {LOCATIONS.map(locSel => (
+        <div className="loc-cards-wrap" style={{ marginBottom: '1.2rem' }}>
+          {locations.map(({ name: locSel }) => (
             <div key={locSel} className={`loc-card${location === locSel ? ' loc-card-active' : ''}`} onClick={() => setLocation(locSel)} role="button" aria-pressed={location === locSel}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <div style={{ width: '2rem', height: '2rem', borderRadius: '50%', flexShrink: 0, background: location === locSel ? 'rgba(184,134,11,0.2)' : 'rgba(255,255,255,0.06)', border: `1px solid ${location === locSel ? 'rgba(184,134,11,0.55)' : 'rgba(255,255,255,0.12)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1864,6 +1897,36 @@ export default function BookingPage() {
   /* ── R5: persisted highlight — stays visible after modal closes ── */
   const [persistedHighlight, setPersistedHighlight] = useState<Set<string>>(new Set());
 
+  /* ── Catalog: DB-driven services/providers/branches/categories ── */
+  const [catalog, setCatalog] = useState<Catalog>(DEFAULT_CATALOG);
+
+  /* Fetch the catalog once on mount. If the endpoint fails or the DB has no
+     configured services, the curated DEFAULT_CATALOG stays in place. */
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/booking-catalog', { cache: 'no-store' });
+        const data: CatalogApiResponse = await res.json();
+        if (!active) return;
+        const built = buildCatalogFromApi(data);
+        if (built) setCatalog(built);
+      } catch {
+        /* keep the curated defaults */
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  /* Align the active category tab with whatever categories the catalog uses. */
+  useEffect(() => {
+    if (catalog.categories.length === 0) return;
+    if (!catalog.categories.includes(category)) {
+      setCategory(catalog.categories[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog.categories]);
+
   /* ── R5: pre-computed result map — recomputed only when deps change ── */
   const slotResults = useMemo<Record<string, SlotResult>>(() => {
     if (providers.length === 0 || services.length === 0) return {};
@@ -1907,9 +1970,9 @@ export default function BookingPage() {
   }, [router]);
 
   const today       = new Date().toISOString().split('T')[0];
-  const serviceList = ALL_SERVICES[category] ?? [];
+  const serviceList = catalog.servicesByCategory[category] ?? [];
 
-  const allBranchProvs   = location ? (PROVIDERS[location] ?? []) : [];
+  const allBranchProvs   = location ? (catalog.providersByLocation[location] ?? []) : [];
   const selectedCats     = Array.from(new Set(services.map(s => s.category)));
   const catFilter        = selectedCats.length > 0 ? selectedCats : [category];
   const filteredProvs    = allBranchProvs.filter(p => p.expertise.some(e => catFilter.includes(e)));
@@ -2208,7 +2271,7 @@ export default function BookingPage() {
       const payload = {
         name: name.trim(), email: email.trim().toLowerCase(), phone: phone.trim(),
         gender: genderLabelEn(gender as GenderValue), location, mode,
-        services: services.map(s => ({ name: s.name, price: s.price, duration: s.duration, category: s.category })),
+        services: services.map(s => ({ name: s.name, price: s.price, duration: s.duration, category: s.category, itemCode: (s as CatalogService).itemCode || undefined })),
         categories: selectedCats, totalDuration: totalMins, totalPrice,
         providers: providers.map(p => ({ name: p.name, role: p.role })),
         serviceSchedule: serviceSchedule.length > 0
@@ -2275,7 +2338,7 @@ export default function BookingPage() {
      MAIN FORM
   ══════════════════════════════════════ */
   return (
-    <>
+    <CatalogContext.Provider value={catalog}>
       <style>{globalCss}</style>
       <main style={{ minHeight: '100vh', fontFamily: tokens.font.family, backgroundImage: 'url(/booking.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', position: 'relative' }}>
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(4,4,5,0.76)', zIndex: 0 }} />
@@ -2338,8 +2401,8 @@ export default function BookingPage() {
 
                   {/* LOCATION */}
                   <Label text={t(lang, 's1.branchLocation')} />
-                  <div className="loc-cards-wrap" style={{ display: 'flex', gap: '0.65rem', marginBottom: '1.4rem', flexWrap: 'wrap' }}>
-                    {LOCATIONS.map(locSel => (
+                  <div className="loc-cards-wrap" style={{ marginBottom: '1.4rem' }}>
+                    {catalog.locations.map(({ name: locSel }) => (
                       <div key={locSel} className={`loc-card${location === locSel ? ' loc-card-active' : ''}`} onClick={() => handleLocChange(locSel)} role="button" aria-pressed={location === locSel}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                           <div style={{ width: '2rem', height: '2rem', borderRadius: '50%', flexShrink: 0, background: location === locSel ? 'rgba(184,134,11,0.2)' : 'rgba(255,255,255,0.06)', border: `1px solid ${location === locSel ? 'rgba(184,134,11,0.55)' : 'rgba(255,255,255,0.12)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -2357,7 +2420,7 @@ export default function BookingPage() {
                   {/* SERVICES */}
                   <Label text={t(lang, 's1.category')} />
                   <div className="cat-tabs-wrap" style={{ marginBottom: '1rem' }}>
-                    {CATEGORIES.map(catSel => {
+                    {catalog.categories.map(catSel => {
                       const has = selectedCats.includes(catSel);
                       return (
                         <button key={catSel} type="button" className={`cat-tab ${category === catSel ? 'cat-tab-active' : 'cat-tab-inactive'}`} onClick={() => setCategory(catSel)}>
@@ -2373,7 +2436,7 @@ export default function BookingPage() {
                     {serviceList.map(s => {
                       const active = services.some(x => x.name === s.name && x.price === s.price);
                       return (
-                        <div key={`${category}-${s.name}`} className={`svc-card${active ? ' svc-card-active' : ''}`} onClick={() => toggleService(s)} role="button" aria-pressed={active}>
+                        <div key={`${category}-${s.name}-${s.price}`} className={`svc-card${active ? ' svc-card-active' : ''}`} onClick={() => toggleService(s)} role="button" aria-pressed={active}>
                           <div>
                             <p style={{ color: tokens.color.whiteMuted, fontSize: '0.85rem', fontWeight: 500, fontFamily: tokens.font.family }}>{svcName(lang, s.name)}</p>
                             <p style={{ color: tokens.color.whiteFaint, fontSize: '0.71rem', marginTop: '0.12rem', display: 'flex', alignItems: 'center', gap: '0.25rem', fontFamily: tokens.font.family }}><Ico.Clock s={11} />{durStr(lang, s.duration)}</p>
@@ -2390,7 +2453,7 @@ export default function BookingPage() {
                   {services.length > 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(184,134,11,0.1)', border: '1px solid rgba(184,134,11,0.28)', borderRadius: '0.625rem', padding: '0.6rem 1rem', marginBottom: '1rem' }}>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', flex: 1 }}>
-                        {services.map(s => <span key={s.name} className="chip badge-pop" style={{ fontSize: '0.64rem' }}>{svcName(lang, s.name)}</span>)}
+                        {services.map(s => <span key={`${s.name}-${s.price}`} className="chip badge-pop" style={{ fontSize: '0.64rem' }}>{svcName(lang, s.name)}</span>)}
                       </div>
                       <div style={{ flexShrink: 0, marginLeft: '0.75rem', textAlign: 'right' }}>
                         <p style={{ color: tokens.color.gold, fontWeight: 700, fontSize: '0.9rem', fontFamily: tokens.font.family }}>LKR {totalPrice.toLocaleString()}</p>
@@ -2592,6 +2655,6 @@ export default function BookingPage() {
           lang={lang}
         />
       )}
-    </>
+    </CatalogContext.Provider>
   );
 }

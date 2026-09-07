@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { decodeBookingSchedule } from '@/lib/bookingSchedule';
+import { BOOKING_SERVICE_DETAIL_FROM } from '@/lib/bookingReadModel';
 
 const PUBLIC_TIME_SLOTS = [
   '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM',
@@ -74,34 +75,34 @@ async function loadLegacyBookings(date: string, locCode?: string): Promise<Legac
   if (locCode) {
     return prisma.$queryRaw<LegacyAvailabilityRow[]>`
       SELECT
-        RTRIM(BookingID) AS BookingID,
-        (HOUR(BookingDate) * 60 + MINUTE(BookingDate)) AS StartMin,
-        RTRIM(TechID) AS TechID,
-        RTRIM(ServiceItemID) AS ServiceItemID,
-        RTRIM(UserName) AS ProviderName,
-        Remarks AS Remarks,
-        COALESCE(NULLIF(SerDuration, 0), 30) AS DurationMin,
-        Qty AS Qty
-      FROM Vw_BookingServiceDetail
-      WHERE DATE(BookingDate) = ${date}
-        AND RTRIM(LocCode) = ${locCode}
-        AND UPPER(RTRIM(Status)) NOT IN ('CANCELLED', 'CANCEL')
+        RTRIM(h.BookingID) AS BookingID,
+        (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
+        RTRIM(d.TechID) AS TechID,
+        RTRIM(d.ServiceItemID) AS ServiceItemID,
+        RTRIM(u.UserName) AS ProviderName,
+        h.Remarks AS Remarks,
+        COALESCE(NULLIF(i.SerDuration, 0), 30) AS DurationMin,
+        d.Qty AS Qty
+      ${BOOKING_SERVICE_DETAIL_FROM}
+      WHERE DATE(h.BookingDate) = ${date}
+        AND RTRIM(h.LocCode) = ${locCode}
+        AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL')
     `;
   }
 
   return prisma.$queryRaw<LegacyAvailabilityRow[]>`
     SELECT
-      RTRIM(BookingID) AS BookingID,
-      (HOUR(BookingDate) * 60 + MINUTE(BookingDate)) AS StartMin,
-      RTRIM(TechID) AS TechID,
-      RTRIM(ServiceItemID) AS ServiceItemID,
-      RTRIM(UserName) AS ProviderName,
-      Remarks AS Remarks,
-      COALESCE(NULLIF(SerDuration, 0), 30) AS DurationMin,
-      Qty AS Qty
-    FROM Vw_BookingServiceDetail
-    WHERE DATE(BookingDate) = ${date}
-      AND UPPER(RTRIM(Status)) NOT IN ('CANCELLED', 'CANCEL')
+      RTRIM(h.BookingID) AS BookingID,
+      (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
+      RTRIM(d.TechID) AS TechID,
+      RTRIM(d.ServiceItemID) AS ServiceItemID,
+      RTRIM(u.UserName) AS ProviderName,
+      h.Remarks AS Remarks,
+      COALESCE(NULLIF(i.SerDuration, 0), 30) AS DurationMin,
+      d.Qty AS Qty
+    ${BOOKING_SERVICE_DETAIL_FROM}
+    WHERE DATE(h.BookingDate) = ${date}
+      AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL')
   `;
 }
 

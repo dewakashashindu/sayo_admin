@@ -14,6 +14,11 @@ import {
   type BookingScheduleEntry,
   type StoredBookingScheduleEntry,
 } from '@/lib/bookingSchedule';
+import {
+  HEADER_TABLE,
+  TXN_DETAIL_TABLE,
+  BOOKING_SERVICE_DETAIL_FROM,
+} from '@/lib/bookingReadModel';
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TYPES
@@ -638,8 +643,14 @@ async function resolveLegacyServices(
     const requestedCode = String(service.itemCode || service.serviceItemID || '').trim();
     const wantedName = normalizeLookup(service.name);
     const item = items.find((candidate) => {
-      if (requestedCode && normalizeLookup(candidate.ItemCode) === normalizeLookup(requestedCode)) {
-        return true;
+      if (requestedCode) {
+        const requested = normalizeLookup(requestedCode);
+        const candidateFull = normalizeLookup(candidate.ItemCode);
+        const candidateShort = normalizeLookup(candidate.ItemCode.trim().slice(0, 10));
+        if (candidateFull === requested || candidateShort === requested ||
+            candidateFull.startsWith(requested) || requested.startsWith(candidateShort)) {
+          return true;
+        }
       }
       if (!wantedName) return false;
       const candidateNames = [
@@ -659,8 +670,21 @@ async function resolveLegacyServices(
       );
     }
 
-    const serviceItemID = item.ItemCode.trim();
-    if (!serviceItemID || serviceItemID.length > 10) {
+    const fullItemCode = item.ItemCode.trim();
+    if (!fullItemCode) {
+      throw new BookingConfigurationError(
+        `Service "${service.name}" has an invalid legacy item code for the selected location.`,
+      );
+    }
+
+    // tbl_itemmaster.ItemCode is CHAR(15) but the booking detail column
+    // tbl_bookingservicedetail.ServiceItemID is CHAR(10). These are linked by
+    // the first 10 characters of the item code:
+    //   LEFT(RTRIM(i.ItemCode), 10) = RTRIM(d.ServiceItemID)
+    // Store the 10-char service code (this is also how the availability view
+    // and the read-back query resolve a booking detail back to its item).
+    const serviceItemID = fullItemCode.slice(0, 10);
+    if (!serviceItemID) {
       throw new BookingConfigurationError(
         `Service "${service.name}" has an invalid legacy item code for the selected location.`,
       );
@@ -2006,7 +2030,7 @@ export async function GET(req: NextRequest) {
         ConfirmationType,
         Remarks,
         TxnDateTime
-      FROM Vw_BookingHeader
+      FROM ${Prisma.raw(HEADER_TABLE)}
       WHERE RTRIM(CusCode) = ${customer.CusCode.trim()}
       ORDER BY BookingDate DESC
       LIMIT 10
@@ -2019,27 +2043,27 @@ export async function GET(req: NextRequest) {
         const [details, txnDetails] = await Promise.all([
           prisma.$queryRaw<PublicServiceDetailRow[]>`
             SELECT
-              BookingID,
-              LocCode,
-              GuessID,
-              ServiceItemID,
-              ServiceItem,
-              MOF,
-              SerDuration,
-              ItemDes,
-              Qty,
-              ItemPrice,
-              TechID,
-              ScheduleIndex,
-              ScheduleStartMin,
-              ScheduleEndMin,
-              UserName
-            FROM Vw_BookingServiceDetail
-            WHERE RTRIM(BookingID) = ${bookingID}
-              AND RTRIM(LocCode) = ${locCode}
-            ORDER BY CASE WHEN ScheduleIndex IS NULL THEN 1 ELSE 0 END,
-                     ScheduleIndex ASC,
-                     ServiceItemID ASC
+              RTRIM(h.BookingID) AS BookingID,
+              RTRIM(h.LocCode) AS LocCode,
+              RTRIM(d.GuessID) AS GuessID,
+              RTRIM(d.ServiceItemID) AS ServiceItemID,
+              i.ServiceItem AS ServiceItem,
+              RTRIM(i.MOF) AS MOF,
+              i.SerDuration AS SerDuration,
+              RTRIM(i.ItemDes) AS ItemDes,
+              d.Qty AS Qty,
+              d.ItemPrice AS ItemPrice,
+              RTRIM(d.TechID) AS TechID,
+              d.ScheduleIndex AS ScheduleIndex,
+              d.ScheduleStartMin AS ScheduleStartMin,
+              d.ScheduleEndMin AS ScheduleEndMin,
+              RTRIM(u.UserName) AS UserName
+            ${BOOKING_SERVICE_DETAIL_FROM}
+            WHERE RTRIM(h.BookingID) = ${bookingID}
+              AND RTRIM(h.LocCode) = ${locCode}
+            ORDER BY CASE WHEN d.ScheduleIndex IS NULL THEN 1 ELSE 0 END,
+                     d.ScheduleIndex ASC,
+                     RTRIM(d.ServiceItemID) ASC
           `,
           prisma.$queryRaw<PublicTxnDetailRow[]>`
             SELECT
@@ -2052,7 +2076,7 @@ export async function GET(req: NextRequest) {
               CancelledBy,
               CancelledDate,
               CheckInTime
-            FROM Vw_BookingTxnDetail
+            FROM ${Prisma.raw(TXN_DETAIL_TABLE)}
             WHERE RTRIM(BookingID) = ${bookingID}
               AND RTRIM(LocCode) = ${locCode}
             ORDER BY GuessID ASC
