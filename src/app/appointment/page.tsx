@@ -14,6 +14,7 @@ import AdminSidebar from "@/components/AdminSidebar";
 interface ServiceSchedule {
   serviceIndex: number;
   itemCode: string;
+  guessID?: string;
   serviceName: string;
   providerName: string;
   startTime: string;
@@ -1626,6 +1627,109 @@ function DetailModal({
   onGoToBill: (appointment: Appointment) => void;
   onReschedule: (appointment: Appointment) => void;
 }) {
+  const guestIDs = Array.from(
+    new Set(
+      (appointment.serviceSchedule ?? [])
+        .map((service) => (service.guessID ?? "").trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+  const isMultiGuest = guestIDs.length > 1;
+  const guestLabel = (guessID?: string) => {
+    const code = (guessID ?? "").trim().toUpperCase();
+    if (!code) return "";
+    if (!isMultiGuest) return "";
+    if (code === "MAIN") return "Main client";
+    const position = guestIDs.indexOf(code);
+    return position > 0 ? `Guest ${position + 1}` : "Guest";
+  };
+
+  // A walk-in for several guests repeats the same service once per guest, so
+  // collapse identical rows into one line with a count instead of listing
+  // the same service twelve times.
+  const collapseServices = (
+    entries: { guessID?: string; serviceName: string }[],
+  ) => {
+    const groups = new Map<
+      string,
+      { key: string; serviceName: string; label: string; count: number }
+    >();
+    entries.forEach((entry) => {
+      const label = guestLabel(entry.guessID);
+      const key = `${label}::${entry.serviceName}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.count += 1;
+        return;
+      }
+      groups.set(key, {
+        key,
+        serviceName: entry.serviceName,
+        label,
+        count: 1,
+      });
+    });
+    return Array.from(groups.values());
+  };
+
+  const scheduleEntries = appointment.serviceSchedule ?? [];
+  const collapsedServices = collapseServices(
+    scheduleEntries.length > 0
+      ? scheduleEntries.map((service) => ({
+          guessID: service.guessID,
+          serviceName: service.serviceName,
+        }))
+      : appointment.serviceNames.map((serviceName) => ({ serviceName })),
+  );
+  const serviceSummary = collapsedServices
+    .map((entry) =>
+      entry.count > 1
+        ? `${entry.serviceName} × ${entry.count}`
+        : entry.serviceName,
+    )
+    .join(", ");
+
+  // Identical schedule rows (same guest, service, provider and time window —
+  // e.g. one service applied to twelve guests) render as a single row with a
+  // count so the timeline stays readable.
+  const collapsedSchedule = (() => {
+    const out: {
+      key: string;
+      label: string;
+      serviceName: string;
+      providerName: string;
+      startTime: string;
+      endTime: string;
+      count: number;
+    }[] = [];
+    scheduleEntries.forEach((service) => {
+      const label = guestLabel(service.guessID);
+      const key = [
+        label,
+        service.itemCode,
+        service.serviceName,
+        service.providerName,
+        service.startTime,
+        service.endTime,
+      ].join("|");
+      const existing = out.find((entry) => entry.key === key);
+      if (existing) {
+        existing.count += 1;
+        return;
+      }
+      out.push({
+        key,
+        label,
+        serviceName: service.serviceName,
+        providerName: service.providerName,
+        startTime: service.startTime,
+        endTime: service.endTime,
+        count: 1,
+      });
+    });
+    return out;
+  })();
+
   return (
     <div className="modal-bg" onClick={onClose}>
       <div
@@ -1662,7 +1766,8 @@ function DetailModal({
             )}
           </div>
 
-          {appointment.serviceNames.length > 1 && (
+          {(collapsedServices.length > 1 ||
+            collapsedServices.some((entry) => entry.count > 1)) && (
             <div
               style={{
                 padding: "10px 14px",
@@ -1682,9 +1787,9 @@ function DetailModal({
               >
                 Services
               </p>
-              {appointment.serviceNames.map((service) => (
+              {collapsedServices.map((entry) => (
                 <p
-                  key={service}
+                  key={entry.key}
                   style={{
                     marginBottom: 2,
                     color: "#1e3a40",
@@ -1692,7 +1797,22 @@ function DetailModal({
                     fontWeight: 600,
                   }}
                 >
-                  • {service}
+                  • {entry.serviceName}
+                  {entry.count > 1 && (
+                    <span style={{ color: "#64748b" }}> × {entry.count}</span>
+                  )}
+                  {entry.label && (
+                    <span
+                      style={{
+                        display: "block",
+                        color: "#64748b",
+                        fontSize: 10,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {entry.label}
+                    </span>
+                  )}
                 </p>
               ))}
             </div>
@@ -1718,15 +1838,15 @@ function DetailModal({
               >
                 Service schedule
               </p>
-              {appointment.serviceSchedule.map((service, index) => (
+              {collapsedSchedule.map((service, index) => (
                 <div
-                  key={`${service.itemCode}-${service.serviceIndex}-${index}`}
+                  key={service.key}
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
                     gap: 10,
                     padding: "5px 0",
-                    borderBottom: index < appointment.serviceSchedule!.length - 1
+                    borderBottom: index < collapsedSchedule.length - 1
                       ? "1px solid #e5eeee"
                       : "none",
                     color: "#1e3a40",
@@ -1735,8 +1855,13 @@ function DetailModal({
                 >
                   <span style={{ fontWeight: 600 }}>
                     {index + 1}. {service.serviceName}
+                    {service.count > 1 && (
+                      <span style={{ color: "#64748b" }}> × {service.count}</span>
+                    )}
                     <small style={{ display: "block", color: "#6b7280", fontSize: 10 }}>
-                      {service.providerName}
+                      {service.label
+                        ? `${service.label} • ${service.providerName}`
+                        : service.providerName}
                     </small>
                   </span>
                   <span style={{ whiteSpace: "nowrap", fontWeight: 700 }}>
@@ -1760,7 +1885,10 @@ function DetailModal({
             <InfoBox label="Date" value={fmtDateLong(appointment.date)} />
             <InfoBox label="Time" value={appointment.timeSlot} />
             <InfoBox label="Provider" value={appointment.providerName} />
-            <InfoBox label="Service" value={appointment.serviceName} />
+            <InfoBox
+              label="Service"
+              value={serviceSummary || appointment.serviceName}
+            />
             <InfoBox label="Duration" value={`${appointment.duration} mins`} />
             <InfoBox
               label="Total Price"
@@ -2773,7 +2901,6 @@ export default function AppointmentsPage() {
             bookingID,
             locCode,
             status,
-            updatedBy: "ADMIN",
           }),
         });
         const json = await response.json();
@@ -2932,7 +3059,6 @@ export default function AppointmentsPage() {
             timeSlot,
             techID: targetTechID,
             providerName: targetProviderName,
-            updatedBy: "ADMIN",
           }),
         });
         const json = await response.json();

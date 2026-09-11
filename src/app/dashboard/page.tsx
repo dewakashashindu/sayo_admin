@@ -12,7 +12,7 @@ interface AdminUser    { name: string; email: string; }
 interface ServiceItem  { name: string; price: string; duration: string; category: string; }
 interface ProviderItem { name: string; role: string; }
 interface Booking {
-  BookingId: number; UserId: number; BookingMode: string; Gender: string;
+  BookingId: string; UserId: number; BookingMode: string; Gender: string;
   Location: string; Categories: string; TotalDuration: number; TotalPrice: number;
   BookingDate: string; TimeSlot: string; SpecialNotes: string | null;
   Status: string; CreatedAt: string; services: ServiceItem[]; providers: ProviderItem[];
@@ -25,9 +25,12 @@ interface DashboardStats {
   onlineBookings: number; walkinBookings: number;
   emailCount: number; callCount: number; whatsappCount: number;
 }
+interface ActivityEntry {
+  id: number; actor: string; section: string; action: string; timestamp: string;
+}
 interface DashboardData {
   date: string; stats: DashboardStats; providers: string[];
-  timeSlots: string[]; bookings: Booking[];
+  timeSlots: string[]; bookings: Booking[]; activities?: ActivityEntry[];
 }
 interface ProductStock {
   id: number; name: string; category: string; stock: number;
@@ -41,7 +44,6 @@ interface WaitingOrder {
 /* ─────────────────────────────────────────
    CONSTANTS
 ───────────────────────────────────────── */
-const PROVIDERS  = ['Nadeesha','Piumi','Amaya','Deepika','Nihara','Kaveesha','Rohan'];
 const SLOT_H     = 72;
 const SLOT_MIN   = 30;
 const DAY_START  = 9 * 60;
@@ -52,23 +54,6 @@ for (let m = DAY_START; m < DAY_START + 6 * 60; m += SLOT_MIN) {
   const ap = h >= 12 ? 'PM' : 'AM';
   const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
   TIME_SLOTS.push(`${h12}:${String(mn).padStart(2, '0')} ${ap}`);
-}
-
-/* ─────────────────────────────────────────
-   SEEDED RANDOM
-───────────────────────────────────────── */
-function seededRandom(seed: string) {
-  let h = 1779033703 ^ seed.length;
-  for (let i = 0; i < seed.length; i++) {
-    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
-    h = (h << 13) | (h >>> 19);
-  }
-  return function () {
-    h = Math.imul(h ^ (h >>> 16), 2246822507);
-    h = Math.imul(h ^ (h >>> 13), 3266489909);
-    h ^= h >>> 16;
-    return (h >>> 0) / 4294967296;
-  };
 }
 
 /* ─────────────────────────────────────────
@@ -89,59 +74,16 @@ const WAITING_ORDERS: WaitingOrder[] = [
   { id:103, productName:'UV Gel Nail Kit',      supplier:'Nailart Supplies PVT', qty:30, orderedAt:'2025-08-20', status:'pending'   },
 ];
 
-function buildMock(date: string): DashboardData {
-  const ALL: Booking[] = [
-    { BookingId:1001, UserId:201, ClientName:'Sanduni Perera',        BookingMode:'pre_booking',          Gender:'Female', Location:'Colombo', Categories:'Wellness', TotalDuration:60,  TotalPrice:5000, BookingDate:date, TimeSlot:'9:00 AM',  SpecialNotes:null,                  Status:'confirmed', CreatedAt:new Date().toISOString(), services:[{name:'Massage',    price:'LKR 5000',duration:'60min',category:'Wellness'}], providers:[{name:'Nadeesha',role:'Senior Therapist'}]   },
-    { BookingId:1002, UserId:202, ClientName:'Ishara Fernando',       BookingMode:'pre_booking',          Gender:'Female', Location:'Colombo', Categories:'Hair',    TotalDuration:45,  TotalPrice:3500, BookingDate:date, TimeSlot:'9:30 AM',  SpecialNotes:'Sensitive scalp',    Status:'pending',   CreatedAt:new Date().toISOString(), services:[{name:'Hair Cut',   price:'LKR 3500',duration:'45min',category:'Hair'}],    providers:[{name:'Piumi',   role:'Senior Stylist'}]     },
-    { BookingId:1003, UserId:203, ClientName:'Nimasha Silva',         BookingMode:'without_confirmation', Gender:'Female', Location:'Colombo', Categories:'Nails',   TotalDuration:30,  TotalPrice:2500, BookingDate:date, TimeSlot:'10:00 AM', SpecialNotes:null,                  Status:'confirmed', CreatedAt:new Date().toISOString(), services:[{name:'Manicure',   price:'LKR 2500',duration:'30min',category:'Nails'}],   providers:[{name:'Amaya',   role:'Nail Technician'}]    },
-    { BookingId:1004, UserId:204, ClientName:'Chathurika Weerasinghe',BookingMode:'pre_booking',          Gender:'Female', Location:'Kandy',   Categories:'Skin',    TotalDuration:60,  TotalPrice:6000, BookingDate:date, TimeSlot:'10:30 AM', SpecialNotes:null,                  Status:'pending',   CreatedAt:new Date().toISOString(), services:[{name:'Facial',     price:'LKR 6000',duration:'60min',category:'Skin'}],    providers:[{name:'Deepika', role:'Skin Therapist'}]     },
-    { BookingId:1005, UserId:205, ClientName:'Dilani Rathnayake',     BookingMode:'pre_booking',          Gender:'Female', Location:'Galle',   Categories:'Wellness',TotalDuration:90,  TotalPrice:8500, BookingDate:date, TimeSlot:'9:00 AM',  SpecialNotes:'Cancelled by client',Status:'cancelled', CreatedAt:new Date().toISOString(), services:[{name:'Massage',    price:'LKR 8500',duration:'90min',category:'Wellness'}], providers:[{name:'Kaveesha',role:'Massage Therapist'}]  },
-    { BookingId:1006, UserId:206, ClientName:'Hasini Gunawardena',    BookingMode:'without_confirmation', Gender:'Female', Location:'Colombo', Categories:'Nails',   TotalDuration:45,  TotalPrice:3000, BookingDate:date, TimeSlot:'11:30 AM', SpecialNotes:null,                  Status:'pending',   CreatedAt:new Date().toISOString(), services:[{name:'Pedicure',   price:'LKR 3000',duration:'45min',category:'Nails'}],   providers:[{name:'Nihara',  role:'Nail Technician'}]    },
-    { BookingId:1007, UserId:207, ClientName:'Tharindu Bandara',      BookingMode:'pre_booking',          Gender:'Female', Location:'Colombo', Categories:'Wellness',TotalDuration:75,  TotalPrice:9500, BookingDate:date, TimeSlot:'12:00 PM', SpecialNotes:null,                  Status:'confirmed', CreatedAt:new Date().toISOString(), services:[{name:'Body Wrap',  price:'LKR 9500',duration:'75min',category:'Wellness'}], providers:[{name:'Nadeesha',role:'Senior Therapist'}]   },
-    { BookingId:1008, UserId:208, ClientName:'Sachini Amarasena',     BookingMode:'without_confirmation', Gender:'Female', Location:'Colombo', Categories:'Beauty',  TotalDuration:30,  TotalPrice:2800, BookingDate:date, TimeSlot:'12:30 PM', SpecialNotes:null,                  Status:'confirmed', CreatedAt:new Date().toISOString(), services:[{name:'Waxing',     price:'LKR 2800',duration:'30min',category:'Beauty'}],  providers:[{name:'Piumi',   role:'Beauty Therapist'}]   },
-    { BookingId:1009, UserId:209, ClientName:'Menaka Kularatne',      BookingMode:'pre_booking',          Gender:'Female', Location:'Kandy',   Categories:'Skin',    TotalDuration:45,  TotalPrice:4200, BookingDate:date, TimeSlot:'1:00 PM',  SpecialNotes:'First visit',         Status:'pending',   CreatedAt:new Date().toISOString(), services:[{name:'Facial',     price:'LKR 4200',duration:'45min',category:'Skin'}],    providers:[{name:'Amaya',   role:'Skin Therapist'}]     },
-    { BookingId:1010, UserId:210, ClientName:'Buddhika Senanayake',   BookingMode:'pre_booking',          Gender:'Female', Location:'Kandy',   Categories:'Skin',    TotalDuration:60,  TotalPrice:6000, BookingDate:date, TimeSlot:'12:00 PM', SpecialNotes:null,                  Status:'pending',   CreatedAt:new Date().toISOString(), services:[{name:'Facial',     price:'LKR 6000',duration:'60min',category:'Skin'}],    providers:[{name:'Deepika', role:'Skin Therapist'}]     },
-    { BookingId:1011, UserId:211, ClientName:'Anusha Rajapaksha',     BookingMode:'without_confirmation', Gender:'Female', Location:'Colombo', Categories:'Nails',   TotalDuration:30,  TotalPrice:2500, BookingDate:date, TimeSlot:'11:00 AM', SpecialNotes:null,                  Status:'confirmed', CreatedAt:new Date().toISOString(), services:[{name:'Manicure',   price:'LKR 2500',duration:'30min',category:'Nails'}],   providers:[{name:'Amaya',   role:'Nail Technician'}]    },
-    { BookingId:1012, UserId:212, ClientName:'Hasini Gunawardena',    BookingMode:'without_confirmation', Gender:'Female', Location:'Colombo', Categories:'Nails',   TotalDuration:45,  TotalPrice:3000, BookingDate:date, TimeSlot:'11:30 AM', SpecialNotes:null,                  Status:'confirmed', CreatedAt:new Date().toISOString(), services:[{name:'Pedicure',   price:'LKR 3000',duration:'45min',category:'Nails'}],   providers:[{name:'Nihara',  role:'Nail Technician'}]    },
-  ];
-
-  const rnd = seededRandom(date);
-  let bookings = ALL.filter(() => rnd() > 0.2);
-  if (bookings.length < 4) bookings = ALL.slice(0, 5);
-
-  const confirmed      = bookings.filter(b => b.Status === 'confirmed').length;
-  const pending        = bookings.filter(b => b.Status === 'pending').length;
-  const walkinBookings = bookings.filter(b => b.BookingMode === 'without_confirmation').length;
-  const onlineBookings = bookings.length - walkinBookings;
-  const revenueOnline  = bookings.filter(b => b.Status.toLowerCase() !== 'cancelled' && b.BookingMode !== 'without_confirmation').reduce((s, b) => s + b.TotalPrice, 0);
-  const revenueWalkin  = bookings.filter(b => b.Status.toLowerCase() !== 'cancelled' && b.BookingMode === 'without_confirmation').reduce((s, b) => s + b.TotalPrice, 0);
-  const rndE = seededRandom(date + '::enquiry');
-  const emailCount    = 3  + Math.floor(rndE() * 9);
-  const callCount     = 2  + Math.floor(rndE() * 7);
-  const whatsappCount = 4  + Math.floor(rndE() * 11);
-
+function emptyData(d: string): DashboardData {
   return {
-    date,
+    date: d,
     stats: {
-      totalToday: bookings.length, totalPending: pending, totalConfirmed: confirmed,
-      totalWalkin: walkinBookings, totalCancelled: bookings.filter(b => b.Status === 'cancelled').length,
-      revenueOnline, revenueWalkin, onlineBookings, walkinBookings,
-      emailCount, callCount, whatsappCount,
+      totalToday: 0, totalPending: 0, totalConfirmed: 0, totalWalkin: 0, totalCancelled: 0,
+      revenueOnline: 0, revenueWalkin: 0, onlineBookings: 0, walkinBookings: 0,
+      emailCount: 0, callCount: 0, whatsappCount: 0,
     },
-    providers: PROVIDERS, timeSlots: TIME_SLOTS, bookings,
+    providers: [], timeSlots: [], bookings: [], activities: [],
   };
-}
-
-function buildRangeGrid(dates: string[], providers: string[]): Record<string, Record<string, number>> {
-  const out: Record<string, Record<string, number>> = {};
-  dates.forEach(iso => {
-    const day = buildMock(iso);
-    const counts: Record<string, number> = {};
-    providers.forEach(p => { counts[p] = 0; });
-    day.bookings.forEach(b => { b.providers.forEach(pr => { if (counts[pr.name] !== undefined) counts[pr.name] += 1; }); });
-    out[iso] = counts;
-  });
-  return out;
 }
 
 /* ─────────────────────────────────────────
@@ -969,7 +911,8 @@ export default function AdminDashboardPage() {
   const [viewTab,     setViewTab]     = useState<'schedule'|'bookings'>('schedule');
   const [period,      setPeriod]      = useState<'today'|'week'|'month'>('today');
   const [date,        setDate]        = useState(todayISO());
-  const [data,        setData]        = useState<DashboardData>(() => buildMock(todayISO()));
+  const [data,        setData]        = useState<DashboardData>(() => emptyData(todayISO()));
+  const [loadError,   setLoadError]   = useState(false);
   const [search,      setSearch]      = useState('');
   const [searchFocus, setSearchFocus] = useState(false);
   const [highlightId, setHighlightId] = useState<string|null>(null);
@@ -990,7 +933,19 @@ export default function AdminDashboardPage() {
     }
   }, []);
 
-  useEffect(() => { setData(buildMock(date)); }, [date]);
+  useEffect(() => {
+    let active = true;
+    setLoadError(false);
+    fetch(`/api/dashboard?date=${encodeURIComponent(date)}`)
+      .then(r => r.json())
+      .then(j => {
+        if (!active) return;
+        if (j?.success) setData({ ...emptyData(date), ...j, activities: j.activities || [] });
+        else setLoadError(true);
+      })
+      .catch(() => { if (active) setLoadError(true); });
+    return () => { active = false; };
+  }, [date]);
 
   useEffect(() => {
     function h(e: MouseEvent) {
@@ -1031,7 +986,26 @@ export default function AdminDashboardPage() {
     return [];
   }, [period, date]);
 
-  const rangeGrid = useMemo(() => period==='today' ? {} : buildRangeGrid(rangeDates, PROVIDERS), [rangeDates, period]);
+  const [rangeGrid, setRangeGrid] = useState<Record<string, Record<string, number>>>({});
+  const [rangeProviders, setRangeProviders] = useState<string[]>([]);
+  useEffect(() => {
+    if (period === 'today' || rangeDates.length === 0) { setRangeGrid({}); setRangeProviders([]); return; }
+    let active = true;
+    const from = rangeDates[0];
+    const to = rangeDates[rangeDates.length - 1];
+    fetch(`/api/dashboard?from=${from}&to=${to}`)
+      .then(r => r.json())
+      .then(j => { if (!active) return; if (j?.success) { setRangeGrid(j.counts || {}); setRangeProviders(j.providers || []); } })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [rangeDates, period]);
+
+  /* Recent Activities = today's bookings + activity log (SMS results, edits) */
+  const feed = useMemo(() => {
+    const b = data.bookings.map(bk => ({ kind: 'booking' as const, time: bk.CreatedAt, b: bk, a: null as ActivityEntry | null }));
+    const a = (data.activities || []).map(ac => ({ kind: 'log' as const, time: ac.timestamp, b: null as Booking | null, a: ac }));
+    return [...b, ...a].sort((x, y) => +new Date(y.time) - +new Date(x.time)).slice(0, 8);
+  }, [data]);
 
   function shiftRange(dir: 1 | -1) {
     if (period === 'week')  setDate(d => shiftDate(d, dir*7));
@@ -1061,7 +1035,7 @@ export default function AdminDashboardPage() {
         onSelect: () => { setViewTab('schedule'); setPeriod('today'); setDate(b.BookingDate); scrollToId('schedule-panel'); setTimeout(() => setSelBooking(b), 350); },
       });
     });
-    PROVIDERS.filter(p => p.toLowerCase().includes(q)).forEach(p => {
+    data.providers.filter(p => p.toLowerCase().includes(q)).forEach(p => {
       results.push({ id:`pv-${p}`, title:p, subtitle:'Service Provider', tag:'Provider', icon:<IUsers2/>, onSelect:() => { setViewTab('schedule'); scrollToId('schedule-panel'); } });
     });
     LOW_STOCK.filter(p => p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)).forEach(p => {
@@ -1275,8 +1249,8 @@ export default function AdminDashboardPage() {
                   {viewTab === 'schedule' && (
                     <div className="fade-up" style={{height:480,display:'flex',flexDirection:'column',overflow:'hidden'}}>
                       {period === 'today'
-                        ? <DayScheduleGrid bookings={data.bookings} providers={PROVIDERS} onCardClick={b => setSelBooking(b)}/>
-                        : <RangeScheduleGrid dates={rangeDates} providers={PROVIDERS} counts={rangeGrid} onCellClick={iso => { setPeriod('today'); setDate(iso); }}/>
+                        ? <DayScheduleGrid bookings={data.bookings} providers={data.providers} onCardClick={b => setSelBooking(b)}/>
+                        : <RangeScheduleGrid dates={rangeDates} providers={rangeProviders} counts={rangeGrid} onCellClick={iso => { setPeriod('today'); setDate(iso); }}/>
                       }
                     </div>
                   )}
@@ -1343,22 +1317,29 @@ export default function AdminDashboardPage() {
                     )}
                   </div>
                   <div style={{display:'flex',flexDirection:'column',gap:7,overflowY:'auto'}}>
-                    {data.bookings.slice(0,6).map((b,i) => (
-                      <div key={i} className="act-card" style={{cursor:'pointer'}} onClick={() => setSelBooking(b)}>
+                    {feed.map((entry, i) => entry.kind === 'booking' ? (
+                      <div key={`b-${entry.b!.BookingId}-${i}`} className="act-card" style={{cursor:'pointer'}} onClick={() => setSelBooking(entry.b!)}>
                         <div className="act-bar"/>
                         <div className="act-body">
                           <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:2}}>
-                            <p style={{fontSize:13,fontWeight:600,color:'#1f2937'}}>{b.services[0]?.name||'Appointment'}</p>
-                            <StatusBadge status={b.Status}/>
+                            <p style={{fontSize:13,fontWeight:600,color:'#1f2937'}}>{entry.b!.services[0]?.name||'Appointment'}</p>
+                            <StatusBadge status={entry.b!.Status}/>
                           </div>
-                          <p style={{fontSize:12,color:'#1e3a40',fontWeight:600}}>{b.ClientName}</p>
-                          <p style={{fontSize:12,color:'#374151',lineHeight:1.4}}>{b.providers[0]?.name??'Unknown'} · {b.TimeSlot}</p>
-                          <p style={{fontSize:11,color:'rgba(0,0,0,0.38)',marginTop:3}}>{fmtDateShort(b.BookingDate)} · LKR {b.TotalPrice.toLocaleString()}</p>
+                          <p style={{fontSize:12,color:'#1e3a40',fontWeight:600}}>{entry.b!.ClientName}</p>
+                          <p style={{fontSize:12,color:'#374151',lineHeight:1.4}}>{entry.b!.providers[0]?.name??'Unknown'} · {entry.b!.TimeSlot}</p>
+                          <p style={{fontSize:11,color:'rgba(0,0,0,0.38)',marginTop:3}}>{fmtDateShort(entry.b!.BookingDate)} · LKR {entry.b!.TotalPrice.toLocaleString()}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div key={`a-${entry.a!.id}`} className="act-card" style={{borderLeft:`3px solid ${entry.a!.section === 'sms' ? (entry.a!.action.startsWith('SMS FAILED') ? '#e05252' : '#3ba55d') : '#4a7fa5'}`}}>
+                        <div className="act-body">
+                          <p style={{fontSize:12,fontWeight:600,color: entry.a!.section === 'sms' && entry.a!.action.startsWith('SMS FAILED') ? '#b3403f' : '#1f2937',lineHeight:1.4}}>{entry.a!.action}</p>
+                          <p style={{fontSize:11,color:'rgba(0,0,0,0.38)',marginTop:3}}>{entry.a!.section.toUpperCase()} · {entry.a!.actor} · {fmtDateShort(entry.a!.timestamp.slice(0,10))}</p>
                         </div>
                       </div>
                     ))}
-                    {data.bookings.length === 0 && (
-                      <p style={{fontSize:12,color:'#9ca3af',textAlign:'center',padding:'1rem 0'}}>No recent activity.</p>
+                    {feed.length === 0 && (
+                      <p style={{fontSize:12,color:'#9ca3af',textAlign:'center',padding:'1rem 0'}}>{loadError ? 'Could not load dashboard data — check the server/DB.' : 'No recent activity.'}</p>
                     )}
                   </div>
                 </div>

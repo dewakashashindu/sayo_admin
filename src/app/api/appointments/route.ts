@@ -3,6 +3,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { sendAppointmentSMS } from "@/lib/sms";
+import { verifyAdminToken, ADMIN_COOKIE } from "@/lib/adminSession";
+import { logActivity, maskPhoneForLog } from "@/lib/activityLog";
 import {
   composeBookingRemarks,
   decodeBookingSchedule,
@@ -439,10 +441,6 @@ async function readHeaders(
   `;
 }
 
-function quotedList(values: string[]): string {
-  return values.map((value) => `'${value.replace(/'/g, "''")}'`).join(",");
-}
-
 interface ScheduleDetailPair {
   detail: RawDetail;
   entry: StoredBookingScheduleEntry;
@@ -714,10 +712,7 @@ export async function GET(req: NextRequest) {
       ...new Set(filtered.map((header) => trimValue(header.LocCode))),
     ];
 
-    const bidIn = quotedList(bookingIDList);
-    const locIn = quotedList(locCodeList);
-
-    const details = await prisma.$queryRawUnsafe<RawDetail[]>(`
+    const details = await prisma.$queryRaw<RawDetail[]>`
       SELECT
         RTRIM(h.BookingID)     AS BookingID,
         RTRIM(h.LocCode)       AS LocCode,
@@ -736,15 +731,15 @@ export async function GET(req: NextRequest) {
         RTRIM(i.Category2)     AS Category2,
         RTRIM(i.Category3)     AS Category3,
         RTRIM(i.Category4)     AS Category4
-      ${BOOKING_SERVICE_DETAIL_FROM_SQL}
-      WHERE RTRIM(h.BookingID) IN (${bidIn})
-        AND RTRIM(h.LocCode)   IN (${locIn})
-    `);
+      ${Prisma.raw(BOOKING_SERVICE_DETAIL_FROM_SQL)}
+      WHERE RTRIM(h.BookingID) IN (${Prisma.join(bookingIDList)})
+        AND RTRIM(h.LocCode)   IN (${Prisma.join(locCodeList)})
+    `;
 
     const cusCodeList = [
       ...new Set(filtered.map((header) => trimValue(header.CusCode))),
     ];
-    const customers = await prisma.$queryRawUnsafe<RawCustomer[]>(`
+    const customers = await prisma.$queryRaw<RawCustomer[]>`
       SELECT
         RTRIM(CusCode)  AS CusCode,
         RTRIM(CusName)  AS CusName,
@@ -752,8 +747,8 @@ export async function GET(req: NextRequest) {
         RTRIM(CusEmail) AS CusEmail,
         RTRIM(Gender)   AS Gender
       FROM tbl_customermaster
-      WHERE RTRIM(CusCode) IN (${quotedList(cusCodeList)})
-    `);
+      WHERE RTRIM(CusCode) IN (${Prisma.join(cusCodeList)})
+    `;
 
     // The service-detail view already joins ItemMaster, including the new
     // MOF/SerDuration values and category codes. Build the lookup from that
@@ -779,14 +774,14 @@ export async function GET(req: NextRequest) {
     let technicians: RawTechnician[] = [];
 
     if (techIDList.length > 0) {
-      technicians = await prisma.$queryRawUnsafe<RawTechnician[]>(`
+      technicians = await prisma.$queryRaw<RawTechnician[]>`
         SELECT
           RTRIM(UserId) AS UserId,
           RTRIM(UserName) AS UserName,
           RTRIM(WorkingLocID) AS WorkingLocID
         FROM tbl_userdetails
-        WHERE RTRIM(UserId) IN (${quotedList(techIDList)})
-      `);
+        WHERE RTRIM(UserId) IN (${Prisma.join(techIDList)})
+      `;
     }
 
     const customerMap = new Map<string, RawCustomer>();
@@ -916,6 +911,7 @@ export async function GET(req: NextRequest) {
         return {
           serviceIndex: entry.serviceIndex,
           itemCode,
+          guessID: trimValue(detail.GuessID),
           serviceName: itemMap.get(itemCode) || itemCode,
           providerName:
             detailTechID !== "0"
@@ -1106,7 +1102,11 @@ export async function PATCH(req: NextRequest) {
       );
     }
 
-    const actor = toChar(body.userID || body.updatedBy || "ADMIN", 10);
+    /* The acting user comes from the signed session cookie — never from the
+       request body — so ConfirmedBy / CancelledBy audit fields are trustworthy. */
+    const session = await verifyAdminToken(req.cookies.get(ADMIN_COOKIE)?.value);
+    const actorName = session?.log || "ADMIN";
+    const actor = toChar(actorName, 10);
     const status =
       body.status !== undefined &&
       body.status !== null &&
@@ -1357,7 +1357,10 @@ export async function PATCH(req: NextRequest) {
       const candidateStartMin =
         newStartMin >= 0 ? newStartMin : oldStartMin;
 
-      if (candidateWindows.length > 0 && candidateStartMin >= 0) {
+      // Cancelling releases capacity — it must never be blocked by a conflict.
+      // The overlap assertion only applies when the booking stays active
+      // (confirm / reschedule / technician reassignment).
+      if (candidateWindows.length > 0 && candidateStartMin >= 0 && status !== "CANCELLED") {
         // Lock every competing non-cancelled booking on the target date before
         // reading its occupancy. A concurrent reschedule therefore cannot pass
         // this check at the same time and commit an overlapping assignment.
@@ -1699,9 +1702,28 @@ export async function PATCH(req: NextRequest) {
           console.error(
             `[BOOKING] SMS was not sent for ${bookingID}: ${smsResult.error}`,
           );
+          void logActivity(
+            "system", "sms",
+            `SMS FAILED to ${maskPhoneForLog(smsBooking.RegTel || "")} — booking ${bookingID} (${smsEvent}): ${smsResult.error || "unknown error"}`,
+          );
+        } else {
+          void logActivity(
+            "system", "sms",
+            `SMS sent to ${maskPhoneForLog(smsBooking.RegTel || "")} — booking ${bookingID} (${smsEvent})`,
+          );
         }
       }
     }
+
+    const changes: string[] = [];
+    if (status) changes.push(`status → ${trimValue(body.status)}`);
+    if (hasScheduleChange)
+      changes.push(`rescheduled to ${trimValue(body.date)} ${trimValue(body.timeSlot)}`);
+    if (hasTechnicianChange) changes.push("technician reassigned");
+    void logActivity(
+      actorName, "appointments",
+      `Booking ${bookingID}: ${changes.join(", ") || "updated"}`,
+    );
 
     return NextResponse.json({
       success: true,

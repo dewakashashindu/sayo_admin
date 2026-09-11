@@ -4512,6 +4512,19 @@ function WalkInPage() {
         if (!json.success) throw new Error(json.error || "Reschedule failed");
         setRefNumber(form.bookingID);
       } else {
+        // Defensive dedupe: one row per itemCode per guest. Guards against a
+        // duplicated service catalog or stale selection state producing the
+        // same service many times in one booking.
+        const uniqueSelected = (codes: string[]) => {
+          const seen = new Set<string>();
+          return services.filter((s) => {
+            if (!codes.includes(s.itemCode) || seen.has(s.itemCode)) {
+              return false;
+            }
+            seen.add(s.itemCode);
+            return true;
+          });
+        };
         const payload = {
           locCode: form.branch,
           regTel: form.phoneNumber.trim(),
@@ -4529,8 +4542,7 @@ function WalkInPage() {
               label: "Main Client",
               gender: form.gender,
               timeSlot: form.timeSlot,
-              services: services
-                .filter((s) => form.selectedServices.includes(s.itemCode))
+              services: uniqueSelected(form.selectedServices)
                 .map((s) => ({
                   serviceItemID: s.itemCode,
                   qty: 1,
@@ -4550,8 +4562,7 @@ function WalkInPage() {
               label: sc.label,
               gender: sc.gender,
               timeSlot: sc.timeSlot,
-              services: services
-                .filter((s) => sc.selectedServices.includes(s.itemCode))
+              services: uniqueSelected(sc.selectedServices)
                 .map((s) => ({
                   serviceItemID: s.itemCode,
                   qty: 1,

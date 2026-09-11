@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
+import { createCustomerToken, customerCookieOptions, CUSTOMER_COOKIE } from '@/lib/customerSession';
 import { prisma } from '@/lib/prisma';
 import { sendRegistrationSMS } from '@/lib/sms';
 import { GENDER_OPTIONS } from '@/lib/genderOptions';
@@ -102,10 +103,22 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      return NextResponse.json(
+      const token = await createCustomerToken({
+        uid:    created.CusCode.trim(),
+        log:    emailLower,
+        name:   name.trim(),
+        phone:  phone?.trim() || '',
+        gender: gender?.trim() || '',
+      });
+
+      const res = NextResponse.json(
         { success: true, message: 'User registered successfully', userId: created.CusCode },
         { status: 201 },
       );
+      if (token) {
+        res.cookies.set(CUSTOMER_COOKIE, token, customerCookieOptions());
+      }
+      return res;
 
     } catch (err) {
       console.error('[register] create error:', errMsg(err));

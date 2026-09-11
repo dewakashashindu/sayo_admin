@@ -33,6 +33,7 @@ interface UserDetail {
   nic: string;
   logName: string;
   psw: string;
+  hasPassword?: boolean;
   groupId: string;
   userName: string;
   address: string;
@@ -610,6 +611,8 @@ export default function SettingsPage() {
   async function handleSaveUser() {
     if (!curUser.userName.trim()) { alert('User name is required'); return; }
     if (!curUser.logName.trim())  { alert('Login name is required'); return; }
+    if (isNewUser && curUser.psw.trim().length < 8) { alert('Password is required (minimum 8 characters)'); return; }
+    if (!isNewUser && curUser.psw.trim() && curUser.psw.trim().length < 8) { alert('Password must be at least 8 characters'); return; }
     setSaving(true);
     try {
       const res = await fetch('/api/settings', {
@@ -1092,7 +1095,7 @@ export default function SettingsPage() {
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                             <FieldRow label="Login Name *"><input className="frm-input" value={curUser.logName} onChange={e => setCurUser(p => ({ ...p, logName: e.target.value }))} placeholder="e.g. nadeesha.p" /></FieldRow>
                             <FieldRow label="Password">
-                              <input className="frm-input" type="password" value={curUser.psw} onChange={e => setCurUser(p => ({ ...p, psw: e.target.value }))} placeholder={isNewUser ? 'Enter password' : 'Leave blank to keep unchanged'} />
+                              <input className="frm-input" type="password" value={curUser.psw} onChange={e => setCurUser(p => ({ ...p, psw: e.target.value }))} placeholder={isNewUser ? 'Enter password * (min 8 chars)' : 'Leave blank to keep unchanged'} />
                             </FieldRow>
                           </div>
                         </SectBox>

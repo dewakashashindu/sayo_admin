@@ -21,10 +21,6 @@ const tokens = {
   },
 } as const;
 
-const ADMIN_USERNAME   = 'admin';
-const ADMIN_PASSWORD   = 'sayo@2025';
-const AUTH_SESSION_KEY = 'sayo_admin_auth_session';
-
 export type NavItem   = { label: string; href: string };
 export type QuickLink = { label: string; href: string };
 
@@ -521,68 +517,6 @@ function AdminLogoIcon({ size = 42 }: { size?: number }) {
 }
 
 /* ─────────────────────────────────────────
-   LOGIN SCREEN
-───────────────────────────────────────── */
-function AdminLoginScreen({ onLoginSuccess }: { onLoginSuccess: (u: string) => void }) {
-  const [username,     setUsername]     = useState('');
-  const [password,     setPassword]     = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [error,        setError]        = useState('');
-  const [shake,        setShake]        = useState(false);
-  const [loading,      setLoading]      = useState(false);
-
-  const triggerShake = () => { setShake(true); setTimeout(() => setShake(false), 500); };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError('');
-    if (!username.trim() || !password.trim()) { setError('Please enter both username and password.'); triggerShake(); return; }
-    setLoading(true);
-    await new Promise(r => setTimeout(r, 700));
-    if (username.trim() === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-      try { sessionStorage.setItem(AUTH_SESSION_KEY, 'true'); sessionStorage.setItem('admin_username', username.trim()); } catch {}
-      setLoading(false); onLoginSuccess(username.trim());
-    } else { setLoading(false); setError('Invalid username or password.'); triggerShake(); }
-  };
-
-  return (
-    <div style={{ minHeight:'100vh', backgroundColor:tokens.color.bgDark, backgroundImage:'radial-gradient(circle at 20% 20%, rgba(184,134,11,0.08) 0%, transparent 50%), radial-gradient(circle at 80% 80%, rgba(184,134,11,0.06) 0%, transparent 50%)', color:tokens.color.white, fontFamily:tokens.font.family, display:'flex', alignItems:'center', justifyContent:'center', padding:'1.5rem' }}>
-      <style>{`@keyframes shakeAnim{0%,100%{transform:translateX(0)}20%{transform:translateX(-10px)}40%{transform:translateX(10px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}} @keyframes fadeUpLogin{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}} @keyframes spin{to{transform:rotate(360deg)}} .login-shake{animation:shakeAnim .5s ease} .login-card{animation:fadeUpLogin .6s cubic-bezier(0.16,1,0.3,1) both} .login-input:focus{border-color:#B8860B!important;box-shadow:0 0 0 3px rgba(184,134,11,0.15)!important;outline:none!important}`}</style>
-      <div className={`login-card${shake?' login-shake':''}`} style={{ width:'100%', maxWidth:'420px', background:tokens.color.bgCard, border:`1px solid ${tokens.color.goldBorder}`, borderRadius:'1.5rem', padding:'clamp(2rem,5vw,2.75rem)', boxShadow:'0 25px 70px rgba(0,0,0,0.6)' }}>
-        <div style={{ textAlign:'center', marginBottom:'2rem' }}>
-          <div style={{ display:'flex', justifyContent:'center', marginBottom:'1.25rem' }}><AdminLogoIcon size={80} /></div>
-          <h1 style={{ fontSize:'1.4rem', fontWeight:700, margin:'0 0 0.35rem', letterSpacing:'0.05em' }}>SAYO BEAUTY</h1>
-          <p style={{ fontSize:'0.85rem', color:tokens.color.gold, margin:0, fontWeight:600, letterSpacing:'0.12em', textTransform:'uppercase' }}>Admin Portal Access</p>
-        </div>
-        <form onSubmit={handleSubmit} style={{ display:'flex', flexDirection:'column', gap:'1.1rem' }}>
-          <div>
-            <label style={fieldLabel}><span style={{ display:'flex', alignItems:'center', gap:'0.4rem' }}><IconUser /> Username</span></label>
-            <input type="text" className="login-input" value={username} onChange={e => setUsername(e.target.value)} placeholder="Enter admin username" style={inputStyle} autoComplete="username" autoFocus disabled={loading} />
-          </div>
-          <div>
-            <label style={fieldLabel}><span style={{ display:'flex', alignItems:'center', gap:'0.4rem' }}><IconLock /> Password</span></label>
-            <div style={{ position:'relative' }}>
-              <input type={showPassword?'text':'password'} className="login-input" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter admin password" style={{ ...inputStyle, paddingRight:'3rem' }} autoComplete="current-password" disabled={loading} />
-              <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position:'absolute', right:'0.75rem', top:'50%', transform:'translateY(-50%)', background:'none', border:'none', color:tokens.color.whiteFaint, cursor:'pointer', display:'flex', alignItems:'center', padding:'0.25rem' }}>
-                {showPassword ? <IconEyeOff /> : <IconEye />}
-              </button>
-            </div>
-          </div>
-          {error && (
-            <div style={{ background:'rgba(229,62,62,0.12)', border:'1px solid rgba(229,62,62,0.4)', color:'#fc8181', padding:'0.7rem 1rem', borderRadius:'0.5rem', fontSize:'0.82rem', fontWeight:500, display:'flex', alignItems:'center', gap:'0.5rem' }}>
-              <IconAlertTriangle /> {error}
-            </div>
-          )}
-          <button type="submit" disabled={loading} style={{ background:loading?'rgba(184,134,11,0.5)':'linear-gradient(135deg,#B8860B 0%,#d4a017 100%)', border:'none', color:'#fff', padding:'0.85rem 1.5rem', borderRadius:'0.6rem', fontWeight:700, fontSize:'0.95rem', cursor:loading?'not-allowed':'pointer', marginTop:'0.4rem', boxShadow:loading?'none':'0 8px 24px rgba(184,134,11,0.4)', display:'flex', alignItems:'center', justifyContent:'center', gap:'0.5rem' }}>
-            {loading ? (<><IconSpinner /> Verifying...</>) : (<><IconLock /> Sign In to Admin Portal</>)}
-          </button>
-        </form>
-        <p style={{ textAlign:'center', color:tokens.color.whiteFaint, fontSize:'0.72rem', marginTop:'1.75rem', marginBottom:0 }}>Unauthorized access is strictly prohibited &amp; monitored.</p>
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────
    LIVE PREVIEW PANEL
 ───────────────────────────────────────── */
 function LivePreviewPanel({ open, onClose, navData, homeData, footerData, activeTab }: {
@@ -1025,8 +959,6 @@ function FeedbackTab() {
    MAIN ADMIN PAGE
 ═══════════════════════════════════════════ */
 export default function SayoAdminPage() {
-  const [authChecked,     setAuthChecked]     = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminUsername,   setAdminUsername]   = useState('');
 
   const [navData,      setNavData]      = useState<NavData>(NAV_DEFAULTS);
@@ -1067,17 +999,18 @@ export default function SayoAdminPage() {
   }, [servicesData.categories, svcCategory]);
 
   useEffect(() => {
-    try {
-      if (sessionStorage.getItem(AUTH_SESSION_KEY) === 'true') {
-        setIsAuthenticated(true);
-        setAdminUsername(sessionStorage.getItem('admin_username') || 'admin');
-      }
-    } catch {}
-    setAuthChecked(true);
+    /* Session comes from the signed httpOnly cookie (verified server-side).
+       If there is no valid session, bounce to the login page. */
+    fetch('/api/auth/admin-me')
+      .then(r => {
+        if (!r.ok) { window.location.href = '/admin-login'; return null; }
+        return r.json();
+      })
+      .then(j => { if (j?.user) setAdminUsername(j.user.username || j.user.name || 'admin'); })
+      .catch(() => { window.location.href = '/admin-login'; });
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
     setIsLoading(true);
     fetch('/api/site-data')
       .then(r => r.json())
@@ -1100,7 +1033,7 @@ export default function SayoAdminPage() {
       })
       .catch(() => showToast('Could not load DB data — showing defaults', 'error'))
       .finally(() => setIsLoading(false));
-  }, [isAuthenticated]);
+  }, []);
 
   const showToast = (msg: string, type: 'success'|'error' = 'success') => {
     setToastMessage(msg); setToastType(type);
@@ -1127,10 +1060,10 @@ export default function SayoAdminPage() {
     for (const s of ['nav','home','footer','about','services','contact','gallery'] as const) await saveSection(s);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (!window.confirm('Are you sure you want to log out?')) return;
-    try { sessionStorage.removeItem(AUTH_SESSION_KEY); sessionStorage.removeItem('admin_username'); } catch {}
-    setIsAuthenticated(false); setAdminUsername('');
+    try { await fetch('/api/auth/admin-logout', { method: 'POST' }); } catch {}
+    window.location.href = '/admin-login';
   };
 
   /* ── Nav helpers ── */
@@ -1288,20 +1221,9 @@ export default function SayoAdminPage() {
     </div>
   );
 
-  /* ── Auth guard ── */
-  if (!authChecked) return (
-    <div style={{ minHeight:'100vh', backgroundColor:tokens.color.bgDark, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:tokens.font.family }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      <div style={{ width:'40px', height:'40px', border:`3px solid ${tokens.color.goldBorder}`, borderTopColor:tokens.color.gold, borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
-    </div>
-  );
-
-  if (!isAuthenticated) return (
-    <AdminLoginScreen onLoginSuccess={u => { setIsAuthenticated(true); setAdminUsername(u); }} />
-  );
-
   /* ══════════════════════════════════════════
-     RENDER
+     RENDER  (route is protected by src/middleware.ts —
+     unauthenticated visitors are redirected to /admin-login)
   ══════════════════════════════════════════ */
   return (
     <div style={{ minHeight:'100vh', backgroundColor:tokens.color.bgDark, color:tokens.color.white, fontFamily:tokens.font.family, paddingBottom:'4rem' }}>

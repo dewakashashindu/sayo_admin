@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { logActivity, maskPhoneForLog } from '@/lib/activityLog';
 import {
   clockToMinutes,
   composeBookingRemarks,
@@ -273,8 +274,10 @@ function escapeHtml(str: string): string {
 /* ─────────────────────────────────────────────────────────────────────────────
    CUSTOMER CODE GENERATOR
 ─────────────────────────────────────────────────────────────────────────────── */
-async function generateCusCode(): Promise<string> {
-  const last = await prisma.tbl_CustomerMaster.findFirst({
+async function generateCusCode(
+  db: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<string> {
+  const last = await db.tbl_CustomerMaster.findFirst({
     orderBy: { CreateDateTime: 'desc' },
     select:  { CusCode: true },
   });
@@ -1607,10 +1610,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const resolvedServices = await resolveLegacyServices(
+    const resolvedServicesRaw = await resolveLegacyServices(
       services,
       branch.LocCode.trim(),
     );
+    // One detail row per legacy service item: if the client sends the same
+    // service more than once, collapse the duplicates so a booking can never
+    // store repeated identical rows (and never inflate the total).
+    const resolvedServices = (() => {
+      const seen = new Map<string, (typeof resolvedServicesRaw)[number]>();
+      for (const service of resolvedServicesRaw) {
+        const key = String(service.serviceItemID || '').trim().toUpperCase();
+        if (!key || seen.has(key)) continue;
+        seen.set(key, service);
+      }
+      return Array.from(seen.values());
+    })();
     const resolvedProviders = await resolveLegacyProviders(
       providers,
       branch.LocCode.trim(),
@@ -1653,38 +1668,17 @@ export async function POST(req: NextRequest) {
       startMin,
     );
 
-    // ── 3. Upsert customer (existing public behaviour) ────────────────────────
-    let customer = await prisma.tbl_CustomerMaster.findFirst({
-      where: { CusEmail: email.trim().toLowerCase() },
-    });
-
-    if (!customer) {
-      const placeholderHash = await bcrypt.hash(
-        `guest_${email}_${Date.now()}`,
-        10,
-      );
-      const cusCode = await generateCusCode();
-
-      customer = await prisma.tbl_CustomerMaster.create({
-        data: {
-          CusCode: cusCode,
-          CusName: name.trim(),
-          CusEmail: email.trim().toLowerCase(),
-          RegTel: phone.trim().slice(0, 15),
-          PSW: placeholderHash,
-          Gender: gender?.trim().slice(0, 50) ?? null,
-        },
-      });
-    } else {
-      customer = await prisma.tbl_CustomerMaster.update({
-        where: { CusCode: customer.CusCode },
-        data: {
-          CusName: name.trim(),
-          RegTel: phone.trim().slice(0, 15),
-          Gender: gender?.trim().slice(0, 50) || customer.Gender,
-        },
-      });
-    }
+    // ── 3. Customer resolution ───────────────────────────────────────────────
+    // Done INSIDE the write transaction below: a `SELECT … FOR UPDATE` on the
+    // email serialises concurrent public submissions, so two simultaneous
+    // bookings for the same e-mail can never create duplicate customer rows.
+    let customer: {
+      CusCode:  string;
+      CusName:  string;
+      CusEmail: string;
+      RegTel:   string;
+      Gender:   string | null;
+    } | null = null;
 
     const bookingTypeID = await resolveOnlineBookingTypeID();
     // Remarks stores human notes only; service placement is saved per detail row.
@@ -1696,11 +1690,43 @@ export async function POST(req: NextRequest) {
     // The views are read-only projections. All three base-table rows are
     // committed or rolled back together so the public flow and admin calendar
     // always see the same booking.
-    await prisma.$transaction(
+    customer = await prisma.$transaction(
       async (tx) => {
         // Use the branch row as the shared booking-ID/capacity lock. This is
         // required even for WC, which does not claim provider capacity.
         await lockBookingIDNamespaceTx(tx, branch.LocCode.trim());
+
+        // Resolve (or create) the customer under the transaction lock so
+        // concurrent submissions for the same e-mail cannot duplicate rows.
+        const emailNorm = email.trim().toLowerCase();
+        const locked = await tx.$queryRaw<{ CusCode: string }[]>`
+          SELECT CusCode FROM tbl_customermaster WHERE CusEmail = ${emailNorm} FOR UPDATE
+        `;
+        if (locked.length > 0) {
+          customer = await tx.tbl_CustomerMaster.update({
+            where: { CusCode: locked[0].CusCode },
+            data: {
+              CusName: name.trim(),
+              RegTel: phone.trim().slice(0, 15),
+              Gender: gender?.trim().slice(0, 50) || undefined,
+            },
+          });
+        } else {
+          const placeholderHash = await bcrypt.hash(
+            `guest_${emailNorm}_${Date.now()}`,
+            10,
+          );
+          customer = await tx.tbl_CustomerMaster.create({
+            data: {
+              CusCode: await generateCusCode(tx),
+              CusName: name.trim(),
+              CusEmail: emailNorm,
+              RegTel: phone.trim().slice(0, 15),
+              PSW: placeholderHash,
+              Gender: gender?.trim().slice(0, 50) ?? null,
+            },
+          });
+        }
 
         // A WC request is intentionally allowed through: the salon will call
         // the customer and resolve the slot manually. Only WO bookings claim
@@ -1812,6 +1838,8 @@ export async function POST(req: NextRequest) {
           `;
           detailRowCount += 1;
         }
+
+        return customer as NonNullable<typeof customer>;
       },
       { timeout: 15000 },
     );
@@ -1852,17 +1880,35 @@ export async function POST(req: NextRequest) {
       date,
       timeSlot,
     }).then((result) => {
-      if (!result.success) {
+      if (result.success) {
+        void logActivity(
+          'system', 'sms',
+          `SMS sent to ${maskPhoneForLog(phone)} — booking ${bookingID.trim()} (${date} ${timeSlot})`,
+        );
+      } else {
         console.error(`[SMS_FAILED] BookingId=${bookingID.trim()} error=${result.error}`);
+        void logActivity(
+          'system', 'sms',
+          `SMS FAILED to ${maskPhoneForLog(phone)} — booking ${bookingID.trim()}: ${result.error || 'unknown error'}`,
+        );
       }
     }).catch((error) => {
       console.error('[SMS_UNHANDLED_ERROR]', error);
+      void logActivity(
+        'system', 'sms',
+        `SMS FAILED to ${maskPhoneForLog(phone)} — booking ${bookingID.trim()}: unhandled send error`,
+      );
     });
+
+    void logActivity(
+      'public', 'bookings',
+      `New online booking ${bookingID.trim()} — ${name.trim()} on ${date} ${timeSlot} (${isWithoutConfirmation ? 'without confirmation' : 'with confirmation'})`,
+    );
 
     return NextResponse.json({
       success: true,
       bookingId: bookingID.trim(),
-      customerId: customer.CusCode,
+      customerId: customer?.CusCode ?? '',
       confirmationType,
       status: legacyStatus,
       serviceRows: detailRowCount,

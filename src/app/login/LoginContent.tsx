@@ -20,17 +20,6 @@ import {
   spinnerStyle,
 } from '@/components/auth/shared';
 
-// Shape of the object saved to localStorage under key 'user'.
-// Extend this interface (and the save call below) when your API
-// returns Gender and PhoneNumber.
-interface StoredUser {
-  userId: number;
-  name:   string;
-  email:  string;
-  gender?:      string;
-  phoneNumber?: string;
-}
-
 export default function LoginContent() {
   const router       = useRouter();
   const searchParams = useSearchParams();
@@ -70,23 +59,12 @@ export default function LoginContent() {
         return;
       }
 
-      // ── Persist user details to localStorage ──────────────────────────────
-      // The API currently returns: userId, name, email.
-      // When your API also returns gender / phoneNumber, add them here and
-      // to the StoredUser interface above.
-      const user: StoredUser = {
-        userId: data.userId,
-        name:   data.name,
-        email:  data.email,
-        gender:      data.gender,
-        phoneNumber: data.phoneNumber,
-      };
-      localStorage.setItem('user', JSON.stringify(user));
-      // ──────────────────────────────────────────────────────────────────────
-
-      // ── Redirect immediately (honour ?redirect= query param) ──────────────
-      const redirectTo = searchParams.get('redirect') ?? '/booking';
-      router.push(redirectTo);
+      // The server sets a signed httpOnly session cookie — no client-side
+      // user store needed. Full-page navigation so the booking page loads
+      // with the fresh session.
+      const redirectTo = searchParams.get('redirect');
+      window.location.href = redirectTo && redirectTo.startsWith('/') ? redirectTo : '/booking';
+      return;
 
     } catch {
       setApiError('Network error. Please check your connection and try again.');

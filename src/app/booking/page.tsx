@@ -29,8 +29,8 @@ import { GENDER_OPTIONS } from '@/lib/genderOptions';
 /* ─────────────────────────────────────────
    STORED USER TYPE
 ───────────────────────────────────────── */
-interface StoredUser {
-  userId:      number;
+interface SessionUser {
+  userId:      string;
   name:        string;
   email:       string;
   phoneNumber: string;
@@ -1396,10 +1396,10 @@ function MultiGuestEditor({
               </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.6rem' }}>
-                {filteredProvs.map(p => {
+                {filteredProvs.map((p, pi) => {
                   const active = guest.providers.some(x => x.name === p.name);
                   return (
-                    <div key={p.name} className={`prov-card${active ? ' prov-card-active' : ''}`} onClick={() => toggleProv(p)} role="button" aria-pressed={active}>
+                    <div key={`${p.name}-${pi}`} className={`prov-card${active ? ' prov-card-active' : ''}`} onClick={() => toggleProv(p)} role="button" aria-pressed={active}>
                       <div className="prov-avatar">{p.avatar}</div>
                       <div style={{ flex: 1 }}>
                         <p style={{ color: tokens.color.whiteMuted, fontSize: '0.85rem', fontWeight: 600, fontFamily: tokens.font.family }}>{p.name}</p>
@@ -1951,22 +1951,27 @@ export default function BookingPage() {
     if (typeof window !== 'undefined') window.localStorage.setItem('lang', l);
   };
 
-  /* ── auto-fill from localStorage ── */
+  /* ── customer session gate + auto-fill (signed httpOnly cookie) ── */
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const raw = localStorage.getItem('user');
-    if (!raw) { router.replace('/login?redirect=/booking'); return; }
-    try {
-      const u = JSON.parse(raw) as StoredUser;
-      if (u.name)  setName(u.name);
-      if (u.email) setEmail(u.email);
-      if (u.phoneNumber?.trim()) { setPhone(u.phoneNumber.trim()); setPhoneAutoFilled(true); }
-      if (u.gender?.trim()) {
-        const rg = u.gender.trim().toLowerCase();
-        const m  = GENDER_OPTIONS.find(g => g.value === rg || g.label.toLowerCase() === rg || rg.startsWith(g.value.split('_')[0]));
-        if (m) setGender(m.value);
-      }
-    } catch { localStorage.removeItem('user'); router.replace('/login?redirect=/booking'); }
+    let active = true;
+    fetch('/api/auth/customer-me')
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => {
+        if (!active) return;
+        const u = j?.user as SessionUser | undefined;
+        if (!u) { router.replace('/login?redirect=/booking'); return; }
+        if (u.name)  setName(u.name);
+        if (u.email) setEmail(u.email);
+        if (u.phoneNumber?.trim()) { setPhone(u.phoneNumber.trim()); setPhoneAutoFilled(true); }
+        if (u.gender?.trim()) {
+          const rg = u.gender.trim().toLowerCase();
+          const m  = GENDER_OPTIONS.find(g => g.value === rg || g.label.toLowerCase() === rg || rg.startsWith(g.value.split('_')[0]));
+          if (m) setGender(m.value);
+        }
+      })
+      .catch(() => { if (active) router.replace('/login?redirect=/booking'); });
+    return () => { active = false; };
   }, [router]);
 
   const today       = new Date().toISOString().split('T')[0];
@@ -2489,10 +2494,10 @@ export default function BookingPage() {
                       </p>
                       {providers.length > 1 && <div className="info-box" style={{ marginBottom: '0.8rem', display: 'flex', gap: '0.5rem' }}><Ico.Info s={13} /><span>{t(lang, 's1.multiProviderInfo', { n: providers.length })}</span></div>}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.9rem' }}>
-                        {filteredProvs.map(p => {
+                        {filteredProvs.map((p, pi) => {
                           const active = providers.some(x => x.name === p.name);
                           return (
-                            <div key={p.name} className={`prov-card${active ? ' prov-card-active' : ''}`} onClick={() => toggleProvider(p)} role="button" aria-pressed={active}>
+                            <div key={`${p.name}-${pi}`} className={`prov-card${active ? ' prov-card-active' : ''}`} onClick={() => toggleProvider(p)} role="button" aria-pressed={active}>
                               <div className="prov-avatar">{p.avatar}</div>
                               <div style={{ flex: 1 }}>
                                 <p style={{ color: tokens.color.whiteMuted, fontSize: '0.85rem', fontWeight: 600, fontFamily: tokens.font.family }}>{p.name}</p>

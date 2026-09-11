@@ -1,6 +1,7 @@
 // app/api/settings/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
@@ -95,7 +96,9 @@ function mapUser(u: any, specAreaIDs: string[] = []) {
     userId: u.UserId.trim(),
     nic: u.NIC.trim(),
     logName: u.LogName.trim(),
-    psw: u.PSW.trim(),
+    // SECURITY: never send the stored password hash to the browser.
+    psw: "",
+    hasPassword: Boolean(u.PSW && u.PSW.trim()),
     groupId: u.GroupId.trim(),
     userName: u.UserName.trim(),
     address: u.Address.trim(),
@@ -272,6 +275,14 @@ export async function POST(req: NextRequest) {
         if (!payload.logName?.trim()) {
           return NextResponse.json({ success: false, error: "Login name is required" }, { status: 422 });
         }
+        const rawPsw = payload.psw?.trim() || "";
+        if (rawPsw.length < 8) {
+          return NextResponse.json({ success: false, error: "Password is required (minimum 8 characters)" }, { status: 422 });
+        }
+        const dupLog = await prisma.tbl_userdetails.findFirst({ where: { LogName: payload.logName.trim() } });
+        if (dupLog) {
+          return NextResponse.json({ success: false, error: "Login name already exists" }, { status: 409 });
+        }
         const existing = await prisma.tbl_userdetails.findMany({ select: { UserId: true } });
         const newId = nextSeqId("USR", 10, existing.map((e) => e.UserId));
         const created = await prisma.tbl_userdetails.create({
@@ -279,7 +290,7 @@ export async function POST(req: NextRequest) {
             UserId: toChar(newId, 10),
             NIC: toChar(payload.nic, 20),
             LogName: payload.logName?.trim() || " ",
-            PSW: payload.psw?.trim() || " ",
+            PSW: await bcrypt.hash(rawPsw, 10),
             GroupId: toChar(payload.groupId, 10),
             UserName: payload.userName.trim(),
             Address: payload.address?.trim() || " ",
@@ -394,8 +405,21 @@ export async function PUT(req: NextRequest) {
           Enable: payload.enable ?? true,
         };
 
-        if (payload.psw && payload.psw.trim() && !/^•+$/.test(payload.psw.trim())) {
-          updateData.PSW = payload.psw.trim();
+        const rawPsw = payload.psw?.trim() || "";
+        if (rawPsw && !/^•+$/.test(rawPsw)) {
+          if (rawPsw.length < 8) {
+            return NextResponse.json({ success: false, error: "Password must be at least 8 characters" }, { status: 422 });
+          }
+          updateData.PSW = await bcrypt.hash(rawPsw, 10);
+        }
+        const newLogName = payload.logName?.trim() || "";
+        if (newLogName) {
+          const dupLog = await prisma.tbl_userdetails.findFirst({
+            where: { LogName: newLogName, NOT: { UserId: toChar(id, 10) } },
+          });
+          if (dupLog) {
+            return NextResponse.json({ success: false, error: "Login name already exists" }, { status: 409 });
+          }
         }
         if (payload.picture !== undefined) {
           updateData.Picture = base64ToBuf(payload.picture);

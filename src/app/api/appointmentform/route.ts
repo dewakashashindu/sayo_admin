@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient, Prisma } from "@prisma/client";
 import nodemailer from "nodemailer";
 import { sendAppointmentSMS } from "@/lib/sms";
+import { verifyAdminToken, ADMIN_COOKIE } from "@/lib/adminSession";
+import { logActivity, maskPhoneForLog } from "@/lib/activityLog";
 import {
   composeBookingRemarks,
   type StoredBookingScheduleEntry,
@@ -1033,6 +1035,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  /* Acting staff member comes from the signed session cookie — the body can
+     no longer spoof who created the appointment. */
+  const session = await verifyAdminToken(req.cookies.get(ADMIN_COOKIE)?.value);
+  const actorUserId = (session?.uid || "0").trim();
+  const actorName = session?.log || "ADMIN";
+
   const required: (keyof BookingPayload)[] = [
     "locCode",
     "regTel",
@@ -1461,7 +1469,7 @@ export async function POST(req: NextRequest) {
           ${" "},
           ${" "},
           ${body.gender?.trim() || " "},
-          ${body.userID || "0"},
+          ${toChar(actorUserId, 10)},
           ${new Date()}
         )
       `;
@@ -1649,8 +1657,8 @@ export async function POST(req: NextRequest) {
             // PENDING/Confirmed=0 while the SMS/email already says "Booking
             // Confirmed", and billing gets blocked later.
             const createdAt = new Date();
-            const userID = toChar(body.userID?.trim() || "0", 10);
-            const eventActor = toChar(body.userID?.trim() || " ", 10);
+            const userID = toChar(actorUserId, 10);
+            const eventActor = toChar(actorName, 10);
 
             await tx.$executeRaw`
               INSERT INTO tbl_bookingheder (
@@ -1791,6 +1799,15 @@ export async function POST(req: NextRequest) {
       console.error(
         `[BOOKING] SMS was not sent for ${bookingID.trim()}: ${smsResult.error}`,
       );
+      void logActivity(
+        "system", "sms",
+        `SMS FAILED to ${maskPhoneForLog(phone)} — booking ${bookingID.trim()}: ${smsResult.error || "unknown error"}`,
+      );
+    } else {
+      void logActivity(
+        "system", "sms",
+        `SMS sent to ${maskPhoneForLog(phone)} — booking ${bookingID.trim()}`,
+      );
     }
 
     const customerEmail = body.cusEmail?.trim();
@@ -1850,6 +1867,11 @@ export async function POST(req: NextRequest) {
         `[BOOKING] No email provided for booking ${bookingID.trim()} — skipping email.`,
       );
     }
+
+    void logActivity(
+      actorName, "appointments",
+      `Manual ${isWalkIn ? "walk-in" : "appointment"} created: ${bookingID.trim()} — ${body.cusName?.trim() || "customer"} on ${body.appointmentDate || ""}`,
+    );
 
     return NextResponse.json({
       success: true,

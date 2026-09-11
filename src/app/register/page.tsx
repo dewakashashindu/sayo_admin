@@ -92,7 +92,7 @@ export default function RegisterPage() {
       } catch (parseErr) {
         console.error('[register page] JSON parse error:', parseErr);
         if (res.ok) {
-          setSuccess(true);
+          window.location.href = '/booking';
           return;
         }
         setServerError('Unexpected server response. Please try again.');
@@ -108,7 +108,9 @@ export default function RegisterPage() {
         return;
       }
 
-      setSuccess(true);
+      // Server already set the customer session cookie — go straight in.
+      window.location.href = '/booking';
+      return;
 
     } catch (err) {
       console.error('[register page] fetch error:', err);

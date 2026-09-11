@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
+import { createCustomerToken, customerCookieOptions, CUSTOMER_COOKIE } from '@/lib/customerSession';
 
 export const dynamic    = 'force-dynamic';
 export const revalidate = 0;
@@ -66,7 +67,15 @@ export async function POST(req: NextRequest) {
 
     console.log(`[login] success — CusCode: ${user.CusCode}`);
 
-    return NextResponse.json({
+    const token = await createCustomerToken({
+      uid:    user.CusCode.trim(),
+      log:    user.CusEmail.trim(),
+      name:   user.CusName.trim(),
+      phone:  user.RegTel.trim() || '',
+      gender: user.Gender?.trim() || '',
+    });
+
+    const res = NextResponse.json({
       success:     true,
       userId:      user.CusCode,
       name:        user.CusName,
@@ -74,6 +83,11 @@ export async function POST(req: NextRequest) {
       phoneNumber: user.RegTel.trim() || '',
       gender:      user.Gender ?? '',
     }, { status: 200 });
+
+    if (token) {
+      res.cookies.set(CUSTOMER_COOKIE, token, customerCookieOptions());
+    }
+    return res;
 
   } catch (err) {
     console.error('[login POST] unexpected error:', err);
