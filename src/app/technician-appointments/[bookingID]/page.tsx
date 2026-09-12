@@ -64,6 +64,38 @@ interface ServiceRecipe {
   endTime: string;
   rows: RecipeRow[];
   isSample: boolean;
+  /** How many guests/rows share this same service (duplicate-safe display). */
+  count: number;
+  guessID: string;
+  /** Rows came from Tbl_BookingServiceRecipe (what was actually used). */
+  fromBooking: boolean;
+}
+
+interface ExtrasAddTech {
+  guessID: string;
+  serviceItemID: string;
+  techID: string;
+  techName: string;
+}
+
+interface ExtrasRecipeRow {
+  guessID: string;
+  serviceItemID: string;
+  rawItemCode: string;
+  rawItemDes: string;
+  masterUnitID: string;
+  subUnitID: string;
+  qty: number;
+  itemCost: number;
+  retailPrice: number;
+}
+
+interface ExtrasState {
+  checkedIn: boolean;
+  billed: boolean;
+  status: string;
+  addTech: ExtrasAddTech[];
+  recipe: ExtrasRecipeRow[];
 }
 
 interface ToastMsg {
@@ -280,6 +312,43 @@ export default function TechnicianAppointmentDetailPage() {
   const [techDirectory, setTechDirectory] = useState<FilterTechnician[]>([]);
   const [techPick, setTechPick] = useState("");
   const [addedTechs, setAddedTechs] = useState<string[]>([]);
+  const [extras, setExtras] = useState<ExtrasState | null>(null);
+
+  // Additions (support techs / used materials) are only editable while the
+  // client is checked in and the booking has not been billed yet.
+  const canEditExtras =
+    !!extras && extras.checkedIn && !extras.billed && appt?.status !== "done";
+
+  // Load per-booking extras (add-tech + used materials) once the booking is known.
+  useEffect(() => {
+    const bookingID = appt?.bookingID;
+    if (!bookingID) return;
+    let active = true;
+    fetch(`/api/bookings/${encodeURIComponent(bookingID)}/extras`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (!active || !json.success) return;
+        setExtras({
+          checkedIn: !!json.checkedIn,
+          billed: !!json.billed,
+          status: String(json.status || ""),
+          addTech: Array.isArray(json.addTech) ? json.addTech : [],
+          recipe: Array.isArray(json.recipe) ? json.recipe : [],
+        });
+        const names: string[] = Array.from(
+          new Set(
+            ((Array.isArray(json.addTech) ? json.addTech : []) as ExtrasAddTech[])
+              .map((t) => (t.techName || "").trim())
+              .filter(Boolean),
+          ),
+        );
+        setAddedTechs(names);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [appt?.bookingID]);
 
   // Remarks tab state (booking remark is read-only; customer remark is editable)
   const [newRemark, setNewRemark] = useState("");
@@ -384,8 +453,28 @@ export default function TechnicianAppointmentDetailPage() {
     let cancelled = false;
     async function loadRecipes() {
       setRecipesLoading(true);
-      const out: ServiceRecipe[] = [];
+      // A booking can store the same service more than once (one row per
+      // guest). Load each unique service only once and show a count instead
+      // of fetching + rendering the same recipe many times.
+      const uniqueServices: Array<(typeof services)[number] & { count: number }> = [];
       for (const svc of services) {
+        const key = (svc.itemCode || `name:${svc.serviceName}`)
+          .trim()
+          .toUpperCase();
+        const existing = uniqueServices.find(
+          (entry) =>
+            (entry.itemCode || `name:${entry.serviceName}`)
+              .trim()
+              .toUpperCase() === key,
+        );
+        if (existing) {
+          existing.count += 1;
+        } else {
+          uniqueServices.push({ ...svc, count: 1 });
+        }
+      }
+      const out: ServiceRecipe[] = [];
+      for (const svc of uniqueServices) {
         const sample = svc.itemCode ? SAMPLE_RECIPES[svc.itemCode] : undefined;
         // Try the real API first (needs a real ItemCode + locCode).
         if (svc.itemCode && current.locCode) {
@@ -411,6 +500,9 @@ export default function TechnicianAppointmentDetailPage() {
                 endTime: svc.endTime,
                 rows: (json.rows as Array<Record<string, unknown>>).map(mapRecipeRow),
                 isSample: false,
+                count: svc.count,
+                guessID: (svc as { guessID?: string }).guessID?.trim() || "MAIN",
+                fromBooking: false,
               });
               continue;
             }
@@ -427,7 +519,32 @@ export default function TechnicianAppointmentDetailPage() {
           endTime: svc.endTime,
           rows: sample ? sample.rows : [],
           isSample: true,
+          count: svc.count,
+          guessID: (svc as { guessID?: string }).guessID?.trim() || "MAIN",
+          fromBooking: false,
         });
+      }
+      // Overlay what was actually used for THIS booking (saved by the
+      // technician after check-in) on top of the default recipe.
+      const bookingRows = extras?.recipe ?? [];
+      if (bookingRows.length > 0) {
+        for (const card of out) {
+          const rows = bookingRows.filter(
+            (r) => r.serviceItemID.trim() === card.itemCode.trim(),
+          );
+          if (rows.length > 0) {
+            card.rows = rows.map((r) => ({
+              rowItemCode: r.rawItemCode,
+              rowItemDes: r.rawItemDes,
+              masterUnitID: r.masterUnitID,
+              subUnitID: r.subUnitID,
+              qty: r.qty,
+              itemCost: r.itemCost,
+            }));
+            card.isSample = false;
+            card.fromBooking = true;
+          }
+        }
       }
       if (!cancelled) {
         setRecipes(out);
@@ -438,7 +555,7 @@ export default function TechnicianAppointmentDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [tab, appt]);
+  }, [tab, appt, extras]);
 
   // Load the customer-master remark (Tbl_CustomerMaster.Rmks) when Remarks opens.
   useEffect(() => {
@@ -524,17 +641,77 @@ export default function TechnicianAppointmentDetailPage() {
       .slice(0, 8);
   }, [techPick, allTechs]);
 
+  // Persist the supporting-technician set for every service row of the
+  // booking (Tbl_BookingServiceItemAddTech).
+  async function persistAddTech(names: string[]) {
+    if (!appt) return;
+    const pairs = Array.from(
+      new Set(
+        (appt.serviceSchedule ?? [])
+          .filter((s) => (s.itemCode || "").trim())
+          .map((s) => `${(s.guessID || "MAIN").trim()}|${s.itemCode.trim()}`),
+      ),
+    ).map((key) => {
+      const [guessID, serviceItemID] = key.split("|");
+      return { guessID, serviceItemID };
+    });
+    const addTech = names.flatMap((name) => {
+      const tech = techDirectory.find((t) => t.UserName.trim() === name);
+      if (!tech) return [];
+      return pairs.map((pair) => ({
+        ...pair,
+        techID: tech.UserId.trim(),
+      }));
+    });
+    try {
+      const res = await fetch(
+        `/api/bookings/${encodeURIComponent(appt.bookingID)}/extras`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ addTech }),
+        },
+      );
+      const json = await res.json();
+      if (!json.success) {
+        showToast(json.message || "Failed to save technicians", "error");
+      }
+    } catch {
+      showToast("Failed to save technicians", "error");
+    }
+  }
+
   function handleAddTechnician() {
     const name = techPick.trim();
     if (!name) return;
+    if (!canEditExtras) {
+      showToast(
+        extras?.billed
+          ? "Booking is already billed — additions are locked"
+          : "Client must be checked in before adding technicians",
+        "error",
+      );
+      return;
+    }
     if (assignedTechs.includes(name) || addedTechs.includes(name)) {
       showToast(`${name} is already assigned`, "info");
       return;
     }
-    setAddedTechs((c) => [...c, name]);
+    if (!techDirectory.some((t) => t.UserName.trim() === name)) {
+      showToast(`${name} was not found in the staff directory`, "error");
+      return;
+    }
+    const next = addedTechs.includes(name) ? addedTechs : [...addedTechs, name];
+    setAddedTechs(next);
     setTechPick("");
-    // TODO: wire to backend when the "supporting technician" API exists.
-    showToast(`${name} added (sample — not saved to server yet)`, "success");
+    void persistAddTech(next);
+    showToast(`${name} added as supporting technician`, "success");
+  }
+
+  function handleRemoveTechnician(name: string) {
+    const next = addedTechs.filter((n) => n !== name);
+    setAddedTechs(next);
+    if (canEditExtras) void persistAddTech(next);
   }
 
   // ── Recipe editing ──────────────────────────────────────────────
@@ -599,6 +776,60 @@ export default function TechnicianAppointmentDetailPage() {
         qty: Number(r.qty) || 0,
         itemCost: Number(r.itemCost) || 0,
       }));
+
+    // Checked-in & not billed: store what was ACTUALLY used for this booking
+    // (Tbl_BookingServiceRecipe) instead of overwriting the default recipe.
+    if (canEditExtras && appt) {
+      setSavingRecipe(true);
+      try {
+        const res = await fetch(
+          `/api/bookings/${encodeURIComponent(appt.bookingID)}/extras`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              recipeScope: [
+                { guessID: svc.guessID || "MAIN", serviceItemID: svc.itemCode },
+              ],
+              recipe: rows.map((r) => ({
+                guessID: svc.guessID || "MAIN",
+                serviceItemID: svc.itemCode,
+                rawItemCode: r.rowItemCode,
+                masterUnitID: r.masterUnitID,
+                subUnitID: r.subUnitID,
+                qty: r.qty,
+                itemCost: r.itemCost,
+              })),
+            }),
+          },
+        );
+        const json = await res.json();
+        if (!json.success) throw new Error(json.message || "save failed");
+        setRecipes((prev) =>
+          prev.map((p) =>
+            p.itemCode === svc.itemCode && p.guessID === svc.guessID
+              ? {
+                  ...p,
+                  rows: editRows
+                    .filter((r) => r.rowItemCode.trim())
+                    .map((r) => ({ ...r })),
+                  isSample: false,
+                  fromBooking: true,
+                }
+              : p,
+          ),
+        );
+        setEditingRecipe(null);
+        setEditRows([]);
+        showToast("Saved for this booking", "success");
+      } catch {
+        showToast("Failed to save booking materials", "error");
+      } finally {
+        setSavingRecipe(false);
+      }
+      return;
+    }
+
     setSavingRecipe(true);
     try {
       const res = await fetch(`/api/recipes/${encodeURIComponent(svc.itemCode)}`, {
@@ -674,11 +905,29 @@ export default function TechnicianAppointmentDetailPage() {
     }
   }
 
-  function handleDone() {
-    // TODO: when the backend supports it, mark the service complete here
-    // (e.g. PATCH status / completion flag), then navigate back.
-    showToast("Appointment marked as done", "success");
-    setTimeout(() => router.push("/technician-appointments"), 700);
+  async function handleDone() {
+    if (!appt) return;
+    if (appt.status === "done") return;
+    if (!extras?.checkedIn) {
+      showToast("Client must be checked in before marking the work done", "error");
+      return;
+    }
+    try {
+      const res = await fetch(
+        `/api/appointments/${encodeURIComponent(appt.bookingID)}/done`,
+        { method: "POST" },
+      );
+      const json = await res.json();
+      if (!json.success) {
+        showToast(json.message || "Failed to mark done", "error");
+        return;
+      }
+      setAppt({ ...appt, status: "done" });
+      showToast("Work completed — ready to bill", "success");
+      setTimeout(() => router.push("/technician-appointments"), 700);
+    } catch {
+      showToast("Network error — please try again", "error");
+    }
   }
 
   const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
@@ -687,6 +936,53 @@ export default function TechnicianAppointmentDetailPage() {
     { key: "technician", label: "Add Technician", icon: <Ico.Users /> },
     { key: "remarks", label: "Remarks", icon: <Ico.Chat /> },
   ];
+
+  // A booking can store the same service once per guest. Collapse identical
+  // rows (same service, provider and time window) into one row with a count
+  // so a multi-guest walk-in does not render as twelve identical lines.
+  const detailServices = (() => {
+    const source = appt?.serviceSchedule?.length
+      ? appt.serviceSchedule
+      : (appt?.serviceNames ?? []).map((name, i) => ({
+          serviceIndex: i,
+          itemCode: "",
+          serviceName: name,
+          providerName: appt?.providerName ?? "",
+          startTime: appt?.timeSlot ?? "",
+          endTime: "",
+        }));
+    const out: {
+      key: string;
+      serviceName: string;
+      providerName: string;
+      startTime: string;
+      endTime: string;
+      count: number;
+    }[] = [];
+    for (const s of source) {
+      const key = [
+        s.itemCode ?? "",
+        s.serviceName,
+        s.providerName,
+        s.startTime,
+        s.endTime,
+      ].join("|");
+      const hit = out.find((entry) => entry.key === key);
+      if (hit) {
+        hit.count += 1;
+      } else {
+        out.push({
+          key,
+          serviceName: s.serviceName,
+          providerName: s.providerName,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          count: 1,
+        });
+      }
+    }
+    return out;
+  })();
 
   return (
     <>
@@ -833,19 +1129,9 @@ export default function TechnicianAppointmentDetailPage() {
                           <p style={{ marginBottom: 6, color: "#6b7280", fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>
                             Services for this appointment
                           </p>
-                          {(appt.serviceSchedule?.length
-                            ? appt.serviceSchedule
-                            : appt.serviceNames.map((name, i) => ({
-                                serviceIndex: i,
-                                itemCode: "",
-                                serviceName: name,
-                                providerName: appt.providerName,
-                                startTime: appt.timeSlot,
-                                endTime: "",
-                              }))
-                          ).map((s, i, arr) => (
+                          {detailServices.map((s, i, arr) => (
                             <div
-                              key={`${s.serviceName}-${i}`}
+                              key={s.key}
                               style={{
                                 display: "flex", justifyContent: "space-between", gap: 10,
                                 padding: "6px 0",
@@ -855,6 +1141,9 @@ export default function TechnicianAppointmentDetailPage() {
                             >
                               <span style={{ fontWeight: 600 }}>
                                 {i + 1}. {s.serviceName}
+                                {s.count > 1 && (
+                                  <span style={{ color: "#64748b" }}> × {s.count}</span>
+                                )}
                                 <small style={{ display: "block", color: "#6b7280", fontSize: 11, fontWeight: 500 }}>
                                   {s.providerName}
                                 </small>
@@ -873,8 +1162,19 @@ export default function TechnicianAppointmentDetailPage() {
                           </div>
                         )}
 
-                        <button className="btn-done" type="button" onClick={handleDone}>
-                          <Ico.Check /> Done
+                        <button
+                          className="btn-done"
+                          type="button"
+                          onClick={handleDone}
+                          disabled={appt?.status === "done"}
+                          style={
+                            appt?.status === "done"
+                              ? { opacity: 0.65, cursor: "not-allowed" }
+                              : undefined
+                          }
+                        >
+                          <Ico.Check />{" "}
+                          {appt?.status === "done" ? "Done — ready to bill" : "Done"}
                         </button>
                       </div>
                     )}
@@ -882,6 +1182,25 @@ export default function TechnicianAppointmentDetailPage() {
                     {/* ── TAB 2: RECIPE ──────────────────────────────── */}
                     {tab === "recipe" && (
                       <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                        {!canEditExtras && (
+                          <div
+                            style={{
+                              padding: "10px 14px",
+                              border: "1px solid #fde68a",
+                              borderRadius: 10,
+                              background: "#fffbeb",
+                              color: "#92400e",
+                              fontSize: 12,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {extras?.billed
+                              ? "This booking is already billed — materials are locked."
+                              : appt?.status === "done"
+                                ? "Work marked as done — materials are locked."
+                                : "Read-only until the client is checked in. After check-in you can record what was actually used."}
+                          </div>
+                        )}
                         {recipesLoading ? (
                           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                             <div className="skeleton" style={{ height: 60 }} />
@@ -893,11 +1212,17 @@ export default function TechnicianAppointmentDetailPage() {
                           </p>
                         ) : (
                           recipes.map((r, rIdx) => (
-                            <div key={`${r.itemCode}-${r.serviceName}`} style={{ border: "1px solid #c8dce0", borderRadius: 10, overflow: "hidden" }}>
+                            <div key={`${r.itemCode}-${r.serviceName}-${rIdx}`} style={{ border: "1px solid #c8dce0", borderRadius: 10, overflow: "hidden" }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "10px 12px", background: "#f0f8f9", borderBottom: "1px solid #c8dce0" }}>
                                 <span style={{ color: "#1e3a40", fontSize: 14, fontWeight: 800 }}>{r.serviceName}</span>
                                 {r.itemCode && <span className="badge b-pre">{r.itemCode}</span>}
                                 {r.isSample && <span className="badge b-wlk">Sample</span>}
+                                {r.count > 1 && (
+                                  <span className="badge b-pre">× {r.count} guests</span>
+                                )}
+                                {r.fromBooking && (
+                                  <span className="badge b-ok">Used for this booking</span>
+                                )}
                                 <div style={{ flex: 1 }} />
                                 <span style={{ color: "#6b7280", fontSize: 11, fontWeight: 600 }}>
                                   {r.startTime}{r.endTime ? ` – ${r.endTime}` : ""} · {r.providerName}
@@ -921,13 +1246,15 @@ export default function TechnicianAppointmentDetailPage() {
                                     className="btn-edit"
                                     type="button"
                                     onClick={() => startEditRecipe(r)}
-                                    disabled={usingSample || !r.itemCode}
+                                    disabled={usingSample || !r.itemCode || !canEditExtras}
                                     title={
                                       usingSample
                                         ? "Sample mode — connect to the database to edit recipes"
                                         : !r.itemCode
                                           ? "No item code for this service"
-                                          : "Edit this recipe"
+                                          : !canEditExtras
+                                            ? "Available after client check-in (until billed)"
+                                            : "Edit this recipe"
                                     }
                                   >
                                     ✎ Edit
@@ -1116,6 +1443,25 @@ export default function TechnicianAppointmentDetailPage() {
                     {/* ── TAB 3: ADD TECHNICIAN ──────────────────────── */}
                     {tab === "technician" && (
                       <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                        {!canEditExtras && (
+                          <div
+                            style={{
+                              padding: "10px 14px",
+                              border: "1px solid #fde68a",
+                              borderRadius: 10,
+                              background: "#fffbeb",
+                              color: "#92400e",
+                              fontSize: 12,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {extras?.billed
+                              ? "This booking is already billed — technicians are locked."
+                              : appt?.status === "done"
+                                ? "Work marked as done — technicians are locked."
+                                : "Supporting technicians can be added after the client is checked in."}
+                          </div>
+                        )}
                         <div>
                           <p style={{ color: "#6b7280", fontSize: 10, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
                             Assigned technicians
@@ -1167,7 +1513,7 @@ export default function TechnicianAppointmentDetailPage() {
                                     className="btn-remove"
                                     type="button"
                                     title="Remove"
-                                    onClick={() => setAddedTechs((c) => c.filter((n) => n !== name))}
+                                    onClick={() => handleRemoveTechnician(name)}
                                   >
                                     <Ico.X />
                                   </button>

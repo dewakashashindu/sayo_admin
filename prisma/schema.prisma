@@ -441,6 +441,36 @@ model tbl_bookingservicedetail {
   @@map("tbl_bookingservicedetail")
 }
 
+// Additional (supporting) technicians assigned to a booked service after
+// check-in. Written by the technician workstation page.
+model Tbl_BookingServiceItemAddTech {
+  LocCode       String @db.Char(10)
+  BookingID     String @db.Char(10)
+  GuessID       String @db.Char(10)
+  ServiceItemID String @db.Char(10)
+  TechID        String @db.Char(10)
+
+  @@id([LocCode, BookingID, GuessID, ServiceItemID, TechID])
+  @@map("Tbl_BookingServiceItemAddTech")
+}
+
+// Per-booking material consumption (recipe rows actually used for this
+// booking). Written by the technician workstation page after check-in.
+model Tbl_BookingServiceRecipe {
+  LocCode       String  @db.Char(10)
+  BookingID     String  @db.Char(10)
+  GuessID       String  @db.Char(10)
+  ServiceItemID String  @db.Char(10)
+  RawItemCode   String  @db.Char(10)
+  MasterUnitID  String  @default(" ") @db.Char(10)
+  SubUnitID     String  @db.Char(10)
+  QTY           Float
+  ItemCost      Float
+
+  @@id([LocCode, BookingID, GuessID, ServiceItemID, RawItemCode])
+  @@map("Tbl_BookingServiceRecipe")
+}
+
 model tbl_bookingtxndetail {
   LocCode       String   @db.Char(10)
   BookingID     String   @db.Char(10)

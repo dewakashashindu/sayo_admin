@@ -37,7 +37,7 @@ interface Appointment {
   date: string;
   bookingDate?: string;
   timeSlot: string;
-  status: "confirmed" | "pending" | "cancelled" | "ongoing";
+  status: "confirmed" | "pending" | "cancelled" | "ongoing" | "done";
   mode: "confirmed" | "pre_booked" | "without_confirmation" | string;
   bookingTypeID?: string;
   categoryCodes?: string[];
@@ -852,6 +852,30 @@ function StatusBadge({ status }: { status: string }) {
     );
   }
 
+  if (normalized === "done") {
+    return (
+      <span
+        className="badge"
+        style={{
+          background: "rgba(139,92,246,.12)",
+          color: "#6d28d9",
+          border: "1px solid rgba(139,92,246,.35)",
+        }}
+      >
+        <span
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: "#8b5cf6",
+            display: "inline-block",
+          }}
+        />{" "}
+        Done — ready to bill
+      </span>
+    );
+  }
+
   return (
     <span className="badge b-pnd">
       <span
@@ -938,6 +962,7 @@ function NotificationPanel({ appointments }: { appointments: Appointment[] }) {
     if (status === "cancelled") return "#ef4444";
     if (status === "confirmed") return "#22c55e";
     if (status === "ongoing") return "#3b82f6";
+    if (status === "done") return "#8b5cf6";
     return "#f59e0b";
   }
 
@@ -2006,7 +2031,7 @@ function DetailModal({
             </div>
           )}
 
-          {appointment.status === "ongoing" && (
+          {appointment.status === "done" && (
             <button
               className="btn-modal-bill"
               type="button"
@@ -2016,6 +2041,18 @@ function DetailModal({
               }}
             >
               <Ico.Receipt size={18} /> Go to Bill
+            </button>
+          )}
+
+          {appointment.status === "ongoing" && (
+            <button
+              className="btn-modal-bill"
+              type="button"
+              disabled
+              title="Technician must mark the work Done first"
+              style={{ opacity: 0.5, cursor: "not-allowed" }}
+            >
+              <Ico.Receipt size={18} /> Go to Bill — after technician Done
             </button>
           )}
 
@@ -2222,7 +2259,7 @@ function ScheduleGrid({
   }
 
   function handleDragStart(event: React.DragEvent, appointment: Appointment) {
-    if (appointment.status === "ongoing") {
+    if (appointment.status === "ongoing" || appointment.status === "done") {
       event.preventDefault();
       return;
     }
@@ -2887,6 +2924,7 @@ export default function AppointmentsPage() {
         confirmed: "Appointment confirmed",
         cancelled: "Appointment cancelled",
         ongoing: "Client checked in",
+        done: "Work completed — ready to bill",
       };
       showToast(
         labels[status] || "Status updated",

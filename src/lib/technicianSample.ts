@@ -30,6 +30,7 @@ export function getLoggedInTechnicianName(): string {
 
 export interface TechServiceSchedule {
   serviceIndex: number;
+  guessID?: string;
   itemCode: string;
   serviceName: string;
   providerName: string;
@@ -52,7 +53,7 @@ export interface TechAppointment {
   serviceSchedule?: TechServiceSchedule[];
   date: string;
   timeSlot: string;
-  status: "confirmed" | "pending" | "cancelled" | "ongoing";
+  status: "confirmed" | "pending" | "cancelled" | "ongoing" | "done";
   mode: string;
   location: string;
   duration: number;

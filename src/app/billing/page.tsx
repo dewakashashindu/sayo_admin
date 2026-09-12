@@ -426,6 +426,51 @@ function BillingContent() {
     { id:1, name:appt.serviceName, qty:1, price:appt.price, mainTech:appt.providerName, supporters:'' },
   ]);
 
+  /* Pull technician additions (materials used + supporting technicians) so
+     everything added after check-in lands on the bill automatically. */
+  useEffect(() => {
+    const bookingID = searchParams.get('appointmentId');
+    if (!bookingID) return;
+    let active = true;
+    fetch(`/api/bookings/${encodeURIComponent(bookingID)}/extras`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (!active || !json.success) return;
+        const recipe: Array<Record<string, unknown>> = Array.isArray(json.recipe) ? json.recipe : [];
+        const addTech: Array<Record<string, unknown>> = Array.isArray(json.addTech) ? json.addTech : [];
+        const techNames = Array.from(
+          new Set(addTech.map((t) => String((t as { techName?: string }).techName || '').trim()).filter(Boolean)),
+        );
+        setItems((prev) => {
+          let next = [...prev];
+          if (recipe.length) {
+            next = next.concat(
+              recipe.map((row, i) => {
+                const r = row as { rawItemDes?: string; rawItemCode?: string; qty?: number; retailPrice?: number };
+                return {
+                  id: Date.now() + i + 1,
+                  name: `${r.rawItemDes || r.rawItemCode || 'Material'} (used)`,
+                  qty: Number(r.qty) || 1,
+                  price: Number(r.retailPrice) || 0,
+                  mainTech: appt.providerName,
+                  supporters: '',
+                };
+              }),
+            );
+          }
+          if (techNames.length && next.length) {
+            next = next.map((item, idx) =>
+              idx === 0 ? { ...item, supporters: techNames.join(', ') } : item,
+            );
+          }
+          return next;
+        });
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [newName,       setNewName]       = useState('');
   const [newPrice,      setNewPrice]      = useState('');
   const [newMainTech,   setNewMainTech]   = useState(appt.providerName);

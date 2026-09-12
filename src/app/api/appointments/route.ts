@@ -190,12 +190,13 @@ function toBookingDateTime(
 
 function mapStatus(
   raw: string,
-): "confirmed" | "pending" | "cancelled" | "ongoing" {
+): "confirmed" | "pending" | "cancelled" | "ongoing" | "done" {
   const status = trimValue(raw).toLowerCase();
 
   if (status === "confirmed" || status === "confirm") return "confirmed";
   if (status === "cancelled" || status === "cancel") return "cancelled";
   if (status === "ongoing" || status === "in progress") return "ongoing";
+  if (status === "done" || status === "completed") return "done";
   return "pending";
 }
 
@@ -219,12 +220,13 @@ function mapMode(raw: string): "pre_booked" | "without_confirmation" {
 
 function mapStatusToDb(
   status: string,
-): "PENDING" | "CONFIRMED" | "CANCELLED" | "ONGOING" {
+): "PENDING" | "CONFIRMED" | "CANCELLED" | "ONGOING" | "DONE" {
   const normalized = trimValue(status).toLowerCase();
 
   if (normalized === "confirmed") return "CONFIRMED";
   if (normalized === "cancelled" || normalized === "cancel") return "CANCELLED";
   if (normalized === "ongoing") return "ONGOING";
+  if (normalized === "done") return "DONE";
   return "PENDING";
 }
 

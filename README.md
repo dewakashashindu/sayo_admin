@@ -150,3 +150,33 @@ npm run dev      # or: npm run build && npm start
 * Password reset: `/forgot-password` (OTP via `tbl_otpstore`, SMS/e-mail).
 * Staff/admin accounts remain admin-created only (Settings → Users);
   customers self-register into `tbl_customermaster`.
+
+## Technician workflow — check-in → additions → done → bill
+
+Process flow (post check-in workstation):
+
+1. **Check-in** (appointment screen) sets the booking status to `ONGOING`
+   and stamps `tbl_bookingtxndetail.CheckInTime`.
+2. **Technician workstation** (`/technician-appointments/[bookingID]`) unlocks
+   two things while the client is checked in AND the booking is not billed/done:
+   - *Recipe tab* — record the materials actually used for this booking
+     → saved to `Tbl_BookingServiceRecipe` (per guest + service item).
+   - *Add Technician tab* — assign supporting technicians per service
+     → saved to `Tbl_BookingServiceItemAddTech`.
+   Both are read-only before check-in and locked again once the work is
+   marked done or the booking is billed.
+3. **Done** button (`POST /api/appointments/:bookingID/done`) requires the
+   check-in stamp and flips the header status to `DONE`.
+4. **Billing** — the appointment screen only shows "Go to Bill" for `DONE`
+   bookings (checked-in bookings without done show a disabled button).
+   The bill automatically pulls the technician additions:
+   - used materials appear as extra bill lines priced at the item-master
+     **retail price** (Qty × Retailprice),
+   - supporting technicians appear in the first service line's supporters
+     field ("Service staff").
+5. APIs: `GET/PUT /api/bookings/:bookingID/extras` (admin session required),
+   `POST /api/appointments/:bookingID/done` (admin session required).
+
+Create the two tables on an existing database with
+`scripts/add-booking-extras-tables.sql` (already included in the Prisma
+schema, so fresh installs get them via `prisma db push` / migrations).
