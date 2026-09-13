@@ -584,6 +584,26 @@ function resolveSchedulePairs(
     : buildFallbackSchedule(details, itemDurationMap, appointmentStartMin);
 }
 
+/**
+ * Collapse repeated service names for display.
+ *
+ * A walk-in for several guests stores the same service once per guest, so the
+ * raw per-row list can repeat one name a dozen times. Rendering that list
+ * verbatim gives "Hair Color, Hair Color, Hair Color, …"; this turns it into
+ * "Hair Color × 12".
+ *
+ * Only the display string is collapsed. `serviceSchedule` keeps one entry per
+ * stored row, so per-guest timing, totals and conflict checks are untouched.
+ */
+function collapseServiceNames(names: string[]): string[] {
+  const counts = new Map<string, number>();
+  names.forEach((name) => counts.set(name, (counts.get(name) ?? 0) + 1));
+
+  return Array.from(counts.entries()).map(([name, count]) =>
+    count > 1 ? `${name} × ${count}` : name,
+  );
+}
+
 /* GET /api/appointments */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -973,9 +993,13 @@ export async function GET(req: NextRequest) {
         scheduleStart >= 0 && scheduleEnd >= scheduleStart
           ? scheduleEnd - scheduleStart
           : 0;
-      const orderedServiceNames = serviceSchedule.length > 0
-        ? serviceSchedule.map((service) => service.serviceName)
-        : originalServiceNames;
+      // Collapsed for display only. `serviceSchedule` still carries one entry
+      // per stored row, so totals, durations and the timeline are unaffected.
+      const orderedServiceNames = collapseServiceNames(
+        serviceSchedule.length > 0
+          ? serviceSchedule.map((service) => service.serviceName)
+          : originalServiceNames,
+      );
       const firstScheduledDetail = orderedPairs[0]?.detail;
       const displayTechID = trimValue(firstScheduledDetail?.TechID) || techID;
       const displayProviderName =

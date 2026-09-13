@@ -180,3 +180,80 @@ Process flow (post check-in workstation):
 Create the two tables on an existing database with
 `scripts/add-booking-extras-tables.sql` (already included in the Prisma
 schema, so fresh installs get them via `prisma db push` / migrations).
+
+---
+
+## 🔢 Serial numbers (`Tbl_Serials`)
+
+Every auto-generated code takes its number from one small table instead of
+being calculated inside the API code by scanning the transaction tables
+(`MAX(existing BK…) + 1`).
+
+```
+SeriCode   char(10)   prefix of the series, e.g. "BK", "CUS"
+SeriNo     char(10)   the last number that was issued, e.g. "0000042"
+SeriDate   date       the day that number was issued
+```
+
+### Series in use
+
+| `SeriCode` | Used for      | First ID issued |
+|------------|---------------|-----------------|
+| `BK`       | Booking ID    | `BK0000001`     |
+| `CUS`      | Customer code | `CUS0000001`    |
+
+### How a number is issued
+
+1. read `SeriNo` for the code &nbsp;→&nbsp; `0000042`
+2. add one &nbsp;→&nbsp; `43`
+3. the new ID is `SeriCode` + the padded number &nbsp;→&nbsp; **`BK0000043`**
+4. write `0000043` back to the row and stamp `SeriDate` with today
+
+Steps 1–4 are a **single `UPDATE`** (`src/lib/serials.ts`). InnoDB holds an
+exclusive lock on the counter row for that statement, so two bookings saved at
+the very same instant queue behind each other instead of racing.
+
+> **Do not add a `SELECT … FOR UPDATE` or an `INSERT IGNORE` in front of it.**
+> An earlier version did, and it deadlocked under load: `INSERT IGNORE` takes a
+> shared lock, the following `FOR UPDATE` needs an exclusive one, and two
+> transactions end up holding the lock the other is waiting for.
+
+Gaps in the sequence are normal. If a booking is rolled back after the number
+was taken (conflict, validation error, network drop) that number is skipped.
+
+### Files
+
+| File | Role |
+|---|---|
+| `src/lib/serials.ts` | the allocator — `nextSerialTx()`, `peekSerial()`, `ensureSerialRow()` |
+| `scripts/add-serials-table.sql` | creates the table, seeds the counters, backfills them |
+| `scripts/test-serials.ts` | test suite for the allocator |
+| `prisma/schema.prisma` | `model Tbl_Serials` |
+
+### Adding a series to a database that already has data
+
+Run `scripts/add-serials-table.sql` once. It is idempotent and it *backfills*
+each counter from the highest code already stored, so the allocator can never
+hand out a code that a row is already using:
+
+```bash
+npx ts-node --compiler-options '{"module":"CommonJS"}' scripts/test-serials.ts
+# or with more concurrency:
+CONCURRENT=150 npx ts-node --compiler-options '{"module":"CommonJS"}' scripts/test-serials.ts
+```
+
+### Adding a brand new series
+
+1. Add the code to `SERIAL_CODES` in `src/lib/serials.ts`.
+2. Insert its starting row:
+
+   ```sql
+   INSERT IGNORE INTO tbl_serials (SeriCode, SeriNo, SeriDate)
+   VALUES ('BILL', '0000000', NULL);
+   ```
+
+3. Call it from the same transaction that writes the record:
+
+   ```ts
+   const billNo = await nextSerialTx(tx, SERIAL_CODES.bill);
+   ```

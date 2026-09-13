@@ -26,6 +26,17 @@ type Ctx = { params: Promise<{ bookingID: string }> };
 
 const trim = (v: unknown) => String(v ?? "").trim();
 
+/**
+ * Pad a value to the width of the fixed-width char(10) columns — for INSERTs.
+ *
+ * Do NOT use this in a WHERE clause. Comparing a padded literal with a
+ * char/varchar column only matches while the database uses a PAD SPACE
+ * collation; on a NO PAD collation (MySQL 8's default utf8mb4_0900_ai_ci,
+ * MariaDB's *_nopad_ci) 'BK0000008 ' never equals 'BK0000008' and the lookup
+ * silently comes back empty — which is exactly why this endpoint used to
+ * answer 404 "Booking not found" for bookings that were plainly there.
+ * Comparisons use RTRIM(column) = value instead, like the rest of the app.
+ */
 function pad10(v: string): string {
   return v.padEnd(10, " ").slice(0, 10);
 }
@@ -69,7 +80,7 @@ async function loadContext(bookingID: string) {
   const headerRows = await prisma.$queryRaw<HeaderRow[]>`
     SELECT LocCode, Status, BillingTime
     FROM tbl_bookingheder
-    WHERE BookingID = ${pad10(bookingID)}
+    WHERE RTRIM(BookingID) = ${bookingID}
     LIMIT 1
   `;
   const header = headerRows[0];
@@ -80,7 +91,7 @@ async function loadContext(bookingID: string) {
   const txnRows = await prisma.$queryRaw<CheckInRow[]>`
     SELECT MAX(CheckInTime) AS t
     FROM tbl_bookingtxndetail
-    WHERE BookingID = ${pad10(bookingID)}
+    WHERE RTRIM(BookingID) = ${bookingID}
   `;
   const rawCheckIn = txnRows[0]?.t ?? null;
   const checkedIn =
@@ -109,19 +120,18 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     }
     const { header, checkedIn } = context;
     const locCode = header.LocCode.trim();
-    const bookingPadded = pad10(bookingID);
 
     const [addTechRows, recipeRows] = await Promise.all([
       prisma.$queryRaw<AddTechRow[]>`
         SELECT GuessID, ServiceItemID, TechID
         FROM Tbl_BookingServiceItemAddTech
-        WHERE BookingID = ${bookingPadded}
+        WHERE RTRIM(BookingID) = ${bookingID}
       `,
       prisma.$queryRaw<RecipeRow[]>`
         SELECT GuessID, ServiceItemID, RawItemCode, MasterUnitID, SubUnitID,
                QTY, ItemCost
         FROM Tbl_BookingServiceRecipe
-        WHERE BookingID = ${bookingPadded}
+        WHERE RTRIM(BookingID) = ${bookingID}
       `,
     ]);
 
@@ -132,13 +142,13 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       ? await prisma.$queryRaw<TechRow[]>`
           SELECT UserId, UserName
           FROM tbl_userdetails
-          WHERE UserId IN (${Prisma.join(techIDs.map((id) => pad10(id)))})
+          WHERE RTRIM(UserId) IN (${Prisma.join(techIDs)})
         `
       : [];
     const itemRows = await prisma.$queryRaw<ItemRow[]>`
       SELECT ItemCode, ItemDes, ItemPrintDes, Retailprice
       FROM tbl_itemmaster
-      WHERE LocCode = ${pad10(locCode)}
+      WHERE RTRIM(LocCode) = ${locCode}
     `;
 
     const techNames = new Map(
@@ -262,7 +272,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         }
         await tx.$executeRaw`
           DELETE FROM Tbl_BookingServiceItemAddTech
-          WHERE BookingID = ${bookingPadded}
+          WHERE RTRIM(BookingID) = ${bookingID}
         `;
         for (const row of rows) {
           await tx.$executeRaw`
@@ -340,9 +350,9 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         for (const pair of pairs) {
           await tx.$executeRaw`
             DELETE FROM Tbl_BookingServiceRecipe
-            WHERE BookingID = ${bookingPadded}
-              AND GuessID = ${pad10(pair.guessID)}
-              AND ServiceItemID = ${pad10(pair.serviceItemID)}
+            WHERE RTRIM(BookingID) = ${bookingID}
+              AND RTRIM(GuessID) = ${pair.guessID}
+              AND RTRIM(ServiceItemID) = ${pair.serviceItemID}
           `;
         }
         for (const row of rows) {

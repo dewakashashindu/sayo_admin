@@ -4,6 +4,7 @@ import { createCustomerToken, customerCookieOptions, CUSTOMER_COOKIE } from '@/l
 import { prisma } from '@/lib/prisma';
 import { sendRegistrationSMS } from '@/lib/sms';
 import { GENDER_OPTIONS } from '@/lib/genderOptions';
+import { nextSerialTx, SERIAL_CODES } from '@/lib/serials';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -15,17 +16,10 @@ function errMsg(e: unknown): string {
 }
 
 // ── Generate next CusCode (CUS0000001 format) ──────────────────────────────
+// The number comes from the CUS series in Tbl_Serials (src/lib/serials.ts)
+// rather than from the highest existing code in tbl_CustomerMaster.
 async function generateCusCode(): Promise<string> {
-  const last = await prisma.tbl_CustomerMaster.findFirst({
-    orderBy: { CusCode: 'desc' },
-    select:  { CusCode: true },
-  });
-
-  if (!last) return 'CUS0000001';
-
-  const num  = parseInt(last.CusCode.replace('CUS', ''), 10);
-  const next = isNaN(num) ? 1 : num + 1;
-  return 'CUS' + String(next).padStart(7, '0');
+  return nextSerialTx(prisma, SERIAL_CODES.customer);
 }
 
 // ───────────────────────────────────────────────────────────────────────────

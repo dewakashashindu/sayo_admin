@@ -531,6 +531,40 @@ model tbl_technicianspecilityassignment {
   @@id([UserID, SpecAreaID])
 }
 
+/// ─────────────────────────────────────────────────────────────────────────────
+///  Tbl_Serials — central serial-number counters
+///  ---------------------------------------------------------------------------
+///  Every auto-generated code (booking ID, customer code, …) takes its next
+///  number from THIS table instead of being calculated inside the API code by
+///  scanning the transaction tables.
+///
+///    SeriCode  prefix of the series, e.g. "BK" (bookings), "CUS" (customers)
+///    SeriNo    the LAST ISSUED number, zero padded, e.g. "0000007"
+///    SeriDate  the date the counter was last used
+///
+///  Flow when a record is created:
+///    1. read the row for that SeriCode                 → SeriNo = "0000007"
+///    2. add one                                        → 8
+///    3. the new ID is  <SeriCode> + <padded number>    → "BK0000008"
+///    4. write the new number back to the row           → SeriNo = "0000008",
+///                                                         SeriDate = today
+///
+///  Steps 1→4 run inside one transaction against a locked row
+///  (see src/lib/serials.ts), so two bookings saved at the same moment can
+///  never receive the same number.
+///
+///  NOTE: the original SQL Server script declared this table without a key.
+///  SeriCode is the primary key here — the allocator needs the counter to be
+///  unique, and it makes the row lock a single-row primary-key lookup.
+/// ─────────────────────────────────────────────────────────────────────────────
+model Tbl_Serials {
+  SeriCode String    @id @db.Char(10)
+  SeriNo   String    @default("0000000") @db.Char(10)
+  SeriDate DateTime? @db.Date
+
+  @@map("tbl_serials")
+}
+
 model tbl_txnnumbers {
   LocCode        String  @db.Char(10)
   TxnType        String  @db.Char(10)

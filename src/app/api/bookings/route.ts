@@ -20,6 +20,7 @@ import {
   TXN_DETAIL_TABLE,
   BOOKING_SERVICE_DETAIL_FROM,
 } from '@/lib/bookingReadModel';
+import { nextSerialTx, SERIAL_CODES } from '@/lib/serials';
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TYPES
@@ -274,17 +275,15 @@ function escapeHtml(str: string): string {
 /* ─────────────────────────────────────────────────────────────────────────────
    CUSTOMER CODE GENERATOR
 ─────────────────────────────────────────────────────────────────────────────── */
+/**
+ * Customer code — CUS0000001, CUS0000002, …
+ * The number is taken from the CUS series in Tbl_Serials (src/lib/serials.ts)
+ * instead of scanning tbl_CustomerMaster for the highest existing code.
+ */
 async function generateCusCode(
   db: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<string> {
-  const last = await db.tbl_CustomerMaster.findFirst({
-    orderBy: { CreateDateTime: 'desc' },
-    select:  { CusCode: true },
-  });
-  if (!last) return 'CUS0000001';
-  const num  = parseInt(last.CusCode.replace(/\D/g, ''), 10) || 0;
-  const next = num + 1;
-  return `CUS${String(next).padStart(7, '0')}`;
+  return nextSerialTx(db, SERIAL_CODES.customer);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -780,42 +779,18 @@ async function lockBookingIDNamespaceTx(
   `;
 }
 
+/**
+ * Booking ID — BK0000001, BK0000002, …
+ *
+ * The number is issued by the BK series in Tbl_Serials (src/lib/serials.ts):
+ * the counter row is read, one is added, and the new value is written back.
+ * The read and the write happen under a row lock, so two bookings saved at the
+ * very same moment can never end up with the same ID.
+ */
 async function generateBookingIDTx(
   tx: Prisma.TransactionClient,
-  locCode: string,
 ): Promise<string> {
-  // A legacy or rolled-back header can still have a child row. Use both
-  // service and transaction details so the allocator never reuses an ID
-  // occupied by any booking table.
-  const rows = await tx.$queryRaw<
-    { maxNumber: number | bigint | string | null }[]
-  >`
-    SELECT COALESCE(
-      MAX(CAST(SUBSTRING(RTRIM(existing_ids.BookingID), 3) AS UNSIGNED)),
-      0
-    ) AS maxNumber
-    FROM (
-      SELECT BookingID
-      FROM tbl_bookingheder
-      WHERE RTRIM(LocCode) = ${locCode.trim()}
-      UNION ALL
-      SELECT BookingID
-      FROM tbl_bookingservicedetail
-      WHERE RTRIM(LocCode) = ${locCode.trim()}
-      UNION ALL
-      SELECT BookingID
-      FROM tbl_bookingtxndetail
-      WHERE RTRIM(LocCode) = ${locCode.trim()}
-    ) AS existing_ids
-    WHERE RTRIM(existing_ids.BookingID) REGEXP '^BK[0-9]+$'
-  `;
-
-  const current = Number(rows[0]?.maxNumber ?? 0);
-  if (!Number.isSafeInteger(current) || current >= 99_999_999) {
-    throw new Error(`Booking ID sequence is exhausted for branch ${locCode.trim()}`);
-  }
-
-  return `BK${String(current + 1).padStart(7, '0')}`;
+  return nextSerialTx(tx, SERIAL_CODES.booking);
 }
 
 function isDuplicateKeyError(error: any): boolean {
@@ -1741,7 +1716,7 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        bookingID = await generateBookingIDTx(tx, branch.LocCode.trim());
+        bookingID = await generateBookingIDTx(tx);
         const createdAt = new Date();
         const publicActor = toChar('PUBLIC', 10);
         const confirmed = isWithoutConfirmation ? 1 : 0;

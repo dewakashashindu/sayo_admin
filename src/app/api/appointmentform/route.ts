@@ -9,6 +9,7 @@ import {
   composeBookingRemarks,
   type StoredBookingScheduleEntry,
 } from "@/lib/bookingSchedule";
+import { nextSerialTx, SERIAL_CODES } from "@/lib/serials";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,10 +39,6 @@ const transporter = nodemailer.createTransport({
   rateDelta: 1000,
   rateLimit: 5,
 });
-
-function padNum(n: number, width: number): string {
-  return String(n).padStart(width, "0");
-}
 
 function toChar(s: string, len: number): string {
   return s.substring(0, len).padEnd(len, " ");
@@ -202,24 +199,21 @@ function phoneSearchConditions(value: string) {
   );
 }
 
+/**
+ * Customer code — CUS0000001, CUS0000002, …
+ * The number is taken from the CUS series in Tbl_Serials (src/lib/serials.ts)
+ * instead of scanning tbl_CustomerMaster for the highest existing code.
+ */
 async function generateCusCode(): Promise<string> {
-  const result = await prisma.$queryRaw<{ maxCode: string | null }[]>`
-    SELECT MAX(RTRIM(CusCode)) AS maxCode
-    FROM tbl_CustomerMaster
-    WHERE CusCode LIKE 'CUS%'
-  `;
-
-  const maxCode = result[0]?.maxCode;
-  if (!maxCode || !maxCode.startsWith("CUS")) return "CUS0000001";
-
-  const num = parseInt(maxCode.replace("CUS", "").trim(), 10) || 0;
-  return `CUS${padNum(num + 1, 7)}`;
+  return nextSerialTx(prisma, SERIAL_CODES.customer);
 }
 
 /**
- * Serialize booking-ID allocation for a branch. The location master row is
- * present for every enabled branch and gives empty branches a lockable row;
- * locking only existing booking headers cannot protect the first booking.
+ * Hold a lock for one branch while the double-booking check below runs.
+ * Booking-ID allocation no longer depends on this (that number comes from
+ * Tbl_Serials), but the conflict guard still has to be serialized per branch,
+ * and the location master row is present for every enabled branch — so it is a
+ * lock target that also works for a branch with no bookings yet.
  */
 async function lockBookingIDNamespaceTx(
   tx: Prisma.TransactionClient,
@@ -234,42 +228,18 @@ async function lockBookingIDNamespaceTx(
   `;
 }
 
+/**
+ * Booking ID — BK0000001, BK0000002, …
+ *
+ * The number is issued by the BK series in Tbl_Serials (src/lib/serials.ts):
+ * the counter row is read, one is added, and the new value is written back.
+ * The read and the write happen under a row lock, so two bookings saved at the
+ * very same moment can never end up with the same ID.
+ */
 async function generateBookingIDTx(
   tx: Prisma.TransactionClient,
-  locCode: string,
 ): Promise<string> {
-  // Include service and transaction rows as well as headers. A failed/legacy
-  // write can leave either child row behind, and looking at headers alone would
-  // repeatedly generate BK0000001 until the retry limit is exhausted.
-  const result = await tx.$queryRaw<
-    { maxNumber: number | bigint | string | null }[]
-  >`
-    SELECT COALESCE(
-      MAX(CAST(SUBSTRING(RTRIM(existing_ids.BookingID), 3) AS UNSIGNED)),
-      0
-    ) AS maxNumber
-    FROM (
-      SELECT BookingID
-      FROM tbl_bookingheder
-      WHERE RTRIM(LocCode) = ${locCode.trim()}
-      UNION ALL
-      SELECT BookingID
-      FROM tbl_bookingservicedetail
-      WHERE RTRIM(LocCode) = ${locCode.trim()}
-      UNION ALL
-      SELECT BookingID
-      FROM tbl_bookingtxndetail
-      WHERE RTRIM(LocCode) = ${locCode.trim()}
-    ) AS existing_ids
-    WHERE RTRIM(existing_ids.BookingID) REGEXP '^BK[0-9]+$'
-  `;
-
-  const current = Number(result[0]?.maxNumber ?? 0);
-  if (!Number.isSafeInteger(current) || current >= 99_999_999) {
-    throw new Error(`Booking ID sequence is exhausted for branch ${locCode.trim()}`);
-  }
-
-  return `BK${padNum(current + 1, 7)}`;
+  return nextSerialTx(tx, SERIAL_CODES.booking);
 }
 
 function isDuplicateKeyError(err: any): boolean {
@@ -1581,9 +1551,10 @@ export async function POST(req: NextRequest) {
       try {
         await prisma.$transaction(
           async (tx) => {
-            // Allocate IDs and run the conflict check under the same branch
-            // lock. This also serializes the empty-branch case, where there
-            // are no existing booking rows for SELECT ... FOR UPDATE to lock.
+            // Hold the branch lock across the conflict check below. The
+            // booking ID itself no longer needs it — that number is issued by
+            // Tbl_Serials — but the conflict guard still has to be serialized
+            // per branch, and this lock also covers a branch with no bookings.
             await lockBookingIDNamespaceTx(tx, locCode);
 
             // ── Server-side conflict guard (race-safe) ──────────────────────
@@ -1649,7 +1620,7 @@ export async function POST(req: NextRequest) {
               }
             }
 
-            bookingID = await generateBookingIDTx(tx, locCode);
+            bookingID = await generateBookingIDTx(tx);
 
             // Walk-in customers are already physically in the salon, so the
             // booking is saved as CONFIRMED (isWalkIn/effectiveStatus are

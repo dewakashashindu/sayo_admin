@@ -20,6 +20,16 @@ type Ctx = { params: Promise<{ bookingID: string }> };
 
 const trim = (v: unknown) => String(v ?? "").trim();
 
+/**
+ * Pad a value to the width of the fixed-width char(10) columns — for INSERTs.
+ *
+ * Do NOT use this in a WHERE clause. Comparing a padded literal with a
+ * char/varchar column only matches while the database uses a PAD SPACE
+ * collation; on a NO PAD collation (MySQL 8's default utf8mb4_0900_ai_ci,
+ * MariaDB's *_nopad_ci) 'BK0000008 ' never equals 'BK0000008' and the lookup
+ * silently comes back empty. Comparisons use RTRIM(column) = value instead,
+ * like the rest of the app.
+ */
 function pad10(v: string): string {
   return v.padEnd(10, " ").slice(0, 10);
 }
@@ -44,12 +54,10 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
         { status: 400 },
       );
     }
-    const bookingPadded = pad10(bookingID);
-
     const headerRows = await prisma.$queryRaw<HeaderRow[]>`
       SELECT LocCode, Status, BillingTime
       FROM tbl_bookingheder
-      WHERE BookingID = ${bookingPadded}
+      WHERE RTRIM(BookingID) = ${bookingID}
       LIMIT 1
     `;
     const header = headerRows[0];
@@ -64,7 +72,7 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
     const txnRows = await prisma.$queryRaw<CheckInRow[]>`
       SELECT MAX(CheckInTime) AS t
       FROM tbl_bookingtxndetail
-      WHERE BookingID = ${bookingPadded}
+      WHERE RTRIM(BookingID) = ${bookingID}
     `;
     const rawCheckIn = txnRows[0]?.t ?? null;
     const checkedIn =
@@ -91,8 +99,8 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
       await prisma.$executeRaw`
         UPDATE tbl_bookingheder
         SET Status = ${"DONE"}
-        WHERE LocCode = ${pad10(header.LocCode.trim())}
-          AND BookingID = ${bookingPadded}
+        WHERE RTRIM(LocCode) = ${header.LocCode.trim()}
+          AND RTRIM(BookingID) = ${bookingID}
       `;
     }
 
