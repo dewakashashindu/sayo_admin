@@ -20,6 +20,8 @@
 //     defines it (a column is never dropped, renamed or retyped)
 //   • creates a table ONLY if it does not exist at all
 //   • fills in LineNo for rows saved by the old system (1, 2, 3 … per document)
+//   • marks orders whose every line has arrived (tbl_poheader.GRNed = 'Y'), the
+//     same flag the old desktop GRN save left behind
 //   • if the received-quantity columns were missing, works out how much of each
 //     purchase order has already been received from your existing confirmed GRNs
 //   • prints what it found, what it added, and the keys of each table
@@ -151,6 +153,26 @@ async function backfillLineNo(table, docColumns, itemColumn) {
   return numbered;
 }
 
+/**
+ * The “the goods came” flag on the purchase order (tbl_poheader.GRNed) — the
+ * same column the old desktop program's GRN save set to 'Y'. Worked out here
+ * from the received quantities, so orders that were completed before this
+ * column existed are not shown as outstanding by an old report.
+ */
+async function backfillGrned() {
+  const [res] = await connection.query(`
+    UPDATE tbl_poheader h
+    SET h.GRNed = 'Y'
+    WHERE (h.GRNed IS NULL OR h.GRNed = '' OR h.GRNed = 'N')
+      AND EXISTS (SELECT 1 FROM tbl_podetails d
+                   WHERE d.LocCode = h.LocCode AND RTRIM(d.PONo) = RTRIM(h.PONO))
+      AND NOT EXISTS (SELECT 1 FROM tbl_podetails d
+                       WHERE d.LocCode = h.LocCode AND RTRIM(d.PONo) = RTRIM(h.PONO)
+                         AND (d.GRNQty + 0.0001) < d.POQty)
+  `);
+  return res.affectedRows ?? 0;
+}
+
 /** How much of each PO line has already arrived, from the confirmed GRNs. */
 async function backfillReceived() {
   const [res] = await connection.query(`
@@ -265,6 +287,22 @@ try {
       }
     } catch (err) {
       console.log(`! could not work out the received quantities: ${err.message}`);
+    }
+  }
+
+  /* the “the goods came” flag, now that the received quantities are known */
+  if (presentTables.has("tbl_poheader") && (await existingTables()).has("tbl_poheader")) {
+    const [hasGrned] = await connection.query(
+      `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tbl_poheader' AND COLUMN_NAME = 'GRNed'`,
+    );
+    if (Number(hasGrned[0]?.n || 0) > 0 && (await existingTables()).has("tbl_podetails")) {
+      try {
+        const n = await backfillGrned();
+        if (n > 0) console.log(`✓ marked ${n} purchase order(s) as fully received (GRNed = 'Y')`);
+      } catch (err) {
+        console.log(`! could not set the received flag on the purchase orders: ${err.message}`);
+      }
     }
   }
 

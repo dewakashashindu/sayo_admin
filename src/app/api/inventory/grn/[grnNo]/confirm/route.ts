@@ -12,6 +12,8 @@
 //     3. tally the line onto the PO line      (GRNQty, GRNNOs)
 //     4. add the goods to tbl_itemmaster.StockBalance — GRNQty + FreeQty —
 //        and write the ledger row into tbl_stocktxn
+//        …and the same quantity into tbl_itemdetail (the per-expiry row the
+//        Item Master screen reads), so the two screens cannot disagree
 //     5. push RetailPrice into the item master ONLY when the line asked for it
 //   then the header is stamped Confirmed / ConUserID / ConDatetime
 //
@@ -29,7 +31,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { logActivity } from "@/lib/activityLog";
 import { invActor, invChar, invFail, invId, InvError,
+  addItemDetailStock,
   confirmGrnHeader,
+  markPoReceived,
   keySql,
   keyVal,
 }from "@/lib/inventoryServer";
@@ -54,6 +58,7 @@ interface LineRow {
   FreeQty: number;
   CostPrice: number;
   RetailPrice: number;
+  ExpDate: Date | string | null;
   PONO: string;
   UpdItemPrice: number | boolean | null;
 }
@@ -68,6 +73,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const grnNo = invId(grnNoRaw, "GRN number", 15);
 
     const result = await prisma.$transaction(async (tx) => {
+      let itemDetailWritten = false;
       /* ── 1. the document ───────────────────────────────────────────────── */
       const head = await tx.$queryRaw<
         { GRNNO: string; GRNTYPE: string; Confirmed: string; PONO: string; NetTotal: number }[]
@@ -95,7 +101,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         SELECT d.LineNo, RTRIM(d.ItemCode) AS ItemCode,
                COALESCE(i.ItemPrintDes, i.ItemDes) AS ItemName,
                d.GRNQty, d.FreeQty, d.CostPrice, d.RetailPrice,
-               RTRIM(d.PONO) AS PONO, d.UpdItemPrice
+               d.ExpDate, RTRIM(d.PONO) AS PONO, d.UpdItemPrice
         FROM tbl_grndetails d
         LEFT JOIN tbl_itemmaster i
           ON ${keySql("i.LocCode")} = ${keySql("d.LocCode")} AND ${keySql("i.ItemCode")} = ${keySql("d.ItemCode")}
@@ -115,6 +121,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         newBalance: number | null;
         retailUpdated: boolean;
         poLine: string;
+        batchRow: boolean | null;
       }[] = [];
 
       for (const line of lines) {
@@ -194,6 +201,17 @@ export async function POST(req: NextRequest, ctx: Ctx) {
             WHERE ${keySql("LocCode")} = ${keyVal(locCode)} AND ${keySql("ItemCode")} = ${keyVal(code)}
           `;
 
+          /* …and the batch-wise row the Item Master screen reads, out of the
+             same qtyIn — so the two tables cannot show two different numbers. */
+          itemDetailWritten = (await addItemDetailStock(
+            tx,
+            locCode,
+            code,
+            line.ExpDate ? new Date(line.ExpDate) : null,
+            received,
+            free,
+          )) || itemDetailWritten;
+
           await tx.$executeRaw`
             INSERT INTO tbl_stocktxn
               (LocCode, ItemCode, TxnType, RefNo, TxnDate, QtyIn, QtyOut, Balance,
@@ -228,16 +246,30 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           newBalance,
           retailUpdated,
           poLine,
+          batchRow: newBalance === null ? null : itemDetailWritten,
         });
       }
 
       /* ── 3. stamp the header ───────────────────────────────────────────── */
       await confirmGrnHeader(tx, locCode, grnNo, actor.userId);
 
+      /* ── 4. mark the purchase order as received ────────────────────────── *
+       * The old desktop program ended its GRN save with
+       *     UPDATE Tbl_POHeader SET GRNed = 'Y' …
+       * Same table, same column, written here in the same transaction, so an
+       * old report reading that flag agrees with this screen. `poReceived` is
+       * null when the order is fully received… or when the database has no
+       * GRNed column yet — that never blocks the confirmation. */
+      const poReceived = headerPoNo
+        ? await markPoReceived(tx, locCode, headerPoNo)
+        : null;
+
       return {
         applied,
         grnType,
         poNo: headerPoNo,
+        poReceived,
+        itemDetailWritten,
         netTotal: Number(head[0].NetTotal || 0),
       };
     }, { timeout: 30000 });
@@ -246,7 +278,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     await logActivity(
       actor.name,
       "inventory",
-      `GRN ${grnNo} confirmed at ${locCode} — ${result.applied.length} line(s), net ${result.netTotal.toFixed(2)}${result.poNo ? `, PO ${result.poNo} updated` : ", direct receipt"}${services ? `, ${services} service line(s) not stocked` : ""}`,
+      `GRN ${grnNo} confirmed at ${locCode} — ${result.applied.length} line(s), net ${result.netTotal.toFixed(2)}` +
+        (result.poNo
+          ? `, PO ${result.poNo} updated${result.poReceived ? ` (${result.poReceived.words})` : ""}`
+          : ", direct receipt") +
+        (services ? `, ${services} service line(s) not stocked` : ""),
     );
 
     return NextResponse.json({
@@ -256,11 +292,15 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         locCode,
         poNo: result.poNo,
         grnType: result.grnType,
+        poReceived: result.poReceived,   // { flag: "Y"|"N", words } — null if no PO
+        itemDetailWritten: result.itemDetailWritten,   // batch rows written to tbl_itemdetail
         lines: result.applied,
       },
       message:
         `GRN ${grnNo} confirmed — stock updated` +
-        (result.poNo ? ` and ${result.poNo} written back.` : "."),
+        (result.poNo
+          ? ` and ${result.poNo} written back${result.poReceived ? ` (${result.poReceived.words})` : ""}.`
+          : "."),
     });
   } catch (err) {
     return invFail(err, tag);

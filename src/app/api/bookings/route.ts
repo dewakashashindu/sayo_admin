@@ -29,6 +29,8 @@ import {
   itemCode,
   itemCodeJoinSql,
 } from '@/lib/itemCode';
+import { rateLimit, rateMessage } from "@/lib/rateLimit";
+import { clientIp, ipForLog } from "@/lib/clientIp";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TYPES
@@ -1609,9 +1611,53 @@ async function sendBookingEmail(
 /* ═════════════════════════════════════════════════════════════════════════════
    POST — create booking
 ═════════════════════════════════════════════════════════════════════════════ */
+/* ── how often one caller may book ───────────────────────────────────────── *
+ * Every accepted booking sends an SMS to the customer and an e-mail, so this is
+ * the endpoint where an unlimited caller costs real money. Two counters: one
+ * per caller (per IP) and one per phone number — a script that changes its IP
+ * still cannot make the same number ring twenty times. */
+const BOOKING_IP_LIMIT = 8;              // per 15 minutes
+const BOOKING_PHONE_LIMIT = 3;           // per hour, for one phone number
+const BOOKING_WINDOW_MS = 15 * 60 * 1000;
+const BOOKING_PHONE_WINDOW_MS = 60 * 60 * 1000;
+
 export async function POST(req: NextRequest) {
   try {
+    /* counted BEFORE anything else — no parsing, no database, no SMS */
+    const callerIp = clientIp(req);
+    const byIp = rateLimit({
+      bucket: "booking:ip",
+      key: callerIp,
+      limit: BOOKING_IP_LIMIT,
+      windowMs: BOOKING_WINDOW_MS,
+    });
+    if (!byIp.ok) {
+      console.warn(`[bookings] rate limited ip=${ipForLog(callerIp)}`);
+      return NextResponse.json(
+        { success: false, message: rateMessage("booking", byIp.retryAfterSec) },
+        { status: 429, headers: { "Retry-After": String(byIp.retryAfterSec) } },
+      );
+    }
+
     const body = (await req.json()) as Partial<BookingRequestBody>;
+
+    /* the same phone number cannot be made to ring over and over */
+    const phoneKey = String(body.phone ?? "").replace(/\D/g, "").slice(-9);
+    if (phoneKey.length >= 9) {
+      const byPhone = rateLimit({
+        bucket: "booking:phone",
+        key: phoneKey,
+        limit: BOOKING_PHONE_LIMIT,
+        windowMs: BOOKING_PHONE_WINDOW_MS,
+      });
+      if (!byPhone.ok) {
+        console.warn(`[bookings] rate limited phone=***${phoneKey.slice(-4)}`);
+        return NextResponse.json(
+          { success: false, message: rateMessage("booking", byPhone.retryAfterSec) },
+          { status: 429, headers: { "Retry-After": String(byPhone.retryAfterSec) } },
+        );
+      }
+    }
 
     // ── 1. Validate ───────────────────────────────────────────────────────────
     const validationError = validateBookingBody(body);

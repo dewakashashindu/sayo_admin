@@ -1,0 +1,267 @@
+════════════════════════════════════════════════════════════════════
+ LEGACY / NEW TABLE CHECK — read only, nothing was written
+════════════════════════════════════════════════════════════════════
+ date            : 2026-09-18 07:12:36
+ MySQL           : 8.0.39
+ database        : db_acd689_sayo
+ lower_case_table_names = 1  (Tbl_X and tbl_x ARE the same table here)
+
+────────────────────────────── 1. tables the old GRN code uses ──────
+  ✘ Tbl_RowItems       MISSING             old stock master — StkBal (on hand) and RowCost (average cost) live here
+  ✘ Tbl_TxnMovement    MISSING             old stock ledger — one row per receipt / issue, written by StocksAddition
+  ✘ Tbl_Menuitems      MISSING             old service master — RowCost / CostPrice change when an item's cost changes
+  ✘ Tbl_Recipies       MISSING             old recipe lines — Price is item cost × qty, summed into the menu item
+  ✔ Tbl_GRNHeader      table  old GRN header (should be the same table as tbl_grnheader)
+  ✔ Tbl_GRNDetails     table  old GRN lines (should be the same table as tbl_grndetails)
+  ✔ Tbl_POHeader       table  old PO header — the GRN save sets GRNed = 'Y' here
+  ✔ Tbl_PODetails      table  old PO lines — GRNQty / GRNNOs
+  ✔ Tbl_Serials        table  number series (GetSerialNo)
+  ✔ Tbl_TxnNumbers     table  document numbers (GetTxnNo) — where the old program gets GRN numbers
+  ✔ tbl_itemmaster     table  new item master — StockBalance, RawCost, Retailprice
+  ✔ tbl_stocktxn       table  new stock ledger
+  ✔ tbl_recipes        table  new recipe lines
+  ✔ tbl_poheader       table  new PO header
+  ✔ tbl_podetails      table  new PO lines
+  ✔ tbl_grnheader      table  new GRN header
+  ✔ tbl_grndetails     table  new GRN lines
+  ✔ tbl_suppliermaster table  supplier master
+  ✔ tbl_locationmaster table  location master
+
+────────────────────────────── 2. views the old program reads ───────
+  ✘ Vw_RowItemMaster   MISSING             the old program reads stock through this view
+  ✘ Vw_GRNDETAILS      MISSING             used to decide if a GRN is new, editable or already saved
+  ✘ Vw_GRNHeader       MISSING             GRN list in the old program
+  ✘ Vw_PODetails       MISSING             PO lines in the old program
+  ✔ Vw_ItemMaster      VIEW   item master in the old program
+
+────────────────────────────── tbl_grndetails  (table, 17 columns)
+   LocCode              char(10)                NOT NULL default=— 
+   GRNNo                varchar(15)             NOT NULL default=— 
+   ItemCode             char(20)                NOT NULL default=— 
+   UnitID               char(15)                NOT NULL default=— 
+   CostPrice            double                  NOT NULL default=— 
+   RetailPrice          double                  NOT NULL default=— 
+   GRNQty               double                  NOT NULL default=— 
+   FreeQty              double                  NOT NULL default=— 
+   ItemValue            double                  NOT NULL default=— 
+   ExpDate              datetime                NOT NULL default=— 
+   DirectGRNConfNo      varchar(15)             NOT NULL default=— 
+   RETYN                bit(1)                  NOT NULL default=— 
+   RETQTY               double                  NOT NULL default=— 
+   RETVAL               double                  NOT NULL default=— 
+   PONO                 char(10)                NOT NULL default=— 
+   UpdItemPrice         tinyint(1)              NOT NULL default=0 
+   LineNo               int                     NOT NULL default=0 
+
+────────────────────────────── tbl_grnheader  (table, 18 columns)
+   LocCode              char(10)                NOT NULL default=—  PRI
+   GRNNO                varchar(15)             NOT NULL default=—  PRI
+   GRNDate              datetime                NOT NULL default=— 
+   SupID                char(10)                NOT NULL default=— 
+   SupInvNo             varchar(20)             NOT NULL default=— 
+   GrossTotal           double                  NOT NULL default=— 
+   DisVal               double                  NOT NULL default=— 
+   Adjestment           double                  NOT NULL default=— 
+   NetTotal             double                  NOT NULL default=— 
+   UserID               char(10)                NOT NULL default=— 
+   Remarks              varchar(400)            NOT NULL default=— 
+   TxnDate              datetime                NOT NULL default=— 
+   SysSerialNo          double                  NOT NULL default=— 
+   Confirmed            char(1)                 NOT NULL default=— 
+   ConUserID            char(10)                NOT NULL default=— 
+   ConDatetime          datetime                NOT NULL default=— 
+   GRNTYPE              char(2)                 NOT NULL default=— 
+   PONO                 char(10)                NOT NULL default= 
+
+────────────────────────────── tbl_itemmaster  (table, 37 columns)
+   LocCode              char(10)                NOT NULL default=—  PRI
+   ItemCode             char(15)                NOT NULL default=—  PRI
+   ServiceItem          tinyint(1)              NOT NULL default=0 
+   ItemDes              varchar(50)             NOT NULL default=— 
+   ItemPrintDes         varchar(50)             NOT NULL default=  
+   MasterUnitID         char(10)                NOT NULL default=— 
+   Category1            char(10)                NOT NULL default= 
+   Category2            char(10)                NOT NULL default= 
+   Category3            char(10)                NOT NULL default= 
+   Category4            char(10)                NOT NULL default= 
+   SupID                char(10)                NOT NULL default=0 
+   ROL                  double                  NOT NULL default=0 
+   ROQ                  double                  NOT NULL default=0 
+   MinQty               double                  NOT NULL default=0 
+   MaxQty               double                  NOT NULL default=0 
+   RawCost              double                  NOT NULL default=0 
+   CostMarkup           double                  NOT NULL default=0 
+   OverallCost          double                  NOT NULL default=0 
+   SalesMargin          double                  NOT NULL default=0 
+   StockBalance         double                  NOT NULL default=0 
+   ExpiryItem           tinyint(1)              NOT NULL default=0 
+   Retailprice          double                  NOT NULL default=0 
+   WSApp                tinyint(1)              NOT NULL default=0 
+   WSQty                double                  NOT NULL default=0 
+   WSPrice              double                  NOT NULL default=0 
+   PackedItem           tinyint(1)              NOT NULL default=0 
+   PackSize             double                  NOT NULL default=0 
+   PackPrice            double                  NOT NULL default=0 
+   SemiFinishedProd     tinyint(1)              NOT NULL default=0 
+   ItemPic              longblob                null     default=— 
+   CreateDate           datetime                NOT NULL default=CURRENT_TIMESTAMP DEFAULT_GENERATED
+   CreateBy             char(10)                NOT NULL default=0 
+   UpdDate              datetime                NOT NULL default=CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP
+   UpdBy                char(10)                NOT NULL default=0 
+   Enable               tinyint(1)              NOT NULL default=1 
+   SerDuration          int                     NOT NULL default=0 
+   MOF                  char(1)                 NOT NULL default=O 
+
+────────────────────────────── tbl_locationmaster  (table, 4 columns)
+   LocCode              char(10)                NOT NULL default=—  PRI
+   LocDes               varchar(50)             NOT NULL default=— 
+   Address              varchar(300)            NOT NULL default=  
+   Enable               tinyint(1)              NOT NULL default=1 
+
+────────────────────────────── tbl_podetails  (table, 11 columns)
+   LocCode              char(10)                NOT NULL default=— 
+   PONo                 char(10)                NOT NULL default=— 
+   ItemCode             varchar(50)             NOT NULL default=— 
+   UnitID               char(10)                NOT NULL default=— 
+   CostPrice            double                  NOT NULL default=— 
+   POQty                double                  NOT NULL default=— 
+   ItemValue            double                  NOT NULL default=— 
+   DirectPOConfNo       char(10)                NOT NULL default=— 
+   GRNQTY               double                  NOT NULL default=— 
+   GRNNOs               varchar(500)            NOT NULL default=— 
+   LineNo               int                     NOT NULL default=0 
+
+────────────────────────────── tbl_poheader  (table, 14 columns)
+   LocCode              char(10)                NOT NULL default=—  PRI
+   PONO                 char(10)                NOT NULL default=—  PRI
+   PODate               datetime                NOT NULL default=— 
+   DueDate              datetime                NOT NULL default=— 
+   SupID                char(10)                NOT NULL default=— 
+   NetTotal             double                  NOT NULL default=— 
+   UserID               char(10)                NOT NULL default=— 
+   Remarks              varchar(1500)           NOT NULL default=— 
+   DeliAdd              varchar(100)            NOT NULL default=— 
+   TxnDate              datetime                NOT NULL default=— 
+   SysSerialNo          char(10)                NOT NULL default=— 
+   ConUserID            char(10)                NOT NULL default=— 
+   Confirmed            char(1)                 NOT NULL default=— 
+   ConDatetime          datetime                NOT NULL default=— 
+
+────────────────────────────── tbl_recipes  (table, 7 columns)
+   MenuItmID            char(15)                NOT NULL default=—  PRI
+   RowItemCode          char(15)                NOT NULL default=—  PRI
+   MasterUnitID         char(10)                NOT NULL default= 
+   SubUnitID            char(10)                NOT NULL default=— 
+   Qty                  double                  NOT NULL default=0 
+   LocCode              char(10)                NOT NULL default=—  PRI
+   ItemCost             double                  NOT NULL default=0 
+
+────────────────────────────── tbl_serials  (table, 3 columns)
+   SeriCode             char(10)                NOT NULL default=—  PRI
+   SeriNo               char(10)                NOT NULL default=0000000 
+   SeriDate             date                    null     default=— 
+
+────────────────────────────── tbl_stocktxn  (table, 12 columns)
+   TxnNo                bigint                  NOT NULL default=— auto_increment PRI
+   LocCode              char(10)                NOT NULL default=  MUL
+   ItemCode             char(15)                NOT NULL default= 
+   TxnType              varchar(10)             NOT NULL default=GRN  MUL
+   RefNo                varchar(20)             NOT NULL default= 
+   TxnDate              datetime                NOT NULL default=1900-01-01 00:00:00 
+   QtyIn                double                  NOT NULL default=0 
+   QtyOut               double                  NOT NULL default=0 
+   Balance              double                  NOT NULL default=0 
+   CostPrice            double                  NOT NULL default=0 
+   UserID               char(10)                NOT NULL default= 
+   Remarks              varchar(200)            NOT NULL default= 
+
+────────────────────────────── tbl_suppliermaster  (table, 11 columns)
+   SupID                char(10)                NOT NULL default=—  PRI
+   SupName              varchar(200)            NOT NULL default=— 
+   SuppAdd1             varchar(200)            NOT NULL default=  
+   ContactNO            varchar(100)            NOT NULL default=  
+   Emails               varchar(100)            NOT NULL default=  
+   Web                  varchar(50)             NOT NULL default=  
+   DebtAmount           double                  NOT NULL default=0 
+   CreateUser           varchar(50)             NOT NULL default=0 
+   CreateDatetime       datetime                NOT NULL default=CURRENT_TIMESTAMP DEFAULT_GENERATED
+   Remarks              varchar(260)            NOT NULL default=  
+   Enable               tinyint(1)              NOT NULL default=1 
+
+────────────────────────────── tbl_txnnumbers  (table, 6 columns)
+   LocCode              char(10)                NOT NULL default=—  PRI
+   TxnType              char(10)                NOT NULL default=—  PRI
+   Prefix               char(10)                NOT NULL default= 
+   TxnNo                double                  NOT NULL default=0 
+   TxnDescription       varchar(50)             NOT NULL default=  
+   Enable               tinyint(1)              NOT NULL default=1 
+
+────────────────────────────── vw_itemmaster  (VIEW, 0 columns)
+   (no column rows found — see the definition below if it is a view)
+
+────────────────────────────── 3. how much is in them ───────────────
+  tbl_grndetails             12 rows
+  tbl_grnheader               4 rows
+  tbl_itemmaster           2808 rows
+  tbl_locationmaster          5 rows
+  tbl_podetails              14 rows
+  tbl_poheader                6 rows
+  tbl_recipes                 5 rows
+  tbl_serials                 5 rows
+  tbl_stocktxn                4 rows
+  tbl_suppliermaster         12 rows
+  tbl_txnnumbers              0 rows
+  vw_itemmaster             (cannot count: ER_ACCESS_DENIED_ERROR)
+
+────────────────────────────── tbl_serials — every row (max 40)
+   SeriCode | SeriNo | SeriDate
+   BK | 0000015 | 2026-09-16
+   CUS | 0000004 | 
+   GRN | 0000004 | 2026-09-17
+   I | 0000004 | 2026-09-15
+   PO | 0000006 | 2026-09-16
+
+────────────────────────────── tbl_serials — every row (max 40)
+   SeriCode | SeriNo | SeriDate
+   BK | 0000015 | 2026-09-16
+   CUS | 0000004 | 
+   GRN | 0000004 | 2026-09-17
+   I | 0000004 | 2026-09-15
+   PO | 0000006 | 2026-09-16
+
+────────────────────────────── tbl_txnnumbers — every row (max 40)
+   (empty)
+
+────────────────────────────── tbl_txnnumbers — every row (max 40)
+   (empty)
+
+────────────────────────────── 4. what the old rows say ──────────────
+  Tbl_GRNHeader.Confirmed: "N"=3  "Y"=1
+  Tbl_GRNHeader.GRNTYPE: "GR"=4
+  Tbl_GRNHeader.SysSerialNo: 1=1  2=1  3=1  4=1
+
+  ── Tbl_GRNHeader — newest 3 by TxnDate
+     LocCode | GRNNO | GRNDate | SupID | SupInvNo | GrossTotal | DisVal | Adjestment | NetTotal | UserID | Remarks | TxnDate | SysSerialNo | Confirmed | ConUserID | ConDatetime | GRNTYPE | PONO
+     LOC0000001 | GRN0000004      | 2026-09-16 18:30:00 | SUP0000010 |  | 239700 | 0 | 0 | 239700 | USR0000001 |  | 2026-09-17 15:52:37 | 4 | N | 0 | 2026-09-17 15:52:37 | GR | PO0000004
+     LOC0000001 | GRN0000003      | 2026-09-16 18:30:00 | SUP0000004 |  | 152400 | 0 | 0 | 152400 | USR0000001 |  | 2026-09-17 09:37:54 | 3 | N | 0 | 2026-09-17 09:37:54 | GR | PO0000002
+     LOC0000001 | GRN0000002      | 2026-09-16 18:30:00 | SUP0000004 |  | 166500 | 0 | 0 | 166500 | USR0000001 |  | 2026-09-17 08:48:29 | 2 | Y | USR0000001 | 2026-09-17 08:48:53 | GR | PO0000005
+
+────────────────────────────── 5. how the views are built ────────────
+  ── vw_itemmaster
+     CREATE ALGORITHM=UNDEFINED DEFINER=`pma_70fbb7df1386`@`%` SQL SECURITY DEFINER VIEW `vw_itemmaster` AS select `im`.`LocCode` AS `LocCode`,`lm`.`LocDes` AS `LocDes`,`im`.`ItemCode` AS `ItemCode`,`im`.`ServiceItem` AS `ServiceItem`,`im`.`ItemDes` AS `ItemDes`,`im`.`ItemPrintDes` AS `ItemPrintDes`,`im`.`MasterUnitID` AS `MasterUnitID`,`um`.`UnitDes` AS `UnitDes`,`im`.`Category1` AS `Category1`,`cat1`.`CatDes` AS `CatDes`,`im`.`Category2` AS `Category2`,`cat2`.`CatDes` AS `Expr1`,`im`.`Category3` AS `Category3`,`cat3`.`CatDes` AS `Expr2`,`im`.`Category4` AS `Category4`,`cat4`.`CatDes` AS `Expr3`,`im`.`SupID` AS `SupID`,`sup`.`SupName` AS `SupName`,`im`.`ROL` AS `ROL`,`im`.`ROQ` AS `ROQ`,`im`.`MinQty` AS `MinQty`,`im`.`MaxQty` AS `MaxQty`,`im`.`RawCost` AS `RawCost`,`im`.`CostMarkup` AS `CostMarkup`,`im`.`SalesMargin` AS `SalesMargin`,`im`.`StockBalance` AS `StockBalance`,`im`.`ExpiryItem` AS
+
+────────────────────────────── 6. WHAT IS MISSING ────────────────────
+  ✘ Tbl_RowItems — old stock master — StkBal (on hand) and RowCost (average cost) live here
+  ✘ Tbl_TxnMovement — old stock ledger — one row per receipt / issue, written by StocksAddition
+  ✘ Tbl_Menuitems — old service master — RowCost / CostPrice change when an item's cost changes
+  ✘ Tbl_Recipies — old recipe lines — Price is item cost × qty, summed into the menu item
+  ✘ Vw_RowItemMaster — the old program reads stock through this view
+  ✘ Vw_GRNDETAILS — used to decide if a GRN is new, editable or already saved
+  ✘ Vw_GRNHeader — GRN list in the old program
+  ✘ Vw_PODetails — PO lines in the old program
+
+  columns missing on tables that DO exist:
+  ✘ tbl_poheader: missing GRNed
+
+════════════════════════════════════════════════════════════════════
+ Nothing was changed. Send legacy-check-report.txt back.

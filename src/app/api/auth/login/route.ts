@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { createCustomerToken, customerCookieOptions, CUSTOMER_COOKIE } from '@/lib/customerSession';
+import { rateLimit, rateLimitPeek, clearRate, rateMessage } from '@/lib/rateLimit';
+import { clientIp, ipForLog } from '@/lib/clientIp';
 
 export const dynamic    = 'force-dynamic';
 export const revalidate = 0;
@@ -10,8 +12,31 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/* ── Brute-force protection (this screen had none) ──────────────────────── *
+ * Same two counters as the staff sign-in: per caller (socket address, not the
+ * header a caller can type) and per account — counted on WRONG passwords only,
+ * cleared by a successful sign-in. */
+const CUSTOMER_LOGIN_IP_LIMIT = 20;
+const CUSTOMER_LOGIN_ACCOUNT_LIMIT = 8;
+const CUSTOMER_LOGIN_WINDOW_MS = 10 * 60 * 1000;
+
 export async function POST(req: NextRequest) {
   try {
+    const caller = clientIp(req);
+    const byIp = rateLimit({
+      bucket: 'customer-login:ip',
+      key: caller,
+      limit: CUSTOMER_LOGIN_IP_LIMIT,
+      windowMs: CUSTOMER_LOGIN_WINDOW_MS,
+    });
+    if (!byIp.ok) {
+      console.warn(`[login] ip rate limited ip=${ipForLog(caller)}`);
+      return NextResponse.json(
+        { error: rateMessage('login', byIp.retryAfterSec) },
+        { status: 429, headers: { 'Retry-After': String(byIp.retryAfterSec) } },
+      );
+    }
+
     const body = await req.json();
     const { email, password } = body as { email?: string; password?: string };
 
@@ -21,6 +46,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Password must be at least 6 characters.' }, { status: 400 });
 
     const emailNorm = email.trim().toLowerCase();
+
+    /* the per-account counter, checked before the database is even asked */
+    const accountRule = {
+      bucket: 'customer-login:account',
+      key: emailNorm,
+      limit: CUSTOMER_LOGIN_ACCOUNT_LIMIT,
+      windowMs: CUSTOMER_LOGIN_WINDOW_MS,
+    };
+    const accountPeek = rateLimitPeek(accountRule);
+    if (!accountPeek.ok) {
+      console.warn(`[login] account paused email=${emailNorm}`);
+      return NextResponse.json(
+        { error: rateMessage('login', accountPeek.retryAfterSec) },
+        { status: 429, headers: { 'Retry-After': String(accountPeek.retryAfterSec) } },
+      );
+    }
 
     // ── Find user in Tbl_CustomerMaster ───────────────────────────────────
     let user: {
@@ -50,6 +91,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (!user) {
+      /* an unknown address is counted too — otherwise a script could use this
+         screen to find out which addresses exist, for free */
+      rateLimit(accountRule);
       return NextResponse.json(
         { error: 'No account found with this email address.' },
         { status: 401 },
@@ -59,11 +103,15 @@ export async function POST(req: NextRequest) {
     // ── Password check ─────────────────────────────────────────────────────
     const passwordMatch = await bcrypt.compare(password, user.PSW);
     if (!passwordMatch) {
+      rateLimit(accountRule);   // count the wrong guess against the account
       return NextResponse.json(
         { error: 'Incorrect password. Please try again.' },
         { status: 401 },
       );
     }
+
+    /* right password — the account starts again from zero */
+    clearRate(accountRule.bucket, accountRule.key);
 
     console.log(`[login] success — CusCode: ${user.CusCode}`);
 

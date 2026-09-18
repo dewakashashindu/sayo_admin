@@ -20,6 +20,8 @@ import type { PrismaClient } from "@prisma/client";
 import { ADMIN_COOKIE, verifyAdminToken } from "./adminSession";
 import { itemCode } from "./itemCode";
 import { round2, safePrice, safeQty } from "./inventoryTotals";
+import { grnedFlag, poFullyReceived, poReceiptSummary, poReceiptWords } from "./poReceiptState";
+import { itemDetailExpiry, itemDetailQty } from "./itemDetailStock";
 
 /** Anything that can run a query: the shared client or a transaction. */
 export type Db = Prisma.TransactionClient | PrismaClient;
@@ -182,6 +184,14 @@ export const invVarChar = (value: unknown, length: number): string =>
  * fix in the message. Nothing is cached, so running the script is enough; no
  * restart of the app is needed.
  */
+export async function hasTable(db: Db, table: string): Promise<boolean> {
+  const rows = await db.$queryRaw<{ n: bigint | number }[]>`
+    SELECT COUNT(*) AS n FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ${table}
+  `;
+  return Number(rows[0]?.n ?? 0) > 0;
+}
+
 export async function hasColumn(db: Db, table: string, column: string): Promise<boolean> {
   const rows = await db.$queryRaw<{ n: bigint | number }[]>`
     SELECT COUNT(*) AS n FROM information_schema.COLUMNS
@@ -190,6 +200,113 @@ export async function hasColumn(db: Db, table: string, column: string): Promise<
        AND COLUMN_NAME = ${column}
   `;
   return Number(rows[0]?.n ?? 0) > 0;
+}
+
+/* ── the batch-wise stock table (tbl_itemdetail) ─────────────────────────── */
+
+/**
+ * Add a receipt into `tbl_itemdetail` — the per-expiry stock the Item Master
+ * screen reads (`SUM(ItemQty)` per LocCode + ItemCode).
+ *
+ * WHY BOTH TABLES: the item master holds one balance per item, this one holds
+ * one row per batch/expiry. Confirming a GRN moves the item balance AND this
+ * row, from the same quantity, so the Item Master screen and the GRN screen can
+ * never show two different numbers.
+ *
+ * The row is matched on (LocCode, ItemCode, ExpiryDate): the expiry stored on
+ * the GRN line, or 1900-01-01 when the packet has none — the same “empty date”
+ * the rest of the purchase tables use. A missing row is created.
+ *
+ * Returns false (and writes nothing) when the table is not on this database —
+ * a receipt must never be refused because of a table that only feeds a screen.
+ */
+export async function addItemDetailStock(
+  db: Db,
+  locCode: string,
+  itemCode: string,
+  expDate: Date | null,
+  received: number,
+  free: number,
+): Promise<boolean> {
+  const qty = itemDetailQty(received, free);
+  if (qty === 0) return false;
+  if (!(await hasTable(db, "tbl_itemdetail"))) return false;
+
+  const expiry = itemDetailExpiry(expDate);
+
+  const updated = await db.$executeRaw`
+    UPDATE tbl_itemdetail
+    SET ItemQty = ItemQty + ${qty}
+    WHERE ${keySql("LocCode")} = ${keyVal(locCode)}
+      AND ${keySql("ItemCode")} = ${keyVal(itemCode)}
+      AND ${keySql("ExpiryDate")} = ${expiry}
+  `;
+  if (Number(updated) > 0) return true;
+
+  await db.$executeRaw`
+    INSERT INTO tbl_itemdetail (LocCode, ItemCode, ExpiryDate, ItemQty)
+    VALUES (${invChar(locCode, 10)}, ${invChar(itemCode, 15)}, ${expiry}, ${qty})
+  `;
+  return true;
+}
+
+/* ── the purchase order's “the goods came” flag ──────────────────────────── */
+
+export interface PoReceivedResult {
+  /** 'Y' / 'N' — what was written into tbl_poheader.GRNed. */
+  flag: string;
+  /** “2 of 3 line(s) received — 1 still open”. */
+  words: string;
+}
+
+/**
+ * Stamp `tbl_poheader.GRNed` after a receipt is confirmed — exactly the mark the
+ * old desktop GRN save left behind, so an old report that reads that column
+ * agrees with the new screen.
+ *
+ * WHY ‘fully received’ and not ‘any receipt’:
+ *   the old program set it the moment one receipt went in; this screen can
+ *   receive an order in several parts, so the flag only says Y when every line
+ *   has arrived in full. A part delivery leaves the order open — which is what
+ *   `poReceiptWords()` then explains in the activity log.
+ *
+ * Returns null when nothing was written: no PO on this receipt, the order is
+ * not in the table, or the column is not there yet (an older database).
+ * Running `node scripts/add-po-grn-columns.mjs` adds it; until then this GRN
+ * still confirms normally — nothing is refused because of a missing flag.
+ */
+export async function markPoReceived(
+  db: Db,
+  locCode: string,
+  poNo: string,
+): Promise<PoReceivedResult | null> {
+  const po = String(poNo ?? "").trim();
+  if (!po) return null;
+
+  if (!(await hasColumn(db, "tbl_poheader", "GRNed"))) return null;
+
+  const rows = await db.$queryRaw<{ POQty: number | null; GRNQty: number | null }[]>`
+    SELECT POQty AS POQty, GRNQty AS GRNQty
+      FROM tbl_podetails
+     WHERE ${keySql("LocCode")} = ${keyVal(locCode)} AND ${keySql("PONo")} = ${keyVal(po)}
+  `;
+  if (rows.length === 0) return null;
+
+  const lines = rows.map((r) => ({
+    poQty: safeQty(r.POQty),
+    grnQty: safeQty(r.GRNQty),
+  }));
+  const summary = poReceiptSummary(lines);
+  const flag = grnedFlag(summary.fullyReceived);
+  const words = poReceiptWords(summary);
+
+  await db.$executeRaw`
+    UPDATE tbl_poheader
+    SET GRNed = ${flag}
+    WHERE ${keySql("LocCode")} = ${keyVal(locCode)} AND ${keySql("PONO")} = ${keyVal(po)}
+  `;
+
+  return { flag, words };
 }
 
 /** The message to show when a batch number cannot be stored yet. */

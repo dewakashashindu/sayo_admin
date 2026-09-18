@@ -5,6 +5,8 @@ import { prisma } from '@/lib/prisma';
 import { sendRegistrationSMS } from '@/lib/sms';
 import { GENDER_OPTIONS } from '@/lib/genderOptions';
 import { nextSerialTx, SERIAL_CODES } from '@/lib/serials';
+import { rateLimit, rateMessage } from "@/lib/rateLimit";
+import { clientIp, ipForLog } from "@/lib/clientIp";
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -24,13 +26,53 @@ async function generateCusCode(): Promise<string> {
 
 // ───────────────────────────────────────────────────────────────────────────
 
+/* ── how often one caller may sign up ────────────────────────────────────── *
+ * A new account sends a welcome SMS, so this endpoint is counted too: per
+ * caller and per phone number. */
+const REGISTER_IP_LIMIT = 5;             // per hour
+const REGISTER_PHONE_LIMIT = 2;          // per day, for one phone number
+const REGISTER_WINDOW_MS = 60 * 60 * 1000;
+const REGISTER_PHONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export async function POST(req: NextRequest) {
   try {
+    const callerIp = clientIp(req);
+    const byIp = rateLimit({
+      bucket: "register:ip",
+      key: callerIp,
+      limit: REGISTER_IP_LIMIT,
+      windowMs: REGISTER_WINDOW_MS,
+    });
+    if (!byIp.ok) {
+      console.warn(`[register] rate limited ip=${ipForLog(callerIp)}`);
+      return NextResponse.json(
+        { success: false, error: rateMessage("register", byIp.retryAfterSec) },
+        { status: 429, headers: { "Retry-After": String(byIp.retryAfterSec) } },
+      );
+    }
+
     let body: Record<string, unknown> = {};
     try {
       body = await req.json();
     } catch {
       return NextResponse.json({ success: false, message: 'Invalid request body.' }, { status: 400 });
+    }
+
+    const rawPhone = String((body as Record<string, unknown>).phone ?? "").replace(/\D/g, "").slice(-9);
+    if (rawPhone.length >= 9) {
+      const byPhone = rateLimit({
+        bucket: "register:phone",
+        key: rawPhone,
+        limit: REGISTER_PHONE_LIMIT,
+        windowMs: REGISTER_PHONE_WINDOW_MS,
+      });
+      if (!byPhone.ok) {
+        console.warn(`[register] rate limited phone=***${rawPhone.slice(-4)}`);
+        return NextResponse.json(
+          { success: false, error: rateMessage("register", byPhone.retryAfterSec) },
+          { status: 429, headers: { "Retry-After": String(byPhone.retryAfterSec) } },
+        );
+      }
     }
 
     const { name, email, phone, password, gender } = body as {

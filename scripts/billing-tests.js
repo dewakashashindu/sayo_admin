@@ -30,6 +30,11 @@ const PE = require(path.join(root, "poEmail.js"));
 const Q = require(path.join(root, "grnPoEntry.js"));
 const N = require(path.join(root, "grnNotify.js"));
 const SMS = require(path.join(root, "sms.js"));
+const RS = require(path.join(root, "poReceiptState.js"));
+const ID = require(path.join(root, "itemDetailStock.js"));
+const RL = require(path.join(root, "rateLimit.js"));
+const CIP = require(path.join(root, "clientIp.js"));
+const OTP = require(path.join(root, "otpStore.js"));
 
 let failures = 0;
 let checks = 0;
@@ -581,6 +586,238 @@ eq("the setup message says which file",
   SMS.smsSetupMessage(["TEXTLK_API_TOKEN"]).includes(".env"), true);
 eq("with nothing missing there is nothing to say", SMS.smsSetupMessage([]), "");
 eq("a number is normalised before it is sent", SMS.normalizeSmsPhone("077 123 4567"), "94771234567");
+
+console.log("\n=== 15. When a purchase order counts as received (GRNed) ===");
+
+/* The old desktop program finished its GRN save with
+   UPDATE Tbl_POHeader SET GRNed = 'Y' … — these checks pin the rule the new
+   screen follows when it writes that same column. */
+eq("a single fully received line closes the order",
+  RS.poFullyReceived([{ poQty: 20, grnQty: 20 }]), true);
+eq("more than ordered is still received",
+  RS.poFullyReceived([{ poQty: 20, grnQty: 25 }]), true);
+eq("a part delivery leaves the order open",
+  RS.poFullyReceived([{ poQty: 20, grnQty: 12 }]), false);
+eq("one short line keeps the whole order open",
+  RS.poFullyReceived([{ poQty: 10, grnQty: 10 }, { poQty: 5, grnQty: 4.5 }]), false);
+eq("an order with no lines is never 'received'",
+  RS.poFullyReceived([]), false);
+eq("nothing passed in is not received either",
+  RS.poFullyReceived(null), false);
+eq("a rounding whisker is not a shortage",
+  RS.poFullyReceived([{ poQty: 0.3, grnQty: 0.1 + 0.2 }]), true);
+eq("text quantities are read like numbers",
+  RS.poFullyReceived([{ poQty: "12", grnQty: "12.000" }]), true);
+eq("…and a text shortage is still a shortage",
+  RS.poFullyReceived([{ poQty: "12", grnQty: "11" }]), false);
+eq("free goods do not change what was ordered",
+  RS.poFullyReceived([{ poQty: 10, grnQty: 10 }]), true);
+
+eq("the open quantity of a line",
+  RS.poLineOpenQty({ poQty: 20, grnQty: 12.5 }), 7.5);
+eq("an over-received line shows nothing open",
+  RS.poLineOpenQty({ poQty: 10, grnQty: 12 }), 0);
+eq("the summary counts both sides",
+  JSON.stringify(RS.poReceiptSummary([
+    { poQty: 10, grnQty: 10 },
+    { poQty: 5, grnQty: 2 },
+    { poQty: 1, grnQty: 1 },
+  ])), JSON.stringify({ lines: 3, received: 2, open: 1, fullyReceived: false }));
+eq("the flag for a finished order", RS.grnedFlag(true), "Y");
+eq("the flag for an unfinished order", RS.grnedFlag(false), "N");
+eq("a finished order is described plainly",
+  RS.poReceiptWords(RS.poReceiptSummary([{ poQty: 4, grnQty: 4 }])), "all 1 line(s) received");
+eq("a part delivery is described plainly",
+  RS.poReceiptWords(RS.poReceiptSummary([
+    { poQty: 4, grnQty: 4 },
+    { poQty: 6, grnQty: 1 },
+  ])), "1 of 2 line(s) received — 1 still open");
+eq("an order with no lines says so",
+  RS.poReceiptWords(RS.poReceiptSummary([])), "no lines on the order");
+
+console.log("\n=== 16. The batch-wise stock row (tbl_itemdetail) ===");
+
+/* The Item Master screen reads this table, so a receipt has to land in it too.
+   The quantity must be the SAME one that went to StockBalance and the ledger. */
+eq("received + free is what goes into the batch row", ID.itemDetailQty(20, 3), 23);
+eq("nothing received writes nothing", ID.itemDetailQty(0, 0), 0);
+eq("text quantities are read like numbers", ID.itemDetailQty("12", "0.5"), 12.5);
+eq("…and the rounding matches the ledger", ID.itemDetailQty(0.1, 0.2), 0.3);
+eq("a line with no expiry lands in one bucket", ID.itemDetailExpiry(null).toISOString(), "1900-01-01T00:00:00.000Z");
+eq("1900-01-01 counts as no expiry", ID.itemDetailHasExpiry(new Date(Date.UTC(1900, 0, 1))), false);
+eq("a real expiry is kept as it is",
+  ID.itemDetailExpiry(new Date(Date.UTC(2027, 2, 31))).toISOString(), "2027-03-31T00:00:00.000Z");
+eq("a text date is read too", ID.itemDetailExpiry("2027-03-31").toISOString(), "2027-03-31T00:00:00.000Z");
+eq("…and it is marked as having an expiry", ID.itemDetailHasExpiry("2027-03-31"), true);
+eq("no expiry is spelled out for people", ID.itemDetailExpiryLabel(null), "no expiry date");
+eq("a real expiry is shown as the date", ID.itemDetailExpiryLabel("2027-03-31"), "2027-03-31");
+eq("the activity-log words", ID.itemDetailRowWords(23, "2027-03-31"), "+23 into 2027-03-31");
+eq("…and without an expiry", ID.itemDetailRowWords(5, null), "+5 into no expiry date");
+eq("the missing-table note names the table",
+  ID.ITEM_DETAIL_MISSING_NOTE.includes("tbl_itemdetail"), true);
+eq("…and says what still happened",
+  ID.ITEM_DETAIL_MISSING_NOTE.includes("ledger"), true);
+
+console.log("\n=== 17. Rate limiting, the caller's address, and the reset codes ===");
+
+/* ── the window arithmetic ─────────────────────────────────────────────── */
+const rule = { limit: 3, windowMs: 60_000 };
+let st = RL.decideRate(undefined, 1_000, rule);
+eq("the first request of a window is allowed", st.decision.ok, true);
+eq("…and counts as one", st.decision.count, 1);
+st = RL.decideRate(st.counter, 2_000, rule);
+eq("the second is allowed", st.decision.ok, true);
+st = RL.decideRate(st.counter, 3_000, rule);
+eq("the third is the last allowed one", st.decision.ok, true);
+eq("…with nothing left", st.decision.remaining, 0);
+st = RL.decideRate(st.counter, 4_000, rule);
+eq("the fourth is refused", st.decision.ok, false);
+eq("…and says how long to wait", st.decision.retryAfterSec, 57);
+st = RL.decideRate(st.counter, 61_500, rule);
+eq("a finished window starts again", st.decision.ok, true);
+eq("…from one", st.decision.count, 1);
+eq("a limit of 0 is treated as 1, never as unlimited",
+  RL.decideRate(undefined, 1_000, { limit: 0, windowMs: 1000 }).decision.ok, true);
+eq("…and blocks the second", (() => {
+  const first = RL.decideRate(undefined, 1_000, { limit: 0, windowMs: 60_000 });
+  return RL.decideRate(first.counter, 1_100, { limit: 0, windowMs: 60_000 }).decision.ok;
+})(), false);
+
+/* ── the live counters ─────────────────────────────────────────────────── */
+RL.resetAllRates();
+const smallRule = { bucket: "test:x", key: "1.2.3.4", limit: 2, windowMs: 60_000 };
+eq("counted call 1", RL.rateLimit(smallRule).ok, true);
+eq("counted call 2", RL.rateLimit(smallRule).ok, true);
+eq("counted call 3 is over the line", RL.rateLimit(smallRule).ok, false);
+eq("…and the counter exists", RL.rateCounterCount() > 0, true);
+eq("a peek does not count", RL.rateLimitPeek(smallRule).count, 3);
+eq("the key is not case sensitive", RL.rateLimit({ ...smallRule, key: "1.2.3.4" }).ok, false);
+RL.clearRate("test:x", "1.2.3.4");
+eq("clearing a counter forgives the caller", RL.rateLimit(smallRule).ok, true);
+RL.resetAllRates();
+eq("the table can be emptied", RL.rateCounterCount(), 0);
+
+/* ── the sentence a person reads ──────────────────────────────────────── */
+eq("seconds are spelled out", RL.waitWords(1), "1 second");
+eq("…and pluralised", RL.waitWords(45), "45 seconds");
+eq("minutes when it is long", RL.waitWords(600), "10 minutes");
+eq("the booking message names the salon",
+  RL.rateMessage("booking", 600).includes("call the salon"), true);
+eq("the login message says when it comes back",
+  RL.rateMessage("login", 60).includes("1 minute"), true);
+eq("the OTP message exists", RL.rateMessage("otp_send", 30).length > 20, true);
+
+/* ── whose address is it really ───────────────────────────────────────── */
+const headers = (map) => (name) => map[name.toLowerCase()] ?? null;
+eq("the socket address our own server measured wins",
+  CIP.clientIpFromHeaders(headers({ "x-sayo-ip": "192.168.1.9", "x-forwarded-for": "9.9.9.9" }), 0, ""),
+  "unknown");
+eq("…once it proves it is our server",
+  CIP.clientIpFromHeaders(headers({ "x-sayo-ip": "192.168.1.9", "x-sayo-ip-token": "s3cret" }), 0, "s3cret"),
+  "192.168.1.9");
+eq("a forged token is ignored and the caller is counted as unknown",
+  CIP.clientIpFromHeaders(headers({ "x-sayo-ip": "1.2.3.4", "x-sayo-ip-token": "guess" }), 0, "s3cret"),
+  "unknown");
+eq("a typed x-forwarded-for buys nothing when there is no proxy",
+  CIP.clientIpFromHeaders(headers({ "x-forwarded-for": "8.8.8.8" }), 0, ""),
+  "unknown");
+eq("behind one trusted proxy the last hop is the client",
+  CIP.clientIpFromHeaders(headers({ "x-forwarded-for": "203.0.113.7, 10.0.0.1" }), 1, ""),
+  "10.0.0.1");
+eq("behind two trusted proxies it steps back two",
+  CIP.clientIpFromHeaders(headers({ "x-forwarded-for": "203.0.113.7, 10.0.0.1, 10.0.0.2" }), 2, ""),
+  "10.0.0.1");
+eq("a chain shorter than the proxy count still yields something",
+  CIP.clientIpFromHeaders(headers({ "x-forwarded-for": "203.0.113.7" }), 3, ""),
+  "203.0.113.7");
+eq("IPv4 mapped over IPv6 is unwrapped",
+  CIP.normaliseIp("::ffff:192.168.1.5"), "192.168.1.5");
+eq("an IPv6 loopback with a port is unwrapped", CIP.normaliseIp("[::1]:3000"), "::1");
+eq("an IPv4 address with a port is unwrapped", CIP.normaliseIp("192.168.1.5:51234"), "192.168.1.5");
+eq("an empty address is empty", CIP.normaliseIp("   "), "");
+eq("TRUST_PROXY is read as a number", CIP.trustProxyCount({ TRUST_PROXY: "2" }), 2);
+eq("…rubbish means no proxy", CIP.trustProxyCount({ TRUST_PROXY: "yes" }), 0);
+eq("…and 0 or missing means none", CIP.trustProxyCount({}), 0);
+eq("an address shown in a log loses its last octet",
+  CIP.ipForLog("192.168.1.5"), "192.168.1.x");
+
+/* ── the local web server (IIS) is the caller: believe what it appended ── */
+eq("127.0.0.1 is this machine", CIP.isLoopbackIp("127.0.0.1"), true);
+eq("…so is ::1", CIP.isLoopbackIp("::1"), true);
+eq("…and the IPv6-written form of IPv4 loopback", CIP.isLoopbackIp("::ffff:127.0.0.1"), true);
+eq("…and the rest of 127.0.0.0/8", CIP.isLoopbackIp("127.0.0.53"), true);
+eq("a public address is not", CIP.isLoopbackIp("203.0.113.9"), false);
+eq("…and an empty one is not", CIP.isLoopbackIp(""), false);
+eq("IIS on this machine: the visitor IIS appended is the caller",
+  CIP.clientIpFromHeaders(
+    headers({ "x-sayo-ip": "127.0.0.1", "x-sayo-ip-token": "t", "x-forwarded-for": "1.2.3.4, 203.0.113.9" }),
+    0, "t"),
+  "203.0.113.9");
+eq("…a value the caller typed in front of it is ignored",
+  CIP.clientIpFromHeaders(
+    headers({ "x-sayo-ip": "127.0.0.1", "x-sayo-ip-token": "t", "x-forwarded-for": "1.2.3.4" }),
+    0, "t"),
+  "1.2.3.4");
+eq("…with nothing forwarded at all the socket address is used",
+  CIP.clientIpFromHeaders(headers({ "x-sayo-ip": "127.0.0.1", "x-sayo-ip-token": "t" }), 0, "t"),
+  "127.0.0.1");
+eq("a visitor that reaches the app directly cannot fake a chain entry",
+  CIP.clientIpFromHeaders(
+    headers({ "x-sayo-ip": "203.0.113.9", "x-sayo-ip-token": "t", "x-forwarded-for": "1.2.3.4" }),
+    0, "t"),
+  "203.0.113.9");
+eq("SAYO_IP_SOCKET_ONLY throws the forwarded header away",
+  CIP.clientIpFromHeaders(
+    headers({ "x-sayo-ip": "127.0.0.1", "x-sayo-ip-token": "t", "x-forwarded-for": "203.0.113.9" }),
+    0, "t", true),
+  "127.0.0.1");
+eq("…and then an unknown socket stays unknown",
+  CIP.clientIpFromHeaders(headers({ "x-forwarded-for": "203.0.113.9" }), 0, "", true),
+  "unknown");
+eq("an unknown address is shown as unknown, not sliced",
+  CIP.ipForLog(""), "unknown");
+
+/* ── the reset code ───────────────────────────────────────────────────── */
+eq("a code is always 6 digits", OTP.generateOtpCode(() => 42).length, 6);
+eq("…and zero padded", OTP.generateOtpCode(() => 0), "000000");
+eq("…and takes the value it is given", OTP.generateOtpCode(() => 123456), "123456");
+eq("a nonsense generator cannot produce something odd",
+  OTP.generateOtpCode(() => Number.NaN), "000000");
+eq("the real generator is cryptographically random, not Math.random",
+  OTP.generateOtpCode.toString().includes("Math.random"), false);
+eq("reset codes are compared in constant time",
+  OTP.otpEqual.toString().includes("timingSafeEqual"), true);
+eq("the right code matches", OTP.otpEqual("123456", "123456"), true);
+eq("a wrong code does not", OTP.otpEqual("123456", "123457"), false);
+eq("a shorter guess does not throw", OTP.otpEqual("123456", "1"), false);
+
+const live = { code: "654321", expiresAt: Date.now() + 60_000, attempts: 0 };
+eq("the right code passes", OTP.evaluateOtp(live, "654321").ok, true);
+eq("four tries left after one wrong guess",
+  OTP.evaluateOtp(live, "000000").attemptsLeft, OTP.OTP_MAX_ATTEMPTS - 1);
+eq("…and the reason is ‘wrong’", OTP.evaluateOtp(live, "000000").reason, "wrong");
+eq("a burned code is refused",
+  OTP.evaluateOtp({ ...live, attempts: OTP.OTP_MAX_ATTEMPTS }, "654321").reason, "too_many");
+eq("an expired code is refused",
+  OTP.evaluateOtp({ ...live, expiresAt: Date.now() - 1 }, "654321").reason, "expired");
+eq("a code that was never asked for is refused",
+  OTP.evaluateOtp(undefined, "654321").reason, "missing");
+eq("the wrong-code message counts down",
+  OTP.wrongCodeMessage(2).includes("2 attempts left"), true);
+eq("…in the singular when it must", OTP.wrongCodeMessage(1).includes("1 attempt left"), true);
+eq("…and says so on the last try",
+  OTP.wrongCodeMessage(0).includes("request a new code"), true);
+eq("five wrong tries is the limit", OTP.OTP_MAX_ATTEMPTS, 5);
+
+/* the store sweeps expired records away */
+OTP.otpStore.set("old@example.com", { code: "111111", expiresAt: Date.now() - 1, attempts: 0 });
+OTP.otpStore.set("burned@example.com", { code: "111111", expiresAt: Date.now() + 60_000, attempts: OTP.OTP_MAX_ATTEMPTS });
+OTP.otpStore.set("live@example.com", { code: "111111", expiresAt: Date.now() + 60_000, attempts: 0 });
+OTP.sweepOtps();
+eq("expired codes are swept away", OTP.otpStore.has("old@example.com"), false);
+eq("burned codes are swept away", OTP.otpStore.has("burned@example.com"), false);
+eq("a live code is kept", OTP.otpStore.has("live@example.com"), true);
+OTP.otpStore.clear();
 
 console.log(failures === 0 ? `\nALL PASS (${checks} checks)` : `\n${failures} of ${checks} FAILED`);
 process.exit(failures ? 1 : 0);

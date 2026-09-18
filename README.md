@@ -97,6 +97,78 @@ npx prisma generate
 npm run dev      # or: npm run build && npm start
 ```
 
+`npm start` now runs **`node server.mjs`** instead of `next start` (the old
+command is still there as `npm run start:next`). `server.mjs` is the same server
+plus the one thing the security limits need: it reads the real address of the
+caller off the connection and hands it to the app. Nothing else about the app
+changed, so nothing else in this file changes.
+
+**On the hosted Windows account (`web.config` → `node server.js`)** you do not
+have to change anything: `server.js` now simply hands over to `server.mjs`, so
+IIS keeps starting the app exactly as before and the limits work.
+
+## 4. Security: the limits, the real address, and `/api/health`
+
+This section is the short version of the security pass of 2026-09-18. Nothing
+here needs a decision from you — it is written down so that a future change does
+not quietly undo it.
+
+**Who is calling.** `x-forwarded-for` is a header *any* caller can type, so it is
+never trusted on its own. `server.mjs` measures the address on the connection
+itself, deletes any copy of its own headers the caller sent, and passes the
+address on together with a secret token made fresh at every start-up
+(`SAYO_IP_TOKEN` — you never set this, the server makes it). Rules, in order:
+
+| situation | the address used | what to configure |
+| --- | --- | --- |
+| plain Node (`npm start`, `node server.js`) | the connection address | nothing |
+| IIS / the hosting panel in front, on the same machine | the entry IIS appended to `x-forwarded-for` (the last one) | nothing |
+| nginx / cloudflared / a load balancer on **another** machine | the last hop that proxy appended | `TRUST_PROXY=1` |
+| a proxy that passes `x-forwarded-for` through without appending | the connection address | `SAYO_IP_SOCKET_ONLY=1` |
+| nothing trustworthy at all | everyone shares one bucket | — |
+
+A caller writing `x-forwarded-for: 1.2.3.4` in front of what IIS appended only
+adds a first entry; the last entry is what gets counted. `SAYO_IP_SOCKET_ONLY=1`
+is the escape hatch if you ever see one bucket catching everybody.
+
+**What is limited** (every limit answers `429` with a `Retry-After` header, and
+the screen shows a plain sentence with the waiting time):
+
+| endpoint | limit |
+| --- | --- |
+| `POST /api/bookings` (public) | 8 per caller / 15 min · 3 per phone number / hour |
+| `POST /api/auth/register` (public) | 5 per caller / hour · 2 per phone number / day |
+| `POST /api/auth/admin-login` | 20 per caller / 10 min · 8 wrong passwords per account / 10 min |
+| `POST /api/auth/login` (customer) | 20 per caller / 10 min · 8 wrong passwords per account / 10 min |
+| `POST /api/auth/forgot-password/send-otp` | 5 per caller / 30 min · 3 per e-mail address / 15 min |
+| `POST /api/auth/forgot-password/reset` | 10 per caller / 30 min · 5 wrong codes per code, then the code is destroyed |
+| `GET /api/health` | 60 per caller / min |
+
+The per-caller limits protect the Text.lk balance and the Gmail account — a
+script cannot make the site send thousands of SMS or reset mails. The per-phone
+and per-account limits are the ones a caller cannot walk around by changing
+address, and a *successful* sign-in clears that account's counter.
+
+**The reset code.** Six digits from `crypto.randomInt` (not `Math.random`), valid
+10 minutes, compared in constant time, and after 5 wrong tries it dies — a new
+one has to be asked for. The code is never written to the server log.
+
+**`/api/health`.** A visitor without a session gets only `reachable` and
+`latencyMs`. The host, database name, user and MySQL version appear only for a
+signed-in admin.
+
+**The two login handlers were dead files.** `…/forgot-password/send-otp` and
+`…/forgot-password/reset` were named `route.tsx`, which Next.js never serves
+(only `route.ts` is a route) — the whole “forgot my password” screen returned
+404 until this pass. If you add an endpoint, the file must be called `route.ts`.
+
+**Not changed on purpose** (they were reported, not asked for): the customer
+session cookie and the admin session cookie still share one signing key
+(`AUTH_SECRET`), the SMTP connection still accepts the mail server's certificate
+without checking it, `/api/test` still returns a raw error, and the package
+updates suggested by `npm audit` were left alone because they include a
+major-version jump of Next.js.
+
 ## Creating more users (no sign-up page exists)
 
 **Settings → Users** (System Settings):
@@ -733,7 +805,78 @@ Decisions worth knowing:
   `src/lib/grnNotify.ts` and is covered by section 14 of
   `scripts/billing-tests.js`.
 
-### 8. Printing — the button asks for a copy
+### 8. The purchase order’s “the goods came” flag (GRNed)
+
+The old desktop program finished every GRN save with
+
+```sql
+UPDATE Tbl_POHeader SET GRNed = 'Y' WHERE LocCode = … AND PONO = …
+```
+
+Same table, same column: confirming a GRN against an order now leaves that mark
+too, so an old report that reads `tbl_poheader.GRNed` agrees with this screen.
+
+- **Y only when the whole order has arrived** — every line has `GRNQty >= POQty`.
+  The old program set it on the first receipt, but this screen can receive a
+  delivery in several parts, so a part delivery leaves the order open. What
+  happened is written in the activity log: *“PO0000002 updated (1 of 2 line(s)
+  received — 1 still open)”*.
+- **A missing column never blocks anything.** If `tbl_poheader.GRNed` is not on
+  the database yet, the confirmation goes through exactly as before and nothing
+  is written. Run `node scripts/add-po-grn-columns.mjs` to add the column — it
+  also marks the orders that were already completed as received.
+- The answer from `POST /api/inventory/grn/:grnNo/confirm` carries it:
+  `"poReceived": { "flag": "Y", "words": "all 2 line(s) received" }` — or `null`
+  for a direct receipt / a database without the column.
+
+**What was NOT built, and why** (asked and answered on 2026-09-18): the old
+program also kept stock in `Tbl_RowItems` (`StkBal`, `RowCost`) with a ledger in
+`Tbl_TxnMovement`, and moved item cost through `Tbl_Recipies` / `Tbl_Menuitems`
+with a moving average —
+
+```
+newCost = ((oldCost × stockOnHand) + (GRNcost × GRNqty)) / (stockOnHand + GRNqty)
+```
+
+None of those tables exist on this database (`scripts/check-legacy-tables.mjs`
+reports them MISSING) and the old program is no longer in use, so stock stays
+where it is — `tbl_itemmaster.StockBalance` + `tbl_stocktxn` — and no cost
+average is written. The number series stays this project’s own
+(`tbl_serials`, `SeriCode = 'GRN'`). Everything that needs re-deciding is in
+`GRN_LEGACY_ALIGNMENT.md`.
+
+### 9. Where a receipt puts the stock — two tables, one number
+
+A confirmed GRN moves stock in **both** places the database keeps it, out of the
+same quantity:
+
+| Table | What it holds | Who shows it |
+|---|---|---|
+| `tbl_itemmaster.StockBalance` | one balance per item per branch | the PO screen, the stock-requirements screen |
+| `tbl_itemdetail` (`LocCode, ItemCode, ExpiryDate, ItemQty`) | one row per batch / expiry | **the Item Master screen** — its Stock box and its “Stock (read-only)” column are `SUM(ItemQty)` |
+| `tbl_stocktxn` | the ledger: one row per movement | the stock reconciliation / reports |
+
+Before this was wired together, the Item Master screen kept showing a number
+that no receipt ever changed — the confirm wrote the item balance and the ledger
+only. Now the batch row goes in in the same transaction:
+
+- the quantity is `GRNQty + FreeQty` — exactly what went onto the balance and
+  into the ledger, so the three can never disagree;
+- the row is matched on **(LocCode, ItemCode, ExpiryDate)** and the quantity is
+  added to it, so two receipts of the same batch stay on one row;
+- a line with **no expiry date** lands in the `1900-01-01` bucket — the same
+  “empty date” convention the purchase tables use;
+- a **service line** writes no batch row (it has no stock);
+- **if `tbl_itemdetail` is not on the database** the receipt still confirms —
+  the balance and the ledger are written, the answer says
+  `"itemDetailWritten": false`, and nothing is refused.
+
+Receipts confirmed **before** this change are not backfilled: their goods are in
+the item balance and the ledger, but not in the batch table. If the Item Master
+screen must agree with the balance on an existing database, ask — a read-only
+report of the differences can be produced first, and only then a one-off top-up.
+
+### 10. Printing — the button asks for a copy
 
 **Print** does not print straight away: it asks which of the two legacy copies
 is wanted, then builds that sheet and opens the browser's print dialog.
@@ -777,7 +920,7 @@ A few decisions worth knowing:
   unsaved order prints `(not saved)` in the PO NO line, so nobody files a sheet
   under a number that was never issued.
 
-### 9. E-mailing the sheet to the supplier
+### 11. E-mailing the sheet to the supplier
 
 The order sheet does not only go to the printer — there is a second, separate
 button, **Email to Supplier**, next to **Print**. It opens a small box, and when
@@ -833,7 +976,9 @@ file under `src/` **and** a new package — a source-only copy is not enough.
 `nodemailer` was already a dependency, `pdfkit` is the one that is new.
 
 The values are read when the server starts, so **restart** (`npm run dev`, or
-stop and start `next start`) after adding them — no rebuild is needed.
+stop and start `npm start` / `node server.mjs` / `node server.js` — whichever one
+your hosting uses) after adding them — no rebuild is needed. The same goes for
+`TRUST_PROXY` / `SAYO_IP_SOCKET_ONLY` from §4.
 
 If one of those is empty the screen says exactly which keys are missing and the
 mail is not attempted — nothing is sent half-configured, and the same message is
@@ -842,7 +987,7 @@ returned as HTTP **503** by
 The Gmail App Password needs 2-step verification on the account; the ordinary
 account password will be refused.
 
-### 10. Files
+### 12. Files
 
 ```
 scripts/add-po-grn-tables.sql              the SQL to run (tables + serials + ledger)
@@ -851,6 +996,9 @@ src/lib/inventoryTotals.ts                 all PO/GRN maths (pure — tested)
 src/lib/poRequirements.ts                  Stock Requirements rules (grouping, supplier pick, tick → lines)
 src/lib/grnPoEntry.ts                      receiving one PO line at a time (pure — tested)
 src/lib/grnNotify.ts                       the “tell an admin to confirm” wording + who may be told (pure — tested)
+src/lib/poReceiptState.ts                  when an order counts as received (GRNed) (pure — tested)
+src/lib/itemDetailStock.ts                 the batch/expiry stock row (tbl_itemdetail) (pure — tested)
+scripts/check-legacy-tables.mjs            read-only: which old desktop tables exist on your database
 src/lib/sms.ts                             Text.lk sending (appointments, registrations, GRN notifications)
 src/app/api/inventory/grn/[grnNo]/notify    GET who can be told · POST send the SMS
 src/lib/poPrint.ts                         printed-copy rules + date/time/money formatting (pure — tested)

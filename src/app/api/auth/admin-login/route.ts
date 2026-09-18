@@ -2,40 +2,40 @@ import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { createAdminToken, adminCookieOptions, ADMIN_COOKIE } from '@/lib/adminSession';
+import { rateLimit, rateLimitPeek, clearRate, rateMessage } from '@/lib/rateLimit';
+import { clientIp, ipForLog } from '@/lib/clientIp';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-/* ── Very basic in-memory brute-force throttle (per IP) ── */
-const attempts = new Map<string, { count: number; first: number }>();
-const WINDOW_MS = 10 * 60 * 1000;   // 10 minutes
-const MAX_TRIES = 8;
-
-function throttled(ip: string): boolean {
-  const now = Date.now();
-  const rec = attempts.get(ip);
-  if (!rec || now - rec.first > WINDOW_MS) {
-    attempts.set(ip, { count: 1, first: now });
-    return false;
-  }
-  rec.count += 1;
-  return rec.count > MAX_TRIES;
-}
-
-function clientIp(req: NextRequest): string {
-  return (
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.headers.get('x-real-ip') ||
-    'local'
-  );
-}
+/* ── Brute-force protection ─────────────────────────────────────────────── *
+ * TWO counters, because one is not enough:
+ *   · per CALLER — the address from the socket (`server.mjs` writes it into
+ *     `x-sayo-ip`), never the `x-forwarded-for` a caller can type. A script
+ *     that changes that header gains nothing.
+ *   · per ACCOUNT — counted on every WRONG password only, so a shared branch
+ *     address cannot lock a colleague out, and an attacker cannot keep trying
+ *     one user name by hopping addresses.
+ * A successful sign-in clears the account counter (that is what it is for).
+ */
+const LOGIN_IP_LIMIT = 20;          // every attempt, per caller
+const LOGIN_ACCOUNT_LIMIT = 8;      // WRONG attempts, per user name
+const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 
 export async function POST(req: NextRequest) {
   try {
-    if (throttled(clientIp(req))) {
+    const caller = clientIp(req);
+    const byIp = rateLimit({
+      bucket: 'admin-login:ip',
+      key: caller,
+      limit: LOGIN_IP_LIMIT,
+      windowMs: LOGIN_WINDOW_MS,
+    });
+    if (!byIp.ok) {
+      console.warn(`[admin-login] ip rate limited ip=${ipForLog(caller)}`);
       return NextResponse.json(
-        { error: 'Too many login attempts. Please try again later.' },
-        { status: 429 },
+        { error: rateMessage('login', byIp.retryAfterSec) },
+        { status: 429, headers: { 'Retry-After': String(byIp.retryAfterSec) } },
       );
     }
 
@@ -45,6 +45,23 @@ export async function POST(req: NextRequest) {
     /* Generic validation errors — never reveal which field was wrong */
     const invalid = NextResponse.json({ error: 'Invalid username or password.' }, { status: 401 });
     if (!username?.trim() || !password) return invalid;
+
+    /* the account counter — checked before the password is even compared */
+    const accountKey = username.trim().toLowerCase();
+    const accountRule = {
+      bucket: 'admin-login:account',
+      key: accountKey,
+      limit: LOGIN_ACCOUNT_LIMIT,
+      windowMs: LOGIN_WINDOW_MS,
+    };
+    const accountPeek = rateLimitPeek(accountRule);
+    if (!accountPeek.ok) {
+      console.warn(`[admin-login] account paused user=${accountKey}`);
+      return NextResponse.json(
+        { error: rateMessage('login', accountPeek.retryAfterSec) },
+        { status: 429, headers: { 'Retry-After': String(accountPeek.retryAfterSec) } },
+      );
+    }
 
     /* Look the staff/admin user up in tbl_userdetails (LogName + PSW) */
     let user: { UserId: string; LogName: string; UserName: string; PSW: string } | null = null;
@@ -65,7 +82,13 @@ export async function POST(req: NextRequest) {
     if (!user || !storedHash) return invalid;
 
     const match = await bcrypt.compare(password, storedHash);
-    if (!match) return invalid;
+    if (!match) {
+      rateLimit(accountRule);   // count the wrong guess against the user name
+      return invalid;
+    }
+
+    /* right password — the account counter starts again from zero */
+    clearRate(accountRule.bucket, accountRule.key);
 
     const token = await createAdminToken({
       uid: user.UserId.trim(),

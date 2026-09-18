@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS tbl_poheader (
   ConUserID   CHAR(10)     NOT NULL DEFAULT ' ',      -- who confirmed it
   Confirmed   CHAR(1)      NOT NULL DEFAULT 'N',      -- 'N' pending / 'Y' confirmed
   ConDatetime DATETIME     NULL DEFAULT NULL,
+  GRNed       CHAR(1)      NOT NULL DEFAULT 'N',      -- 'Y' when every line has arrived (the old desktop GRN save set this too)
   PRIMARY KEY (LocCode, PONO),
   KEY idx_po_sup    (SupID),
   KEY idx_po_conf   (Confirmed, PODate),
