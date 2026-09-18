@@ -2816,6 +2816,9 @@ export default function AppointmentsPage() {
       try {
         const params = new URLSearchParams({ date: requestedDate });
         if (filterLoc !== "ALL") params.set("locCode", filterLoc);
+        // Technician-done bookings leave the grid — they are handled on the
+        // Billing Dashboard (/billing/dashboard) until they are billed.
+        params.set("excludeDone", "1");
 
         const response = await fetch(`/api/appointments?${params.toString()}`);
         const json = await response.json();

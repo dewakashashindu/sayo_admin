@@ -16,12 +16,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
+/* Suggestion lists are portalled so a card with overflow:hidden cannot clip
+   them (the recipe panel and the add-technician panel both did). */
+import FloatingPanel from "@/components/FloatingPanel";
 import {
   SAMPLE_RECIPES,
   TechAppointment,
   buildSampleAppointments,
   fmtDateLong,
-  getLoggedInTechnicianName,
+  resolveLoggedInTechnicianName,
   todayISO,
 } from "@/lib/technicianSample";
 
@@ -173,7 +176,8 @@ const CSS = `
   .btn-cancel { display: inline-flex; align-items: center; gap: 5px; padding: 6px 14px; border: 1.5px solid #c8d6d8; border-radius: 8px; background: #fff; color: #6b7280; font-family: 'Inter',sans-serif; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
   .btn-cancel:hover { background: #f3f4f6; }
   .suggest-wrap { position: relative; flex: 1; min-width: 0; }
-  .suggest-list { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 50; max-height: 220px; overflow: auto; background: #fff; border: 1.5px solid #c8d6d8; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+  /* Positioned by <FloatingPanel> (portalled to <body>), so no card can clip it. */
+  .suggest-list { overflow: auto; background: #fff; border: 1.5px solid #c8d6d8; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
   .suggest-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 12px; border: none; border-bottom: 1px solid #f0f4f4; background: #fff; cursor: pointer; text-align: left; font-family: 'Inter',sans-serif; }
   .suggest-item:last-child { border-bottom: none; }
   .suggest-item:hover { background: #f0f8f9; }
@@ -368,6 +372,9 @@ export default function TechnicianAppointmentDetailPage() {
 
   // Technician name suggest dropdown
   const [showTechSuggest, setShowTechSuggest] = useState(false);
+  /* Anchors for the two portalled suggestion panels. */
+  const itemSuggestAnchor = useRef<HTMLDivElement | null>(null);
+  const techSuggestAnchor = useRef<HTMLDivElement | null>(null);
 
   const showToast = useCallback((text: string, type: ToastMsg["type"] = "info") => {
     const id = ++toastCounter.current;
@@ -376,7 +383,14 @@ export default function TechnicianAppointmentDetailPage() {
   }, []);
 
   useEffect(() => {
-    setTechName(getLoggedInTechnicianName());
+    let active = true;
+    // The signed-in staff user (falls back to the demo name when signed out).
+    void resolveLoggedInTechnicianName().then((name) => {
+      if (active) setTechName(name);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Load the single appointment (via the existing day API, then pick by ID).
@@ -384,11 +398,10 @@ export default function TechnicianAppointmentDetailPage() {
     async function load() {
       setLoading(true);
       try {
-        // DB-driven + technician-scoped, same as the list screen.
-        const p = new URLSearchParams({
-          date: dateParam,
-          technician: getLoggedInTechnicianName(),
-        });
+        // DB-driven. Deliberately NOT narrowed to a technician name: a booking
+        // that the bill screen pushed back from DONE to ONGOING must open here
+        // for whoever signs in and fixes it.
+        const p = new URLSearchParams({ date: dateParam });
         if (locCode) p.set("locCode", locCode);
         const res = await fetch(`/api/appointments?${p.toString()}`);
         const json = await res.json();
@@ -924,7 +937,9 @@ export default function TechnicianAppointmentDetailPage() {
       }
       setAppt({ ...appt, status: "done" });
       showToast("Work completed — ready to bill", "success");
-      setTimeout(() => router.push("/technician-appointments"), 700);
+      // Done work is billed from the Billing Dashboard (Billing → Billing
+      // Dashboard), never by going back through the appointment screen.
+      setTimeout(() => router.push("/billing/dashboard"), 700);
     } catch {
       showToast("Network error — please try again", "error");
     }
@@ -1115,13 +1130,26 @@ export default function TechnicianAppointmentDetailPage() {
                             </div>
                           )}
                           <InfoBox label="Date" value={fmtDateLong(appt.date)} />
-                          <InfoBox label="Time" value={appt.timeSlot} />
+                          <InfoBox
+                            label="Time"
+                            value={
+                              appt.scheduleEndTime
+                                ? `${appt.scheduleStartTime || appt.timeSlot} – ${appt.scheduleEndTime}`
+                                : appt.scheduleStartTime || appt.timeSlot
+                            }
+                          />
                           <InfoBox label="Location" value={appt.location} />
                           <InfoBox label="Duration" value={`${appt.duration} mins`} />
                           <InfoBox label="Total Price" value={`LKR ${appt.price.toLocaleString()}`} />
                           <InfoBox label="Booking Mode" value={appt.mode === "without_confirmation" ? "Walk-in" : "Pre-booked"} />
                           {appt.gender && <InfoBox label="Gender" value={appt.gender} />}
-                          {appt.checkInTime && <InfoBox label="Checked-in At" value={new Date(appt.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} />}
+                          {appt.checkInTime && (
+                            <InfoBox
+                              label="Checked-in At"
+                              /* Stored as the shop’s wall clock (MySQL NOW()) — show it as stored, not shifted by the browser timezone. */
+                              value={new Date(appt.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })}
+                            />
+                          )}
                         </div>
 
                         {/* Services + per-service schedule */}
@@ -1357,15 +1385,20 @@ export default function TechnicianAppointmentDetailPage() {
                                     <p style={{ color: "#6b7280", fontSize: 10, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
                                       Add ingredient
                                     </p>
-                                    <div className="suggest-wrap">
+                                    <div className="suggest-wrap" ref={itemSuggestAnchor}>
                                       <input
                                         className="f-inp"
                                         placeholder="Type item code or name…"
                                         value={itemQuery}
                                         onChange={(e) => setItemQuery(e.target.value)}
+                                        onFocus={() => setItemQuery((q) => q)}
                                       />
-                                      {itemQuery.trim() && (itemSearching || itemOptions.length > 0) && (
-                                        <div className="suggest-list">
+                                      <FloatingPanel
+                                        anchorRef={itemSuggestAnchor}
+                                        open={Boolean(itemQuery.trim()) && (itemSearching || itemOptions.length > 0)}
+                                        className="suggest-list"
+                                        preferredHeight={250}
+                                      >
                                           {itemSearching && (
                                             <div style={{ padding: "10px 12px", color: "#6b7280", fontSize: 12 }}>
                                               Searching…
@@ -1391,16 +1424,16 @@ export default function TechnicianAppointmentDetailPage() {
                                                 <span style={{ display: "block", color: "#1e3a40", fontSize: 13, fontWeight: 700 }}>
                                                   {o.des}
                                                 </span>
-                                                <small style={{ color: "#6b7280", fontSize: 11 }}>
-                                                  {o.code}
-                                                  {o.masterUnitID ? ` · ${o.masterUnitID}` : ""}
-                                                </small>
+                                                {o.masterUnitID && (
+                                                  <small style={{ color: "#6b7280", fontSize: 11 }}>
+                                                    {o.masterUnitID}
+                                                  </small>
+                                                )}
                                               </span>
                                               {o.serviceItem && <span className="badge b-pre">Service</span>}
                                             </button>
                                           ))}
-                                        </div>
-                                      )}
+                                      </FloatingPanel>
                                     </div>
                                   </div>
                                 </div>
@@ -1530,7 +1563,7 @@ export default function TechnicianAppointmentDetailPage() {
                             Add another technician
                           </p>
                           <div style={{ display: "flex", gap: 8 }}>
-                            <div className="suggest-wrap">
+                            <div className="suggest-wrap" ref={techSuggestAnchor}>
                               <input
                                 className="f-inp"
                                 placeholder="Type technician name…"
@@ -1542,8 +1575,12 @@ export default function TechnicianAppointmentDetailPage() {
                                 onFocus={() => setShowTechSuggest(true)}
                                 onBlur={() => setTimeout(() => setShowTechSuggest(false), 150)}
                               />
-                              {showTechSuggest && techSuggestions.length > 0 && (
-                                <div className="suggest-list">
+                              <FloatingPanel
+                                anchorRef={techSuggestAnchor}
+                                open={showTechSuggest && techSuggestions.length > 0}
+                                className="suggest-list"
+                                preferredHeight={250}
+                              >
                                   {techSuggestions.map((name) => (
                                     <button
                                       key={name}
@@ -1569,15 +1606,15 @@ export default function TechnicianAppointmentDetailPage() {
                                       </span>
                                     </button>
                                   ))}
-                                </div>
-                              )}
+                              </FloatingPanel>
                             </div>
                             <button className="btn-add" type="button" onClick={handleAddTechnician} disabled={!techPick.trim()}>
                               <Ico.Plus /> Add
                             </button>
                           </div>
                           <p style={{ color: "#9ca3af", fontSize: 11, marginTop: 6 }}>
-                            Sample UI — saving to the server will be wired when the supporting-technician API is ready.
+                            Saved to this booking straight away (Tbl_BookingServiceItemAddTech).
+                            Available once the client is checked in, locked again after billing.
                           </p>
                         </div>
                       </div>

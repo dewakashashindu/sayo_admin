@@ -1,5 +1,6 @@
 // src/app/api/appointmentform/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { ITEM_CODE_LENGTH } from "@/lib/itemCode";
 import { PrismaClient, Prisma } from "@prisma/client";
 import nodemailer from "nodemailer";
 import { sendAppointmentSMS } from "@/lib/sms";
@@ -1715,7 +1716,7 @@ export async function POST(req: NextRequest) {
                     ${toChar(locCode, 10)},
                     ${toChar(bookingID, 10)},
                     ${guessID},
-                    ${toChar(svc.serviceItemID, 10)},
+                    ${toChar(svc.serviceItemID, ITEM_CODE_LENGTH)},
                     ${toChar(String(svc.qty ?? 1), 10)},
                     ${svc.itemPrice ?? 0},
                     ${toChar(svc.techID || "0", 10)},

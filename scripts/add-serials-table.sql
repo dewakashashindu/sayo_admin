@@ -6,6 +6,7 @@
 --
 --    SeriCode  prefix of the series   "BK"  = booking ID
 --                                     "CUS" = customer code
+--                                     "INV" = bill / invoice number
 --    SeriNo    the LAST ISSUED number, e.g. "0000007"
 --    SeriDate  the date the counter was last used
 --
@@ -33,9 +34,12 @@ CREATE TABLE IF NOT EXISTS tbl_serials (
 -- ── 2. Seed the two series in use ───────────────────────────────────────────
 -- Starts at 0, so the first number issued is 1 (BK0000001 / CUS0000001).
 -- INSERT IGNORE never overwrites a counter that is already running.
+-- The "INV" row is only inserted when it is missing: if the salon already keeps
+-- its own INV counter here, that value is left exactly as it is.
 INSERT IGNORE INTO tbl_serials (SeriCode, SeriNo, SeriDate) VALUES
   ('BK',  '0000000', NULL),
-  ('CUS', '0000000', NULL);
+  ('CUS', '0000000', NULL),
+  ('INV', '0000000', NULL);
 
 
 -- ── 3. Backfill when the database already holds data ────────────────────────
@@ -74,6 +78,19 @@ UPDATE tbl_serials s
   ) AS m
    SET s.SeriNo = LPAD(m.highest, 7, '0')
  WHERE s.SeriCode = 'CUS'
+   AND m.highest > CAST(TRIM(s.SeriNo) AS UNSIGNED);
+
+
+-- 3c. Bills — highest INV number already stored in tbl_billheader.
+--     Skipped automatically when the bill tables do not exist yet.
+UPDATE tbl_serials s
+  JOIN (
+    SELECT COALESCE(MAX(CAST(SUBSTRING(TRIM(BillNo), 4) AS UNSIGNED)), 0) AS highest
+      FROM tbl_billheader
+     WHERE TRIM(BillNo) REGEXP '^INV[0-9]+$'
+  ) AS m
+   SET s.SeriNo = LPAD(m.highest, 7, '0')
+ WHERE s.SeriCode = 'INV'
    AND m.highest > CAST(TRIM(s.SeriNo) AS UNSIGNED);
 
 

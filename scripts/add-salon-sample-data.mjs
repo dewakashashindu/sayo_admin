@@ -1,0 +1,1802 @@
+// scripts/add-salon-sample-data.mjs
+// ─────────────────────────────────────────────────────────────────────────────
+// Fills YOUR database with a working salon catalogue, in English, in one run.
+//
+//     node scripts/add-salon-sample-data.mjs
+//     node scripts/add-salon-sample-data.mjs --locCode=LOC0000001     (one branch)
+//     node scripts/add-salon-sample-data.mjs --dry-run                (show, change nothing)
+//
+// WHAT IT ADDS — in this order, because each step needs the one before it:
+//
+//   1. Units        tbl_unitmaster  (20)  + tbl_unitsub (10) + tbl_unitconversion (11)
+//   2. Locations    tbl_locationmaster   — 4 branches with Sri Lankan addresses
+//   3. Suppliers    tbl_suppliermaster   — 12 local beauty / hair / nail / spa suppliers
+//   4. Categories   tbl_itemcategory1..4 — item types, brands, areas, segments
+//   5. Items        tbl_itemmaster       — 500 retail / professional items
+//   6. Services     tbl_itemmaster       — 50 salon services (priced, with duration)
+//
+// WHERE THE ITEMS GO
+//   The legacy model keeps one item row per branch (`tbl_itemmaster` is keyed by
+//   LocCode + ItemCode), which is also what the app does when a service is saved
+//   from the Item Master screen. So every item is written for every ENABLED
+//   location, unless you pass --locCode to write for one branch only.
+//
+// WHICH SUPPLIER AN ITEM IS ORDERED FROM
+//   Every item is written with the supplier it is bought from (the SupID column
+//   of tbl_itemmaster). The brand decides which one, so the Purchase Order
+//   screen can list its Current Stock Requirements supplier by supplier, and a
+//   purchase order can fill in its own supplier from the items you tick.
+//   Because older runs of this script left that column empty, the script also
+//   fills the supplier in on the rows it owns when it is still blank — never on
+//   any other row, and never over a supplier somebody already set.
+//
+// WHAT IT NEVER DOES
+//   • It never updates or deletes a row. Everything is INSERT IGNORE, keyed on
+//     the same primary keys the app uses, so existing items, locations,
+//     suppliers and units stay exactly as they are.
+//   • It never renames or retypes a column. If a table is missing entirely it is
+//     created; if your table has EXTRA columns that are NOT NULL and carry no
+//     default (common in old databases), a safe value is filled in for them and
+//     the script prints which columns those were.
+//   • Running it twice adds nothing the second time.
+//
+// WHERE THE DATA COMES FROM
+//   The catalogue below is written for a Sri Lankan salon: hair colour, keratin,
+//   facials, waxing, threading, nails, bridal dressing, barber items, backwash
+//   consumables — with prices in LKR and the suppliers and branches that such a
+//   business actually buys from and runs in.
+//
+// The connection string is DATABASE_URL, read from .env when it is not already
+// set in the environment (the same variable the application uses).
+// ─────────────────────────────────────────────────────────────────────────────
+import fs from "node:fs";
+import path from "node:path";
+import mysql from "mysql2/promise";
+
+/* ── 1. DATABASE_URL ─────────────────────────────────────────────────────── */
+
+function loadEnvFile() {
+  const file = path.join(process.cwd(), ".env");
+  if (!fs.existsSync(file)) return;
+  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i);
+    if (!m) continue;
+    let value = m[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (!process.env[m[1]]) process.env[m[1]] = value;
+  }
+}
+
+loadEnvFile();
+
+/* ── 2. arguments ────────────────────────────────────────────────────────── */
+
+const argv = process.argv.slice(2);
+const DRY_RUN = argv.includes("--dry-run");
+const PLAN_ONLY = argv.includes("--plan"); // never opens a database connection
+const locArg = argv.find((a) => a.startsWith("--locCode="));
+const ONLY_LOC = locArg ? locArg.split("=")[1].trim().toUpperCase() : "";
+
+if (argv.includes("--help") || argv.includes("-h")) {
+  console.log(`
+Adds a working salon catalogue to the database in DATABASE_URL.
+
+  node scripts/add-salon-sample-data.mjs
+  node scripts/add-salon-sample-data.mjs --locCode=LOC0000001
+  node scripts/add-salon-sample-data.mjs --dry-run
+  node scripts/add-salon-sample-data.mjs --plan       (no database needed)
+
+Order: units → locations → suppliers → categories → 500 items → 50 services.
+Existing rows are never changed (INSERT IGNORE on the app's own keys).
+`);
+  process.exit(0);
+}
+
+/* --plan builds the catalogue in memory and never opens a connection, so a
+   placeholder is enough there; a real run needs the same string the app uses. */
+const url =
+  process.env.DATABASE_URL ||
+  (process.argv.slice(2).includes("--plan")
+    ? "mysql://plan@127.0.0.1:3306/plan"
+    : "");
+if (!url) {
+  console.error(
+    "DATABASE_URL is not set (checked the environment and .env).\n" +
+      "Put the same connection string the app uses into .env, for example:\n" +
+      '  DATABASE_URL="mysql://user:password@127.0.0.1:3306/sayo"',
+  );
+  process.exit(1);
+}
+
+if (!mysql) {
+  console.error("mysql2 is missing. Run `npm install` inside the project first.");
+  process.exit(1);
+}
+
+/* ── 3. the catalogue ────────────────────────────────────────────────────── */
+
+/*
+  Units — a salon buys shampoo by the bottle and by the litre, colour by the
+  tube, foil by the roll, and consumables by the box.
+  [code, description]
+*/
+const UNITS = [
+  ["UNIT000001", "PIECE"],
+  ["UNIT000002", "BOTTLE"],
+  ["UNIT000003", "TUBE"],
+  ["UNIT000004", "JAR"],
+  ["UNIT000005", "SACHET"],
+  ["UNIT000006", "PACK"],
+  ["UNIT000007", "BOX"],
+  ["UNIT000008", "SET"],
+  ["UNIT000009", "KIT"],
+  ["UNIT000010", "PAIR"],
+  ["UNIT000011", "PACKET"],
+  ["UNIT000012", "ROLL"],
+  ["UNIT000013", "CARTON"],
+  ["UNIT000014", "MILLILITRE"],
+  ["UNIT000015", "LITRE"],
+  ["UNIT000016", "GRAM"],
+  ["UNIT000017", "KILOGRAM"],
+  ["UNIT000018", "DOZEN"],
+  ["UNIT000019", "BAG"],
+  ["UNIT000020", "SERVICE"],
+];
+
+/* Sub units — the smaller side of a conversion (1 BOX = 12 PIECE). */
+const SUB_UNITS = [
+  ["SUB0000001", "PIECE"],
+  ["SUB0000002", "MILLILITRE"],
+  ["SUB0000003", "GRAM"],
+  ["SUB0000004", "PUMP"],
+  ["SUB0000005", "SACHET"],
+  ["SUB0000006", "APPLICATION"],
+  ["SUB0000007", "TREATMENT"],
+  ["SUB0000008", "SERVICE"],
+  ["SUB0000009", "VISIT"],
+  ["SUB0000010", "PAIR"],
+];
+
+/* [masterUnitCode, subUnitCode, howManySubUnits] */
+const UNIT_CONVERSIONS = [
+  ["UNIT000007", "SUB0000001", 12], // BOX = 12 PIECE
+  ["UNIT000013", "SUB0000001", 144], // CARTON = 144 PIECE
+  ["UNIT000018", "SUB0000001", 12], // DOZEN = 12 PIECE
+  ["UNIT000010", "SUB0000010", 2], // PAIR = 2 PIECE
+  ["UNIT000006", "SUB0000001", 6], // PACK = 6 PIECE
+  ["UNIT000011", "SUB0000001", 10], // PACKET = 10 PIECE
+  ["UNIT000019", "SUB0000001", 25], // BAG = 25 PIECE
+  ["UNIT000015", "SUB0000002", 1000], // LITRE = 1000 MILLILITRE
+  ["UNIT000017", "SUB0000003", 1000], // KILOGRAM = 1000 GRAM
+  ["UNIT000002", "SUB0000002", 500], // BOTTLE = 500 MILLILITRE
+  ["UNIT000003", "SUB0000006", 1], // TUBE = 1 APPLICATION (one colour service)
+];
+
+/* Branches. [code, name, address] */
+const LOCATIONS = [
+  ["LOC0000001", "MAIN BRANCH - COLOMBO 03", "No. 45, Galle Road, Colombo 03, Sri Lanka"],
+  ["LOC0000002", "KANDY BRANCH", "No. 112, Colombo Street, Kandy, Sri Lanka"],
+  ["LOC0000003", "GALLE BRANCH", "No. 27, Wackwella Road, Galle, Sri Lanka"],
+  ["LOC0000004", "NEGOMBO BRANCH", "No. 08, Lewis Place, Negombo, Sri Lanka"],
+];
+
+/* Suppliers — the trade accounts a Sri Lankan salon actually runs.
+   [code, name, address, contact, email, web, remarks, debtorAmount] */
+const SUPPLIERS = [
+  ["SUP0000001", "CEYLON BEAUTY DISTRIBUTORS (PVT) LTD", "No. 120, Dam Street, Colombo 12, Sri Lanka", "011-2445678", "sales@ceylonbeauty.lk", "www.ceylonbeauty.lk", "Hair colour and developer - credit 30 days", 0],
+  ["SUP0000002", "LANKA HAIR & SKIN CARE SUPPLIES", "No. 56, Havelock Road, Colombo 05, Sri Lanka", "011-2556789", "orders@lankahairstore.lk", "www.lankahairstore.lk", "Shampoo, conditioner, hair spa - weekly delivery", 0],
+  ["SUP0000003", "PROFESSIONAL SALON PRODUCTS (PVT) LTD", "No. 21, Nawala Road, Nugegoda, Sri Lanka", "011-2812345", "info@prosalonproducts.lk", "www.prosalonproducts.lk", "Keratin, straightening, professional brands", 0],
+  ["SUP0000004", "KANDY BEAUTY TRADERS", "No. 78, Dalada Veediya, Kandy, Sri Lanka", "081-2234567", "kandybeauty@gmail.com", "", "Hill country branch supplier - cash on delivery", 0],
+  ["SUP0000005", "SOUTHERN COSMETICS (PVT) LTD", "No. 34, Wackwella Road, Galle, Sri Lanka", "091-2245678", "southerncosmetics@gmail.com", "", "Facial kits and skin care - Galle branch", 0],
+  ["SUP0000006", "GLOBAL AESTHETIC SUPPLIERS", "No. 9, Negombo Road, Wattala, Sri Lanka", "011-2934567", "globalaesthetic.lk@gmail.com", "", "Machines, tools and salon equipment", 0],
+  ["SUP0000007", "SUMMIT TRADING COMPANY", "No. 140, Sea Street, Colombo 11, Sri Lanka", "011-2478901", "summittrading@yahoo.com", "", "Disposables, foil, cotton, cape - bulk only", 0],
+  ["SUP0000008", "ELEGANCE NAIL & SPA SUPPLIES", "No. 63, High Level Road, Maharagama, Sri Lanka", "011-2851234", "elegance.nailspa@gmail.com", "", "Nail products and pedicure items", 0],
+  ["SUP0000009", "IMPERIAL HAIR PRODUCTS", "No. 27, Bodhiraja Mawatha, Negombo, Sri Lanka", "031-2234567", "imperialhair.lk@gmail.com", "", "Wax, threading, barber items", 0],
+  ["SUP0000010", "CEYLON ORGANIC HERBAL SUPPLIERS", "No. 15, Galle Road, Mount Lavinia, Sri Lanka", "011-2734567", "herbalorders@ceylonorganic.lk", "www.ceylonorganic.lk", "Ayurvedic oils, herbal packs - SPA CEYLON range", 0],
+  ["SUP0000011", "STAR BEAUTY EQUIPMENT (PVT) LTD", "No. 88, R. A. De Mel Mawatha, Colombo 03, Sri Lanka", "011-2334455", "starbeautyequipment@gmail.com", "", "Dryers, clippers, steamers - 1 year warranty", 0],
+  ["SUP0000012", "NATIONAL BEAUTY CARE LANKA (PVT) LTD", "No. 20, Staple Street, Colombo 02, Sri Lanka", "011-2322999", "orders@nationalbeautycare.lk", "www.nationalbeautycare.lk", "Mass market brands - monthly account", 0],
+];
+
+/* Category 1 — what the row IS (item types first, then service groups). */
+const CATEGORY_1 = [
+  ["CAT0000001", "HAIR CARE PRODUCTS"],
+  ["CAT0000002", "SKIN CARE PRODUCTS"],
+  ["CAT0000003", "NAIL CARE PRODUCTS"],
+  ["CAT0000004", "MAKEUP & COSMETICS"],
+  ["CAT0000005", "MEN'S GROOMING"],
+  ["CAT0000006", "SALON CONSUMABLES"],
+  ["CAT0000007", "TOOLS & EQUIPMENT"],
+  ["CAT0000008", "BODY & SPA PRODUCTS"],
+  ["CAT0000009", "BRIDAL ACCESSORIES"],
+  ["CAT0000010", "WAX & THREADING"],
+  ["CAT0000011", "HAIR SERVICES"],
+  ["CAT0000012", "SKIN & FACIAL SERVICES"],
+  ["CAT0000013", "NAIL SERVICES"],
+  ["CAT0000014", "MAKEUP & BRIDAL SERVICES"],
+  ["CAT0000015", "WAXING & THREADING SERVICES"],
+  ["CAT0000016", "BODY & SPA SERVICES"],
+  ["CAT0000017", "MEN'S SERVICES"],
+  ["CAT0000018", "OTHER SERVICES"],
+];
+
+/* Category 2 — the brand. Codes are short because the column is char(10). */
+const CATEGORY_2 = [
+  ["BRD0000001", "LOREAL PROFESSIONNEL"],
+  ["BRD0000002", "MATRIX"],
+  ["BRD0000003", "SCHWARZKOPF"],
+  ["BRD0000004", "WELLA"],
+  ["BRD0000005", "TRESEMME"],
+  ["BRD0000006", "DOVE"],
+  ["BRD0000007", "SUNSILK"],
+  ["BRD0000008", "GARNIER"],
+  ["BRD0000009", "HIMALAYA"],
+  ["BRD0000010", "LOTUS HERBAL"],
+  ["BRD0000011", "O3 PLUS"],
+  ["BRD0000012", "STREAX"],
+  ["BRD0000013", "SPA CEYLON"],
+  ["BRD0000014", "PARACHUTE"],
+  ["BRD0000015", "MAYBELLINE"],
+  ["BRD0000016", "LAKME"],
+  ["BRD0000017", "PONDS"],
+  ["BRD0000018", "LOREAL PARIS"],
+  ["BRD0000019", "BLUE HEAVEN"],
+  ["BRD0000020", "NIVEA"],
+  ["BRD0000021", "GOLDWELL"],
+  ["BRD0000022", "SALON CARE"],
+  ["BRD0000023", "CEYLON HERBAL"],
+  ["BRD0000024", "PRO TOOLS"],
+  ["BRD0000025", "GENERIC"],
+];
+
+/* Category 3 — where it is used in the salon. */
+const CATEGORY_3 = [
+  ["AREA000001", "RETAIL SHELF"],
+  ["AREA000002", "SALON FLOOR"],
+  ["AREA000003", "BACKWASH AREA"],
+  ["AREA000004", "COLOUR BAR"],
+  ["AREA000005", "FACIAL ROOM"],
+  ["AREA000006", "NAIL TABLE"],
+  ["AREA000007", "SPA MASSAGE ROOM"],
+  ["AREA000008", "MAKEUP STUDIO"],
+  ["AREA000009", "BARBER CHAIR"],
+  ["AREA000010", "DISPOSABLE"],
+];
+
+/* Category 4 — the price segment. */
+const CATEGORY_4 = [
+  ["SEG0000001", "PREMIUM"],
+  ["SEG0000002", "MID RANGE"],
+  ["SEG0000003", "ECONOMY"],
+  ["SEG0000004", "BULK"],
+  ["SEG0000005", "PACKAGE"],
+];
+
+/* Extra pack sizes — the same product on the shelf in the other sizes it is
+   really sold in (a professional shampoo comes in 250 ML and 1 LTR, cotton
+   comes in 1 ROLL and 5 ROLL). One line per brand + product family. */
+const EXTRA_SIZES = {
+  /* Hair care */
+  "LOREAL PROFESSIONNEL|ABSOLUTE REPAIR SHAMPOO": ["1 LTR"],
+  "LOREAL PROFESSIONNEL|ABSOLUTE REPAIR CONDITIONER": ["1 LTR"],
+  "LOREAL PROFESSIONNEL|SMARTBOND SHAMPOO": ["500 ML"],
+  "LOREAL PROFESSIONNEL|SMARTBOND CONDITIONER": ["500 ML"],
+  "LOREAL PROFESSIONNEL|PERM LOTION": ["1 LTR"],
+  "LOREAL PROFESSIONNEL|PERM NEUTRALIZER": ["1 LTR"],
+  "MATRIX|BIOLAGE DEEP TREATMENT MASK": ["500 ML"],
+  "MATRIX|BIOLAGE SCALP SYNC SHAMPOO": ["200 ML"],
+  "MATRIX|TOTAL RESULTS HAIR SPRAY": ["500 ML"],
+  "MATRIX|MIRACLE CREATIXX": ["200 ML"],
+  "MATRIX|SOCOLOR DEVELOPER 20 VOLUME": ["4 LTR"],
+  "SCHWARZKOPF|FIBREPLEX BOND SHAMPOO": ["500 ML"],
+  "SCHWARZKOPF|FIBREPLEX BOND SEALER": ["500 ML"],
+  "SCHWARZKOPF|BC BONACURE REPAIR SERUM": ["200 ML"],
+  "SCHWARZKOPF|GOT2B HAIR SPRAY": ["400 ML"],
+  "SCHWARZKOPF|PERM LOTION": ["1 LTR"],
+  "SCHWARZKOPF|VOLUME LIFT BOOSTER": ["500 ML"],
+  "SCHWARZKOPF|IGORA ROYAL OIL DEVELOPER": ["4 LTR"],
+  "WELLA|KOLESTON PERFECT COLOUR CREAM": ["90 ML"],
+  "WELLA|KOLESTON PERFECT DEVELOPER": ["4 LTR"],
+  "WELLA|ELEMENTS REPAIR SHAMPOO": ["500 ML"],
+  "WELLA|EIMI GLAM MIST": ["500 ML"],
+  "WELLA|PERM LOTION": ["1 LTR"],
+  "WELLA|BLONDOR BLEACH POWDER": ["800 G"],
+  "TRESEMME|KERATIN SMOOTH CONDITIONER": ["580 ML"],
+  "TRESEMME|SCALP CARE ANTI DANDRUFF SHAMPOO": ["180 ML"],
+  "TRESEMME|HAIR FALL DEFENCE SERUM": ["200 ML"],
+  "DOVE|INTENSE REPAIR SHAMPOO": ["650 ML"],
+  "DOVE|INTENSE REPAIR CONDITIONER": ["650 ML"],
+  "SUNSILK|SOFT AND SMOOTH SHAMPOO": ["650 ML"],
+  "SUNSILK|BLACK SHINE SHAMPOO": ["650 ML"],
+  "GARNIER|FRUCTIS REPAIR SHAMPOO": ["650 ML"],
+  "HIMALAYA|ANTI DANDRUFF SHAMPOO": ["400 ML"],
+  "HIMALAYA|ANTI HAIR FALL SERUM": ["200 ML"],
+  "LOTUS HERBAL|KERATIN SHAMPOO": ["650 ML"],
+  "LOTUS HERBAL|HAIR REPAIR MASK": ["500 G"],
+  "STREAX|HAIR SPA CREAM": ["500 ML"],
+  "STREAX|ARGAN HAIR SERUM": ["200 ML"],
+  "SPA CEYLON|HAIR AND SCALP TONIC": ["200 ML"],
+  "GOLDWELL|KERATIN FILLER": ["1 LTR"],
+  "SALON CARE|HAIR COLOUR REMOVER": ["500 ML"],
+  "CEYLON HERBAL|HERBAL HAIR PACK": ["1 KG"],
+  /* Skin care */
+  "HIMALAYA|PURIFYING NEEM FACE WASH": ["100 G"],
+  "HIMALAYA|MOISTURIZING FACE CREAM": ["100 G"],
+  "HIMALAYA|ANTI WRINKLE CREAM": ["150 G"],
+  "LOTUS HERBAL|SAFFRON FACE WASH": ["80 G"],
+  "LOTUS HERBAL|ALOE VERA GEL": ["200 ML"],
+  "GARNIER|MICELLAR CLEANSING WATER": ["200 ML"],
+  "GARNIER|BRIGHT COMPLETE FACE WASH": ["50 G"],
+  "PONDS|WHITE BEAUTY FACE CREAM": ["100 G"],
+  "PONDS|VITAMIN C FACE WASH": ["50 G"],
+  "PONDS|AGE MIRACLE CREAM": ["100 G"],
+  "NIVEA|SOFT MOISTURIZING CREAM": ["400 ML"],
+  "NIVEA|DAILY FACE WASH": ["50 ML"],
+  "NIVEA|SUN PROTECT LOTION SPF50": ["150 ML"],
+  "SPA CEYLON|ALOE AND CUCUMBER FACE MASK": ["200 G"],
+  "SPA CEYLON|SANDALWOOD FACE PACK": ["200 G"],
+  "CEYLON HERBAL|TURMERIC FACE PACK": ["500 G"],
+  "CEYLON HERBAL|HERBAL FACIAL STEAM MIX": ["1 KG"],
+  "SALON CARE|FACIAL CLEANSING GEL": ["1 LTR"],
+  "SALON CARE|FACIAL SCRUB CREAM": ["1 KG"],
+  "SALON CARE|FACIAL MASSAGE CREAM": ["1 KG"],
+  "SALON CARE|FACE PACK POWDER": ["1 KG"],
+  "SALON CARE|BLEACH CREAM FOR FACE": ["1 KG"],
+  "SALON CARE|TONER FOR PROFESSIONAL USE": ["1 LTR"],
+  "SALON CARE|COLLAGEN MASK SHEET": ["5 PIECE"],
+  "SALON CARE|GOLD MASK SHEET": ["5 PIECE"],
+  "SALON CARE|VITAMIN C SERUM": ["50 ML"],
+  "SALON CARE|HYALURONIC ACID SERUM": ["50 ML"],
+  "SALON CARE|NIGHT REPAIR SERUM": ["50 ML"],
+  "SALON CARE|SUNSCREEN GEL SPF30": ["200 ML"],
+  "SALON CARE|FACE POLISHING SCRUB": ["500 G"],
+  "SALON CARE|BLACKHEAD REMOVER CREAM": ["200 G"],
+  "SALON CARE|SKIN LIGHTENING CREAM": ["200 G"],
+  /* Nail care */
+  "SALON CARE|GEL POLISH BASE COAT": ["30 ML"],
+  "SALON CARE|GEL POLISH TOP COAT": ["30 ML"],
+  "SALON CARE|GEL COLOUR POLISH": ["30 ML"],
+  "SALON CARE|UV NAIL GEL": ["60 ML"],
+  "SALON CARE|ACRYLIC NAIL POWDER": ["500 G"],
+  "SALON CARE|ACRYLIC LIQUID MONOMER": ["500 ML"],
+  "SALON CARE|NAIL TIPS ASSORTED": ["500 PIECE"],
+  "SALON CARE|NAIL GLUE": ["15 ML"],
+  "SALON CARE|NAIL POLISH REMOVER": ["1 LTR"],
+  "SALON CARE|ACETONE": ["1 LTR"],
+  "SALON CARE|CUTICLE OIL": ["30 ML"],
+  "SALON CARE|NAIL BUFFER BLOCK": ["12 PIECE"],
+  "SALON CARE|NAIL FILE EMERY BOARD": ["100 PIECE"],
+  "SALON CARE|NAIL ART BRUSH SET": ["6 PIECE"],
+  "SALON CARE|PEDICURE FOOT RASP": ["6 PIECE"],
+  "SALON CARE|FOOT SOAK CRYSTALS": ["1 KG"],
+  "SALON CARE|CALLUS REMOVER GEL": ["500 ML"],
+  "SALON CARE|MASSAGE LOTION FOR PEDICURE": ["1 LTR"],
+  "SALON CARE|NAIL DRYING SPRAY": ["200 ML"],
+  "SALON CARE|DISPOSABLE PEDICURE LINER": ["500 PIECE"],
+  "SALON CARE|TOE SEPARATOR": ["100 PIECE"],
+  "SALON CARE|NAIL EXTENSION FORMS": ["100 PIECE"],
+  "LAKME|NAIL ENAMEL": ["15 ML"],
+  /* Makeup */
+  "MAYBELLINE|FIT ME COMPACT POWDER": ["12 G"],
+  "MAYBELLINE|HYPERCURL MASCARA": ["5 ML"],
+  "MAYBELLINE|LASTING DRAMA EYELINER": ["2 PIECE"],
+  "MAYBELLINE|EYESHADOW PALETTE": ["2 PIECE"],
+  "MAYBELLINE|FIT ME PRIMER": ["15 ML"],
+  "MAYBELLINE|MAKEUP FIXING SPRAY": ["200 ML"],
+  "LAKME|9TO5 FOUNDATION": ["15 ML"],
+  "LAKME|ENRICH MATTE LIPSTICK": ["8 G"],
+  "LAKME|EYE CONIC KAJAL": ["2 PIECE"],
+  "LAKME|BLUSH AND HIGHLIGHTER PALETTE": ["2 PIECE"],
+  "LAKME|ROSE FACE POWDER": ["100 G"],
+  "LOREAL PARIS|INFALLIBLE FOUNDATION": ["15 ML"],
+  "LOREAL PARIS|INFALLIBLE CONCEALER": ["2 PIECE"],
+  "LOREAL PARIS|TRUE MATCH COMPACT": ["18 G"],
+  "LOREAL PARIS|VOLUMINOUS MASCARA": ["5 ML"],
+  "LOREAL PARIS|SUPER LINER": ["3 PIECE"],
+  "LOREAL PARIS|MATTE LIPSTICK": ["8 G"],
+  "LOREAL PARIS|GLOW MON AMOUR HIGHLIGHTER": ["2 PIECE"],
+  "LOREAL PARIS|SETTING SPRAY": ["200 ML"],
+  "LOREAL PARIS|MAKEUP REMOVER MILK": ["400 ML"],
+  "PONDS|BB CREAM": ["18 G"],
+  "GARNIER|BB CREAM": ["18 G"],
+  "BLUE HEAVEN|LIP GLOSS": ["5 ML"],
+  "BLUE HEAVEN|COMPACT POWDER": ["9 G"],
+  "BLUE HEAVEN|EYEBROW PENCIL": ["2 PIECE"],
+  "BLUE HEAVEN|LIP LINER PENCIL": ["2 PIECE"],
+  "NIVEA|LIP BALM": ["2 PIECE"],
+  "SALON CARE|MAKEUP PALETTE 12 COLOUR": ["2 PIECE"],
+  "SALON CARE|FOUNDATION SPONGE SET": ["12 PIECE"],
+  "SALON CARE|FALSE EYELASHES": ["3 PAIR"],
+  "SALON CARE|EYELASH GLUE": ["10 ML"],
+  "SALON CARE|GLITTER EYESHADOW SET": ["2 SET"],
+  "SALON CARE|SETTING POWDER LOOSE": ["100 G"],
+  "SALON CARE|BODY SHIMMER LOTION": ["400 ML"],
+  "SALON CARE|MAKEUP CLEANSING WIPES": ["50 PIECE"],
+  "SALON CARE|FACE PRIMER GEL": ["15 ML"],
+  "SALON CARE|EYEBROW SHAPING GEL": ["20 ML"],
+  /* Men's grooming */
+  "GENERIC|CLIPPER OIL": ["200 ML"],
+  "GENERIC|RAZOR BLADE PACK": ["50 PIECE"],
+  "GENERIC|CLIPPER BLADE SET": ["2 SET"],
+  "GENERIC|NECK STRIPS": ["500 PIECE"],
+  "GENERIC|MEN'S HAIR CLIPPER COMB SET": ["2 SET"],
+  "SALON CARE|SHAVING FOAM": ["400 ML"],
+  "SALON CARE|AFTER SHAVE LOTION": ["400 ML"],
+  "SALON CARE|BEARD OIL": ["50 ML"],
+  "SALON CARE|BEARD WAX": ["200 G"],
+  "SALON CARE|MEN'S HAIR GEL": ["400 ML"],
+  "SALON CARE|MEN'S HAIR WAX": ["200 G"],
+  "SALON CARE|MEN'S POMADE": ["200 G"],
+  "SALON CARE|MEN'S STYLING CLAY": ["200 G"],
+  "SALON CARE|BEARD BALM": ["100 G"],
+  "SALON CARE|MEN'S FACE WASH": ["200 ML"],
+  "SALON CARE|MEN'S ANTI DANDRUFF SHAMPOO": ["650 ML"],
+  "SALON CARE|MEN'S HAIR COLOUR CREAM": ["90 ML"],
+  "SALON CARE|TALCUM POWDER FOR BARBER": ["1 KG"],
+  /* Salon consumables */
+  "GENERIC|SECTIONING CLIPS": ["24 PIECE"],
+  "GENERIC|COLOUR BOWL": ["6 PIECE"],
+  "GENERIC|COLOUR APPLICATION BRUSH": ["6 PIECE"],
+  "GENERIC|TINT BRUSH SET": ["3 SET"],
+  "GENERIC|TAIL COMB": ["6 PIECE"],
+  "GENERIC|WIDE TOOTH COMB": ["6 PIECE"],
+  "GENERIC|BARBER RAZOR WITH BLADE": ["6 PIECE"],
+  "GENERIC|ALUMINIUM FOIL ROLL": ["5 ROLL"],
+  "GENERIC|COTTON ROLL": ["5 ROLL"],
+  "GENERIC|COTTON PADS": ["500 PIECE"],
+  "GENERIC|TISSUE BOX": ["6 BOX"],
+  "GENERIC|TISSUE ROLL": ["6 ROLL"],
+  "GENERIC|DISPOSABLE GLOVES": ["500 PIECE"],
+  "GENERIC|DISPOSABLE CAPE": ["100 PIECE"],
+  "GENERIC|TOWEL SET": ["12 PIECE"],
+  "GENERIC|HAND TOWEL": ["6 PIECE"],
+  "GENERIC|SPRAY BOTTLE": ["1 LTR"],
+  "GENERIC|SHAMPOO BOWL": ["6 PIECE"],
+  "GENERIC|HEAD MASSAGER HAND TOOL": ["6 PIECE"],
+  "GENERIC|SANITIZER SPRAY": ["1 LTR"],
+  "GENERIC|SURFACE DISINFECTANT": ["5 LTR"],
+  "GENERIC|FLOOR CLEANER SALON GRADE": ["1 LTR"],
+  "GENERIC|APRON FOR STAFF": ["6 PIECE"],
+  "GENERIC|STAFF UNIFORM SHIRT": ["6 PIECE"],
+  "GENERIC|NECK BRUSH DUSTER": ["6 PIECE"],
+  "GENERIC|HAIR NET": ["500 PIECE"],
+  "GENERIC|WATERPROOF BIB": ["25 PIECE"],
+  "GENERIC|BLEACH POWDER MEASURING SCOOP": ["12 PIECE"],
+  /* Tools */
+  "PRO TOOLS|HAIR COLOUR MIXING BOWL SET": ["2 SET"],
+  "PRO TOOLS|MEASURING CUP": ["6 PIECE"],
+  "PRO TOOLS|CLEANING BRUSH SET": ["2 SET"],
+  "PRO TOOLS|TOOL SANITIZING JAR": ["6 PIECE"],
+  "PRO TOOLS|BLOW DRYER BRUSH SET": ["2 SET"],
+  "PRO TOOLS|STERILIZING POUCH": ["500 PIECE"],
+  /* Body and spa */
+  "SPA CEYLON|RELAXING AROMATHERAPY OIL": ["500 ML"],
+  "SALON CARE|BODY MASSAGE LOTION": ["1 LTR"],
+  "SALON CARE|FIRMING BODY LOTION": ["1 LTR"],
+  "SALON CARE|FOOT MASSAGE CREAM": ["1 KG"],
+  "CEYLON HERBAL|HERBAL MASSAGE OIL": ["1 LTR"],
+};
+
+/*
+  ITEMS — 500 rows, built from real product lines so the names, units and
+  prices stay consistent.
+
+  Each line is:
+    [ brand, product family, sizes, area, segment, unit, cost LKR, retail LKR ]
+
+  `cost` and `retail` are the price of the FIRST size listed; the other sizes
+  are scaled from it, so a 1 LTR bottle costs more than a 250 ML one.
+*/
+const ITEM_LINES = {
+  "CAT0000001": [
+    ["LOREAL PROFESSIONNEL", "ABSOLUTE REPAIR SHAMPOO", ["250 ML", "500 ML"], "AREA000003", "SEG0000001", "UNIT000002", 2450, 3650],
+    ["LOREAL PROFESSIONNEL", "ABSOLUTE REPAIR CONDITIONER", ["250 ML", "500 ML"], "AREA000003", "SEG0000001", "UNIT000002", 2550, 3800],
+    ["LOREAL PROFESSIONNEL", "ABSOLUTE REPAIR HAIR MASK", ["200 ML", "500 ML"], "AREA000003", "SEG0000001", "UNIT000004", 2900, 4250],
+    ["LOREAL PROFESSIONNEL", "SMARTBOND SHAMPOO", ["250 ML"], "AREA000003", "SEG0000001", "UNIT000002", 3200, 4800],
+    ["LOREAL PROFESSIONNEL", "SMARTBOND CONDITIONER", ["250 ML"], "AREA000003", "SEG0000001", "UNIT000002", 3300, 4950],
+    ["LOREAL PROFESSIONNEL", "SMARTBOND BONDING CREAM", ["150 ML"], "AREA000004", "SEG0000001", "UNIT000003", 3600, 5400],
+    ["LOREAL PROFESSIONNEL", "PERM LOTION", ["500 ML"], "AREA000002", "SEG0000001", "UNIT000002", 4200, 6300],
+    ["LOREAL PROFESSIONNEL", "PERM NEUTRALIZER", ["500 ML"], "AREA000002", "SEG0000001", "UNIT000002", 4100, 6150],
+    ["LOREAL PROFESSIONNEL", "DEVELOPER 20 VOLUME", ["1 LTR"], "AREA000004", "SEG0000002", "UNIT000002", 1850, 2750],
+    ["LOREAL PROFESSIONNEL", "DEVELOPER 30 VOLUME", ["1 LTR"], "AREA000004", "SEG0000002", "UNIT000002", 1900, 2850],
+    ["MATRIX", "BIOLAGE HYDRATING SHAMPOO", ["250 ML", "400 ML"], "AREA000003", "SEG0000001", "UNIT000002", 2350, 3500],
+    ["MATRIX", "BIOLAGE HYDRATING CONDITIONER", ["250 ML", "400 ML"], "AREA000003", "SEG0000001", "UNIT000002", 2400, 3600],
+    ["MATRIX", "BIOLAGE DEEP TREATMENT MASK", ["250 ML"], "AREA000003", "SEG0000001", "UNIT000004", 3100, 4650],
+    ["MATRIX", "BIOLAGE SCALP SYNC SHAMPOO", ["400 ML"], "AREA000003", "SEG0000001", "UNIT000002", 3200, 4800],
+    ["MATRIX", "SOCOLOR HAIR COLOUR CREAM", ["60 ML", "90 ML"], "AREA000004", "SEG0000001", "UNIT000003", 1900, 2850],
+    ["MATRIX", "SOCOLOR DEVELOPER 20 VOLUME", ["1 LTR"], "AREA000004", "SEG0000002", "UNIT000002", 1750, 2600],
+    ["MATRIX", "TOTAL RESULTS HAIR SPRAY", ["200 ML", "400 ML"], "AREA000002", "SEG0000002", "UNIT000002", 1450, 2200],
+    ["MATRIX", "MIRACLE CREATIXX", ["100 ML"], "AREA000002", "SEG0000001", "UNIT000003", 2600, 3900],
+    ["MATRIX", "OPTICOLOUR CLEAR GLOSS", ["90 ML"], "AREA000004", "SEG0000002", "UNIT000003", 1700, 2550],
+    ["SCHWARZKOPF", "IGORA ROYAL COLOUR CREAM", ["60 ML", "90 ML"], "AREA000004", "SEG0000001", "UNIT000003", 1950, 2950],
+    ["SCHWARZKOPF", "IGORA ROYAL OIL DEVELOPER", ["1 LTR"], "AREA000004", "SEG0000002", "UNIT000002", 1800, 2700],
+    ["SCHWARZKOPF", "BLONDME BLEACH POWDER", ["100 G", "450 G"], "AREA000004", "SEG0000001", "UNIT000006", 2100, 3150],
+    ["SCHWARZKOPF", "BLONDME TONER", ["60 ML"], "AREA000004", "SEG0000001", "UNIT000003", 2250, 3400],
+    ["SCHWARZKOPF", "FIBREPLEX BOND SHAMPOO", ["250 ML"], "AREA000003", "SEG0000001", "UNIT000002", 3100, 4650],
+    ["SCHWARZKOPF", "FIBREPLEX BOND SEALER", ["250 ML"], "AREA000003", "SEG0000001", "UNIT000002", 3250, 4900],
+    ["SCHWARZKOPF", "BC BONACURE REPAIR SERUM", ["100 ML"], "AREA000002", "SEG0000001", "UNIT000003", 2950, 4400],
+    ["SCHWARZKOPF", "GOT2B HAIR SPRAY", ["200 ML"], "AREA000002", "SEG0000003", "UNIT000002", 1350, 2050],
+    ["SCHWARZKOPF", "PERM LOTION", ["500 ML"], "AREA000002", "SEG0000002", "UNIT000002", 3900, 5850],
+    ["SCHWARZKOPF", "VOLUME LIFT BOOSTER", ["200 ML"], "AREA000002", "SEG0000002", "UNIT000002", 2600, 3900],
+    ["WELLA", "KOLESTON PERFECT COLOUR CREAM", ["60 ML"], "AREA000004", "SEG0000001", "UNIT000003", 2050, 3100],
+    ["WELLA", "KOLESTON PERFECT DEVELOPER", ["1 LTR"], "AREA000004", "SEG0000002", "UNIT000002", 1850, 2750],
+    ["WELLA", "BLONDOR BLEACH POWDER", ["400 G"], "AREA000004", "SEG0000001", "UNIT000006", 4600, 6900],
+    ["WELLA", "ELEMENTS REPAIR SHAMPOO", ["250 ML"], "AREA000003", "SEG0000002", "UNIT000002", 2200, 3300],
+    ["WELLA", "EIMI HAIR SPRAY", ["200 ML", "500 ML"], "AREA000002", "SEG0000001", "UNIT000002", 1700, 2550],
+    ["WELLA", "EIMI GLAM MIST", ["200 ML"], "AREA000002", "SEG0000001", "UNIT000002", 1800, 2700],
+    ["WELLA", "PERM LOTION", ["500 ML"], "AREA000002", "SEG0000002", "UNIT000002", 3950, 5900],
+    ["TRESEMME", "KERATIN SMOOTH SHAMPOO", ["180 ML", "340 ML", "580 ML"], "AREA000003", "SEG0000003", "UNIT000002", 950, 1450],
+    ["TRESEMME", "KERATIN SMOOTH CONDITIONER", ["180 ML", "340 ML"], "AREA000003", "SEG0000003", "UNIT000002", 980, 1500],
+    ["TRESEMME", "SCALP CARE ANTI DANDRUFF SHAMPOO", ["340 ML"], "AREA000003", "SEG0000003", "UNIT000002", 1050, 1600],
+    ["TRESEMME", "HAIR FALL DEFENCE SERUM", ["100 ML"], "AREA000002", "SEG0000002", "UNIT000003", 1450, 2200],
+    ["DOVE", "INTENSE REPAIR SHAMPOO", ["180 ML", "340 ML"], "AREA000003", "SEG0000003", "UNIT000002", 890, 1350],
+    ["DOVE", "INTENSE REPAIR CONDITIONER", ["180 ML", "340 ML"], "AREA000003", "SEG0000003", "UNIT000002", 900, 1400],
+    ["SUNSILK", "SOFT AND SMOOTH SHAMPOO", ["180 ML", "340 ML"], "AREA000003", "SEG0000003", "UNIT000002", 720, 1100],
+    ["SUNSILK", "BLACK SHINE SHAMPOO", ["180 ML", "340 ML"], "AREA000003", "SEG0000003", "UNIT000002", 730, 1120],
+    ["GARNIER", "FRUCTIS REPAIR SHAMPOO", ["200 ML", "400 ML"], "AREA000003", "SEG0000003", "UNIT000002", 980, 1500],
+    ["GARNIER", "COLOUR NATURALS HAIR COLOUR", ["60 ML"], "AREA000004", "SEG0000003", "UNIT000003", 850, 1300],
+    ["HIMALAYA", "ANTI HAIR FALL SHAMPOO", ["200 ML", "400 ML"], "AREA000003", "SEG0000002", "UNIT000002", 1050, 1600],
+    ["HIMALAYA", "ANTI DANDRUFF SHAMPOO", ["200 ML"], "AREA000003", "SEG0000002", "UNIT000002", 1080, 1650],
+    ["HIMALAYA", "ANTI HAIR FALL SERUM", ["100 ML"], "AREA000002", "SEG0000002", "UNIT000003", 1250, 1900],
+    ["LOTUS HERBAL", "KERATIN SHAMPOO", ["200 ML", "400 ML"], "AREA000003", "SEG0000002", "UNIT000002", 1150, 1750],
+    ["LOTUS HERBAL", "HAIR REPAIR MASK", ["200 G"], "AREA000003", "SEG0000002", "UNIT000004", 1300, 1950],
+    ["O3 PLUS", "HAIR COLOUR CREAM", ["60 ML", "90 ML"], "AREA000004", "SEG0000003", "UNIT000003", 780, 1200],
+    ["O3 PLUS", "ANTI DANDRUFF SHAMPOO", ["200 ML", "400 ML"], "AREA000003", "SEG0000003", "UNIT000002", 820, 1250],
+    ["STREAX", "HAIR SPA CREAM", ["250 ML"], "AREA000003", "SEG0000002", "UNIT000004", 1550, 2350],
+    ["STREAX", "ARGAN HAIR SERUM", ["100 ML"], "AREA000002", "SEG0000002", "UNIT000003", 1450, 2200],
+    ["SPA CEYLON", "AYURVEDIC HAIR OIL", ["100 ML", "200 ML"], "AREA000007", "SEG0000001", "UNIT000002", 1650, 2500],
+    ["SPA CEYLON", "HAIR AND SCALP TONIC", ["100 ML"], "AREA000007", "SEG0000001", "UNIT000002", 1750, 2650],
+    ["PARACHUTE", "COCONUT HAIR OIL", ["100 ML", "200 ML", "500 ML"], "AREA000002", "SEG0000003", "UNIT000002", 420, 650],
+    ["DABUR", "AMLA HAIR OIL", ["100 ML", "200 ML"], "AREA000002", "SEG0000003", "UNIT000002", 480, 720],
+    ["KS PROFESSIONAL", "KERATIN SMOOTHING TREATMENT", ["500 ML", "1 LTR"], "AREA000002", "SEG0000001", "UNIT000002", 6500, 9750],
+    ["KS PROFESSIONAL", "KERATIN SHAMPOO AFTER CARE", ["500 ML"], "AREA000003", "SEG0000001", "UNIT000002", 2800, 4200],
+    ["GOLDWELL", "KERATIN FILLER", ["500 ML"], "AREA000002", "SEG0000001", "UNIT000002", 5200, 7800],
+    ["SALON CARE", "HAIR COLOUR REMOVER", ["200 ML"], "AREA000004", "SEG0000002", "UNIT000002", 1250, 1900],
+    ["SALON CARE", "BLEACH CREAM", ["200 G"], "AREA000004", "SEG0000003", "UNIT000004", 780, 1200],
+    ["CEYLON HERBAL", "HERBAL HAIR PACK", ["500 G"], "AREA000007", "SEG0000002", "UNIT000017", 1350, 2000],
+    ["GENERIC", "NEUTRAL DEVELOPER 10 VOLUME", ["1 LTR"], "AREA000004", "SEG0000004", "UNIT000002", 950, 1450],
+  ],
+  "CAT0000002": [
+    ["SALON CARE", "PROFESSIONAL FACIAL KIT", ["1 KIT"], "AREA000005", "SEG0000001", "UNIT000009", 8500, 12500],
+    ["SALON CARE", "HYDRATING FACIAL KIT", ["1 KIT"], "AREA000005", "SEG0000001", "UNIT000009", 7800, 11500],
+    ["SALON CARE", "ANTI AGEING FACIAL KIT", ["1 KIT"], "AREA000005", "SEG0000001", "UNIT000009", 9200, 13500],
+    ["SALON CARE", "FAIRNESS FACIAL KIT", ["1 KIT"], "AREA000005", "SEG0000002", "UNIT000009", 6900, 10500],
+    ["SALON CARE", "ACNE CARE FACIAL KIT", ["1 KIT"], "AREA000005", "SEG0000002", "UNIT000009", 7200, 10800],
+    ["SALON CARE", "FACIAL CLEANSING GEL", ["500 ML"], "AREA000005", "SEG0000002", "UNIT000002", 1650, 2500],
+    ["SALON CARE", "FACIAL SCRUB CREAM", ["500 G"], "AREA000005", "SEG0000002", "UNIT000017", 1900, 2850],
+    ["SALON CARE", "FACIAL MASSAGE CREAM", ["500 G"], "AREA000005", "SEG0000002", "UNIT000017", 2100, 3150],
+    ["SALON CARE", "FACE PACK POWDER", ["500 G"], "AREA000005", "SEG0000003", "UNIT000017", 1250, 1900],
+    ["SALON CARE", "BLEACH CREAM FOR FACE", ["500 G"], "AREA000005", "SEG0000003", "UNIT000017", 1450, 2200],
+    ["SALON CARE", "TONER FOR PROFESSIONAL USE", ["500 ML"], "AREA000005", "SEG0000002", "UNIT000002", 1550, 2350],
+    ["HIMALAYA", "PURIFYING NEEM FACE WASH", ["50 G", "150 G"], "AREA000001", "SEG0000003", "UNIT000003", 480, 750],
+    ["HIMALAYA", "MOISTURIZING FACE CREAM", ["50 G", "150 G"], "AREA000001", "SEG0000003", "UNIT000004", 620, 950],
+    ["HIMALAYA", "ANTI WRINKLE CREAM", ["50 G"], "AREA000001", "SEG0000002", "UNIT000004", 980, 1500],
+    ["LOTUS HERBAL", "SAFFRON FACE WASH", ["50 G", "150 G"], "AREA000001", "SEG0000003", "UNIT000003", 520, 800],
+    ["LOTUS HERBAL", "ALOE VERA GEL", ["120 ML"], "AREA000001", "SEG0000003", "UNIT000003", 680, 1050],
+    ["GARNIER", "MICELLAR CLEANSING WATER", ["400 ML"], "AREA000001", "SEG0000002", "UNIT000002", 1450, 2200],
+    ["GARNIER", "BRIGHT COMPLETE FACE WASH", ["100 G"], "AREA000001", "SEG0000003", "UNIT000003", 620, 950],
+    ["PONDS", "WHITE BEAUTY FACE CREAM", ["50 G"], "AREA000001", "SEG0000003", "UNIT000004", 480, 750],
+    ["PONDS", "VITAMIN C FACE WASH", ["100 G"], "AREA000001", "SEG0000003", "UNIT000003", 540, 820],
+    ["PONDS", "AGE MIRACLE CREAM", ["50 G"], "AREA000001", "SEG0000002", "UNIT000004", 1150, 1750],
+    ["NIVEA", "SOFT MOISTURIZING CREAM", ["60 ML", "200 ML"], "AREA000001", "SEG0000003", "UNIT000002", 720, 1100],
+    ["NIVEA", "DAILY FACE WASH", ["100 ML"], "AREA000001", "SEG0000003", "UNIT000003", 850, 1300],
+    ["NIVEA", "SUN PROTECT LOTION SPF50", ["75 ML"], "AREA000001", "SEG0000002", "UNIT000003", 1650, 2500],
+    ["SPA CEYLON", "ALOE AND CUCUMBER FACE MASK", ["100 G"], "AREA000005", "SEG0000001", "UNIT000004", 1750, 2650],
+    ["SPA CEYLON", "SANDALWOOD FACE PACK", ["100 G"], "AREA000005", "SEG0000001", "UNIT000004", 1850, 2800],
+    ["CEYLON HERBAL", "TURMERIC FACE PACK", ["200 G"], "AREA000005", "SEG0000002", "UNIT000004", 950, 1450],
+    ["CEYLON HERBAL", "HERBAL FACIAL STEAM MIX", ["500 G"], "AREA000005", "SEG0000002", "UNIT000017", 1250, 1900],
+    ["SALON CARE", "EYE GEL PADS", ["1 PACK"], "AREA000005", "SEG0000002", "UNIT000006", 1850, 2800],
+    ["SALON CARE", "COLLAGEN MASK SHEET", ["1 PIECE"], "AREA000005", "SEG0000002", "UNIT000001", 950, 1450],
+    ["SALON CARE", "GOLD MASK SHEET", ["1 PIECE"], "AREA000005", "SEG0000001", "UNIT000001", 1450, 2200],
+    ["SALON CARE", "VITAMIN C SERUM", ["30 ML"], "AREA000005", "SEG0000001", "UNIT000003", 2950, 4400],
+    ["SALON CARE", "HYALURONIC ACID SERUM", ["30 ML"], "AREA000005", "SEG0000001", "UNIT000003", 3150, 4700],
+    ["SALON CARE", "NIGHT REPAIR SERUM", ["30 ML"], "AREA000005", "SEG0000002", "UNIT000003", 2450, 3650],
+    ["SALON CARE", "SUNSCREEN GEL SPF30", ["100 ML"], "AREA000005", "SEG0000002", "UNIT000003", 1750, 2650],
+    ["SALON CARE", "FACE POLISHING SCRUB", ["200 G"], "AREA000005", "SEG0000002", "UNIT000004", 1350, 2000],
+    ["SALON CARE", "BLACKHEAD REMOVER CREAM", ["100 G"], "AREA000005", "SEG0000002", "UNIT000004", 1150, 1750],
+    ["SALON CARE", "SKIN LIGHTENING CREAM", ["100 G"], "AREA000005", "SEG0000002", "UNIT000004", 1550, 2350],
+  ],
+  "CAT0000003": [
+    ["BLUE HEAVEN", "NAIL ENAMEL", ["10 ML"], "AREA000001", "SEG0000003", "UNIT000002", 180, 280],
+    ["LAKME", "NAIL ENAMEL", ["9 ML"], "AREA000001", "SEG0000003", "UNIT000002", 220, 340],
+    ["SALON CARE", "GEL POLISH BASE COAT", ["15 ML"], "AREA000006", "SEG0000001", "UNIT000002", 950, 1450],
+    ["SALON CARE", "GEL POLISH TOP COAT", ["15 ML"], "AREA000006", "SEG0000001", "UNIT000002", 980, 1500],
+    ["SALON CARE", "GEL COLOUR POLISH", ["15 ML"], "AREA000006", "SEG0000001", "UNIT000002", 850, 1300],
+    ["SALON CARE", "UV NAIL GEL", ["30 ML"], "AREA000006", "SEG0000001", "UNIT000003", 1350, 2000],
+    ["SALON CARE", "ACRYLIC NAIL POWDER", ["100 G"], "AREA000006", "SEG0000001", "UNIT000004", 1450, 2200],
+    ["SALON CARE", "ACRYLIC LIQUID MONOMER", ["100 ML"], "AREA000006", "SEG0000001", "UNIT000002", 1250, 1900],
+    ["SALON CARE", "NAIL TIPS ASSORTED", ["100 PIECE"], "AREA000006", "SEG0000002", "UNIT000006", 650, 1000],
+    ["SALON CARE", "NAIL GLUE", ["5 ML"], "AREA000006", "SEG0000002", "UNIT000003", 350, 550],
+    ["SALON CARE", "NAIL POLISH REMOVER", ["100 ML", "500 ML"], "AREA000006", "SEG0000003", "UNIT000002", 320, 500],
+    ["SALON CARE", "ACETONE", ["500 ML"], "AREA000006", "SEG0000004", "UNIT000002", 780, 1200],
+    ["SALON CARE", "CUTICLE OIL", ["15 ML"], "AREA000006", "SEG0000002", "UNIT000003", 450, 700],
+    ["SALON CARE", "NAIL BUFFER BLOCK", ["1 PIECE"], "AREA000006", "SEG0000002", "UNIT000001", 250, 400],
+    ["SALON CARE", "NAIL FILE EMERY BOARD", ["10 PIECE"], "AREA000006", "SEG0000003", "UNIT000006", 300, 480],
+    ["SALON CARE", "NAIL ART BRUSH SET", ["1 SET"], "AREA000006", "SEG0000002", "UNIT000008", 1250, 1900],
+    ["SALON CARE", "PEDICURE FOOT RASP", ["1 PIECE"], "AREA000006", "SEG0000002", "UNIT000001", 850, 1300],
+    ["SALON CARE", "FOOT SOAK CRYSTALS", ["500 G"], "AREA000006", "SEG0000002", "UNIT000017", 950, 1450],
+    ["SALON CARE", "CALLUS REMOVER GEL", ["100 ML"], "AREA000006", "SEG0000002", "UNIT000002", 780, 1200],
+    ["SALON CARE", "MASSAGE LOTION FOR PEDICURE", ["500 ML"], "AREA000006", "SEG0000003", "UNIT000002", 1150, 1750],
+    ["SALON CARE", "NAIL DRYING SPRAY", ["100 ML"], "AREA000006", "SEG0000002", "UNIT000002", 650, 1000],
+    ["SALON CARE", "DISPOSABLE PEDICURE LINER", ["100 PIECE"], "AREA000010", "SEG0000004", "UNIT000006", 1250, 1900],
+    ["SALON CARE", "TOE SEPARATOR", ["12 PIECE"], "AREA000006", "SEG0000004", "UNIT000018", 350, 550],
+    ["SALON CARE", "NAIL EXTENSION FORMS", ["50 PIECE"], "AREA000006", "SEG0000002", "UNIT000006", 550, 850],
+  ],
+  "CAT0000004": [
+    ["MAYBELLINE", "FIT ME FOUNDATION", ["30 ML"], "AREA000008", "SEG0000002", "UNIT000002", 1850, 2800],
+    ["MAYBELLINE", "FIT ME COMPACT POWDER", ["8 G"], "AREA000008", "SEG0000002", "UNIT000001", 1650, 2500],
+    ["MAYBELLINE", "AGE REWIND CONCEALER", ["6 ML"], "AREA000008", "SEG0000002", "UNIT000002", 1450, 2200],
+    ["MAYBELLINE", "HYPERCURL MASCARA", ["10 ML"], "AREA000008", "SEG0000002", "UNIT000002", 1550, 2350],
+    ["MAYBELLINE", "LASTING DRAMA EYELINER", ["1 PIECE"], "AREA000008", "SEG0000002", "UNIT000001", 950, 1450],
+    ["MAYBELLINE", "CREAMY MATTE LIPSTICK", ["4 G"], "AREA000008", "SEG0000002", "UNIT000001", 1250, 1900],
+    ["MAYBELLINE", "EYESHADOW PALETTE", ["1 PIECE"], "AREA000008", "SEG0000002", "UNIT000001", 2450, 3650],
+    ["MAYBELLINE", "FIT ME PRIMER", ["30 ML"], "AREA000008", "SEG0000002", "UNIT000003", 1750, 2650],
+    ["MAYBELLINE", "MAKEUP FIXING SPRAY", ["100 ML"], "AREA000008", "SEG0000002", "UNIT000002", 1650, 2500],
+    ["LAKME", "9TO5 FOUNDATION", ["30 ML"], "AREA000008", "SEG0000002", "UNIT000002", 1350, 2000],
+    ["LAKME", "ENRICH MATTE LIPSTICK", ["4 G"], "AREA000008", "SEG0000002", "UNIT000001", 950, 1450],
+    ["LAKME", "EYE CONIC KAJAL", ["1 PIECE"], "AREA000008", "SEG0000002", "UNIT000001", 550, 850],
+    ["LAKME", "BLUSH AND HIGHLIGHTER PALETTE", ["1 PIECE"], "AREA000008", "SEG0000002", "UNIT000001", 1850, 2800],
+    ["LAKME", "ROSE FACE POWDER", ["50 G"], "AREA000008", "SEG0000003", "UNIT000001", 750, 1150],
+    ["LOREAL PARIS", "INFALLIBLE FOUNDATION", ["30 ML"], "AREA000008", "SEG0000001", "UNIT000002", 2250, 3400],
+    ["LOREAL PARIS", "INFALLIBLE CONCEALER", ["6 ML"], "AREA000008", "SEG0000001", "UNIT000002", 1750, 2650],
+    ["LOREAL PARIS", "TRUE MATCH COMPACT", ["9 G"], "AREA000008", "SEG0000001", "UNIT000001", 1950, 2950],
+    ["LOREAL PARIS", "VOLUMINOUS MASCARA", ["10 ML"], "AREA000008", "SEG0000001", "UNIT000002", 1850, 2800],
+    ["LOREAL PARIS", "SUPER LINER", ["1 PIECE"], "AREA000008", "SEG0000001", "UNIT000001", 1250, 1900],
+    ["LOREAL PARIS", "MATTE LIPSTICK", ["4 G"], "AREA000008", "SEG0000001", "UNIT000001", 1550, 2350],
+    ["LOREAL PARIS", "GLOW MON AMOUR HIGHLIGHTER", ["1 PIECE"], "AREA000008", "SEG0000001", "UNIT000001", 2250, 3400],
+    ["LOREAL PARIS", "SETTING SPRAY", ["100 ML"], "AREA000008", "SEG0000001", "UNIT000002", 1850, 2800],
+    ["LOREAL PARIS", "MAKEUP REMOVER MILK", ["200 ML"], "AREA000008", "SEG0000002", "UNIT000002", 1150, 1750],
+    ["PONDS", "BB CREAM", ["30 G"], "AREA000008", "SEG0000003", "UNIT000003", 750, 1150],
+    ["GARNIER", "BB CREAM", ["40 G"], "AREA000008", "SEG0000003", "UNIT000003", 850, 1300],
+    ["BLUE HEAVEN", "LIP GLOSS", ["10 ML"], "AREA000008", "SEG0000003", "UNIT000002", 350, 550],
+    ["BLUE HEAVEN", "LIP LINER PENCIL", ["1 PIECE"], "AREA000008", "SEG0000003", "UNIT000001", 320, 500],
+    ["BLUE HEAVEN", "EYEBROW PENCIL", ["1 PIECE"], "AREA000008", "SEG0000003", "UNIT000001", 300, 480],
+    ["BLUE HEAVEN", "COMPACT POWDER", ["18 G"], "AREA000008", "SEG0000003", "UNIT000001", 420, 650],
+    ["NIVEA", "LIP BALM", ["4 G"], "AREA000001", "SEG0000003", "UNIT000001", 380, 600],
+    ["SALON CARE", "PROFESSIONAL MAKEUP BRUSH SET", ["1 SET"], "AREA000008", "SEG0000001", "UNIT000008", 4500, 6750],
+    ["SALON CARE", "FOUNDATION SPONGE SET", ["6 PIECE"], "AREA000008", "SEG0000002", "UNIT000006", 650, 1000],
+    ["SALON CARE", "FALSE EYELASHES", ["1 PAIR"], "AREA000008", "SEG0000002", "UNIT000010", 350, 550],
+    ["SALON CARE", "EYELASH GLUE", ["5 ML"], "AREA000008", "SEG0000002", "UNIT000003", 420, 650],
+    ["SALON CARE", "MAKEUP PALETTE 12 COLOUR", ["1 PIECE"], "AREA000008", "SEG0000002", "UNIT000001", 3250, 4900],
+    ["SALON CARE", "CONTOUR AND HIGHLIGHT KIT", ["1 KIT"], "AREA000008", "SEG0000001", "UNIT000009", 3850, 5800],
+    ["SALON CARE", "GLITTER EYESHADOW SET", ["1 SET"], "AREA000008", "SEG0000002", "UNIT000008", 1250, 1900],
+    ["SALON CARE", "SETTING POWDER LOOSE", ["50 G"], "AREA000008", "SEG0000002", "UNIT000001", 1350, 2000],
+    ["SALON CARE", "BRIDAL MAKEUP BASE CREAM", ["100 G"], "AREA000008", "SEG0000001", "UNIT000004", 2450, 3650],
+    ["SALON CARE", "BODY SHIMMER LOTION", ["200 ML"], "AREA000008", "SEG0000002", "UNIT000002", 1150, 1750],
+    ["SALON CARE", "MAKEUP CLEANSING WIPES", ["25 PIECE"], "AREA000008", "SEG0000003", "UNIT000006", 550, 850],
+    ["SALON CARE", "FACE PRIMER GEL", ["30 ML"], "AREA000008", "SEG0000002", "UNIT000003", 1250, 1900],
+    ["SALON CARE", "EYEBROW SHAPING GEL", ["10 ML"], "AREA000008", "SEG0000002", "UNIT000002", 650, 1000],
+    ["SALON CARE", "LASH LIFT AND TINT KIT", ["1 KIT"], "AREA000008", "SEG0000001", "UNIT000009", 4950, 7400],
+  ],
+  "CAT0000005": [
+    ["GENERIC", "BARBER HAIR CLIPPER", ["1 PIECE"], "AREA000009", "SEG0000002", "UNIT000001", 6500, 9750],
+    ["GENERIC", "BARBER TRIMMER", ["1 PIECE"], "AREA000009", "SEG0000002", "UNIT000001", 4850, 7250],
+    ["GENERIC", "CLIPPER BLADE SET", ["1 SET"], "AREA000009", "SEG0000002", "UNIT000008", 1850, 2800],
+    ["GENERIC", "CLIPPER OIL", ["100 ML"], "AREA000009", "SEG0000003", "UNIT000002", 450, 700],
+    ["GENERIC", "SHAVING BRUSH", ["1 PIECE"], "AREA000009", "SEG0000002", "UNIT000001", 850, 1300],
+    ["GENERIC", "SHAVING RAZOR", ["1 PIECE"], "AREA000009", "SEG0000002", "UNIT000001", 650, 1000],
+    ["GENERIC", "RAZOR BLADE PACK", ["10 PIECE"], "AREA000009", "SEG0000003", "UNIT000006", 350, 550],
+    ["SALON CARE", "SHAVING FOAM", ["200 ML"], "AREA000009", "SEG0000003", "UNIT000002", 750, 1150],
+    ["SALON CARE", "AFTER SHAVE LOTION", ["200 ML"], "AREA000009", "SEG0000002", "UNIT000002", 850, 1300],
+    ["SALON CARE", "BEARD OIL", ["30 ML"], "AREA000009", "SEG0000002", "UNIT000003", 950, 1450],
+    ["SALON CARE", "BEARD WAX", ["100 G"], "AREA000009", "SEG0000002", "UNIT000004", 780, 1200],
+    ["SALON CARE", "MEN'S HAIR GEL", ["200 ML"], "AREA000009", "SEG0000003", "UNIT000002", 620, 950],
+    ["SALON CARE", "MEN'S HAIR WAX", ["100 G"], "AREA000009", "SEG0000003", "UNIT000004", 750, 1150],
+    ["SALON CARE", "MEN'S POMADE", ["100 G"], "AREA000009", "SEG0000002", "UNIT000004", 950, 1450],
+    ["SALON CARE", "MEN'S STYLING CLAY", ["100 G"], "AREA000009", "SEG0000002", "UNIT000004", 1050, 1600],
+    ["SALON CARE", "BEARD BALM", ["50 G"], "AREA000009", "SEG0000002", "UNIT000004", 850, 1300],
+    ["SALON CARE", "MEN'S FACE WASH", ["100 ML"], "AREA000009", "SEG0000003", "UNIT000003", 650, 1000],
+    ["SALON CARE", "MEN'S ANTI DANDRUFF SHAMPOO", ["340 ML"], "AREA000009", "SEG0000003", "UNIT000002", 850, 1300],
+    ["SALON CARE", "MEN'S HAIR COLOUR CREAM", ["60 ML"], "AREA000009", "SEG0000003", "UNIT000003", 750, 1150],
+    ["SALON CARE", "TALCUM POWDER FOR BARBER", ["500 G"], "AREA000009", "SEG0000004", "UNIT000017", 650, 1000],
+    ["SALON CARE", "NECK DUSTER BRUSH", ["1 PIECE"], "AREA000009", "SEG0000002", "UNIT000001", 1250, 1900],
+    ["GENERIC", "BARBER CAPE", ["1 PIECE"], "AREA000009", "SEG0000003", "UNIT000001", 1450, 2200],
+    ["GENERIC", "NECK STRIPS", ["100 PIECE"], "AREA000010", "SEG0000004", "UNIT000006", 950, 1450],
+    ["GENERIC", "BARBER TOWEL", ["1 PIECE"], "AREA000009", "SEG0000003", "UNIT000001", 750, 1150],
+    ["GENERIC", "MEN'S HAIR CLIPPER COMB SET", ["1 SET"], "AREA000009", "SEG0000002", "UNIT000008", 650, 1000],
+    ["GENERIC", "HAIR CLIPPER BLADE CLEANER", ["200 ML"], "AREA000009", "SEG0000002", "UNIT000002", 750, 1150],
+  ],
+  "CAT0000006": [
+    ["GENERIC", "ALUMINIUM FOIL ROLL", ["1 ROLL"], "AREA000004", "SEG0000004", "UNIT000012", 1750, 2650],
+    ["GENERIC", "COLOUR BOWL", ["1 PIECE"], "AREA000004", "SEG0000003", "UNIT000001", 350, 550],
+    ["GENERIC", "COLOUR APPLICATION BRUSH", ["1 PIECE"], "AREA000004", "SEG0000003", "UNIT000001", 280, 450],
+    ["GENERIC", "TINT BRUSH SET", ["1 SET"], "AREA000004", "SEG0000002", "UNIT000008", 750, 1150],
+    ["GENERIC", "TAIL COMB", ["1 PIECE"], "AREA000004", "SEG0000003", "UNIT000001", 180, 300],
+    ["GENERIC", "WIDE TOOTH COMB", ["1 PIECE"], "AREA000002", "SEG0000003", "UNIT000001", 220, 350],
+    ["GENERIC", "SECTIONING CLIPS", ["12 PIECE"], "AREA000002", "SEG0000003", "UNIT000018", 450, 700],
+    ["GENERIC", "HAIR CUTTING SCISSORS", ["1 PIECE"], "AREA000002", "SEG0000001", "UNIT000001", 4500, 6750],
+    ["GENERIC", "THINNING SCISSORS", ["1 PIECE"], "AREA000002", "SEG0000001", "UNIT000001", 3850, 5800],
+    ["GENERIC", "BARBER RAZOR WITH BLADE", ["1 PIECE"], "AREA000002", "SEG0000002", "UNIT000001", 650, 1000],
+    ["GENERIC", "COTTON ROLL", ["1 ROLL"], "AREA000010", "SEG0000004", "UNIT000012", 850, 1300],
+    ["GENERIC", "COTTON PADS", ["100 PIECE"], "AREA000010", "SEG0000004", "UNIT000006", 450, 700],
+    ["GENERIC", "TISSUE BOX", ["1 BOX"], "AREA000010", "SEG0000004", "UNIT000007", 380, 600],
+    ["GENERIC", "TISSUE ROLL", ["1 ROLL"], "AREA000010", "SEG0000004", "UNIT000012", 320, 500],
+    ["GENERIC", "DISPOSABLE GLOVES", ["100 PIECE"], "AREA000010", "SEG0000004", "UNIT000006", 1250, 1900],
+    ["GENERIC", "SALON CAPE", ["1 PIECE"], "AREA000002", "SEG0000003", "UNIT000001", 1450, 2200],
+    ["GENERIC", "DISPOSABLE CAPE", ["25 PIECE"], "AREA000010", "SEG0000004", "UNIT000006", 950, 1450],
+    ["GENERIC", "TOWEL SET", ["6 PIECE"], "AREA000002", "SEG0000003", "UNIT000006", 3250, 4900],
+    ["GENERIC", "HAND TOWEL", ["1 PIECE"], "AREA000002", "SEG0000003", "UNIT000001", 650, 1000],
+    ["GENERIC", "SPRAY BOTTLE", ["500 ML"], "AREA000002", "SEG0000003", "UNIT000001", 380, 600],
+    ["GENERIC", "SALON TROLLEY", ["1 PIECE"], "AREA000002", "SEG0000001", "UNIT000001", 15500, 23250],
+    ["GENERIC", "BACKWASH CHAIR", ["1 PIECE"], "AREA000003", "SEG0000001", "UNIT000001", 42500, 63750],
+    ["GENERIC", "STYLING CHAIR", ["1 PIECE"], "AREA000002", "SEG0000001", "UNIT000001", 28500, 42750],
+    ["GENERIC", "SALON MIRROR WITH LIGHT", ["1 PIECE"], "AREA000002", "SEG0000001", "UNIT000001", 18500, 27750],
+    ["GENERIC", "HEAD MASSAGER HAND TOOL", ["1 PIECE"], "AREA000003", "SEG0000003", "UNIT000001", 650, 1000],
+    ["GENERIC", "SHAMPOO BOWL", ["1 PIECE"], "AREA000003", "SEG0000003", "UNIT000001", 750, 1150],
+    ["GENERIC", "HAIR DRYER", ["1 PIECE"], "AREA000002", "SEG0000001", "UNIT000001", 12500, 18750],
+    ["GENERIC", "HAIR STRAIGHTENER", ["1 PIECE"], "AREA000002", "SEG0000002", "UNIT000001", 8500, 12750],
+    ["GENERIC", "HAIR CURLER", ["1 PIECE"], "AREA000002", "SEG0000002", "UNIT000001", 7500, 11250],
+    ["GENERIC", "ROLLER SET TROLLEY", ["1 PIECE"], "AREA000002", "SEG0000002", "UNIT000001", 4500, 6750],
+    ["GENERIC", "FACIAL STEAMER", ["1 PIECE"], "AREA000005", "SEG0000001", "UNIT000001", 18500, 27750],
+    ["GENERIC", "MAGNIFYING LAMP", ["1 PIECE"], "AREA000005", "SEG0000002", "UNIT000001", 9500, 14250],
+    ["GENERIC", "WAX HEATER", ["1 PIECE"], "AREA000007", "SEG0000002", "UNIT000001", 6500, 9750],
+    ["GENERIC", "WAX POT SINGLE", ["1 PIECE"], "AREA000007", "SEG0000003", "UNIT000001", 2450, 3650],
+    ["GENERIC", "HAIR STEAMER", ["1 PIECE"], "AREA000007", "SEG0000001", "UNIT000001", 22500, 33750],
+    ["GENERIC", "STERILIZER BOX", ["1 PIECE"], "AREA000002", "SEG0000002", "UNIT000001", 5500, 8250],
+    ["GENERIC", "SANITIZER SPRAY", ["500 ML"], "AREA000010", "SEG0000003", "UNIT000002", 750, 1150],
+    ["GENERIC", "SURFACE DISINFECTANT", ["1 LTR"], "AREA000010", "SEG0000003", "UNIT000002", 950, 1450],
+    ["GENERIC", "FLOOR CLEANER SALON GRADE", ["5 LTR"], "AREA000010", "SEG0000004", "UNIT000019", 2450, 3650],
+    ["GENERIC", "APRON FOR STAFF", ["1 PIECE"], "AREA000010", "SEG0000003", "UNIT000001", 1250, 1900],
+    ["GENERIC", "STAFF UNIFORM SHIRT", ["1 PIECE"], "AREA000010", "SEG0000002", "UNIT000001", 2250, 3400],
+    ["GENERIC", "NECK BRUSH DUSTER", ["1 PIECE"], "AREA000010", "SEG0000003", "UNIT000001", 550, 850],
+    ["GENERIC", "HAIR NET", ["100 PIECE"], "AREA000010", "SEG0000004", "UNIT000006", 450, 700],
+    ["GENERIC", "WATERPROOF BIB", ["1 PIECE"], "AREA000010", "SEG0000004", "UNIT000001", 350, 550],
+    ["GENERIC", "BLEACH POWDER MEASURING SCOOP", ["1 PIECE"], "AREA000004", "SEG0000003", "UNIT000001", 150, 250],
+  ],
+  "CAT0000007": [
+    ["PRO TOOLS", "PROFESSIONAL HAIR DRYER 2000W", ["1 PIECE"], "AREA000002", "SEG0000001", "UNIT000001", 18500, 27750],
+    ["PRO TOOLS", "PROFESSIONAL CLIPPER SET", ["1 SET"], "AREA000009", "SEG0000001", "UNIT000008", 12500, 18750],
+    ["PRO TOOLS", "PROFESSIONAL STRAIGHTENER", ["1 PIECE"], "AREA000002", "SEG0000001", "UNIT000001", 14500, 21750],
+    ["PRO TOOLS", "PROFESSIONAL CURLING WAND", ["1 PIECE"], "AREA000002", "SEG0000001", "UNIT000001", 13500, 20250],
+    ["PRO TOOLS", "HAIR CUTTING SCISSOR SET", ["1 SET"], "AREA000002", "SEG0000001", "UNIT000008", 8500, 12750],
+    ["PRO TOOLS", "RAZOR HOLDER STAINLESS", ["1 PIECE"], "AREA000002", "SEG0000002", "UNIT000001", 1850, 2800],
+    ["PRO TOOLS", "HAIR COLOUR MIXING BOWL SET", ["1 SET"], "AREA000004", "SEG0000002", "UNIT000008", 1250, 1900],
+    ["PRO TOOLS", "MEASURING CUP", ["1 PIECE"], "AREA000004", "SEG0000003", "UNIT000001", 350, 550],
+    ["PRO TOOLS", "TIMER CLOCK", ["1 PIECE"], "AREA000004", "SEG0000003", "UNIT000001", 1250, 1900],
+    ["PRO TOOLS", "SALON TROLLEY DELUXE", ["1 PIECE"], "AREA000002", "SEG0000001", "UNIT000001", 22500, 33750],
+    ["PRO TOOLS", "DRYER HOLDER STAND", ["1 PIECE"], "AREA000002", "SEG0000003", "UNIT000001", 1650, 2500],
+    ["PRO TOOLS", "BACKWASH UNIT WITHOUT CHAIR", ["1 PIECE"], "AREA000003", "SEG0000001", "UNIT000001", 32500, 48750],
+    ["PRO TOOLS", "SALON SPOT LIGHT LED", ["1 PIECE"], "AREA000002", "SEG0000002", "UNIT000001", 8500, 12750],
+    ["PRO TOOLS", "FACIAL HIGH FREQUENCY MACHINE", ["1 PIECE"], "AREA000005", "SEG0000001", "UNIT000001", 18500, 27750],
+    ["PRO TOOLS", "ULTRASONIC SKIN SCRUBBER", ["1 PIECE"], "AREA000005", "SEG0000001", "UNIT000001", 12500, 18750],
+    ["PRO TOOLS", "STEAMER FOR FACE DELUXE", ["1 PIECE"], "AREA000005", "SEG0000001", "UNIT000001", 16500, 24750],
+    ["PRO TOOLS", "NAIL TABLE WITH DUST COLLECTOR", ["1 PIECE"], "AREA000006", "SEG0000001", "UNIT000001", 34500, 51750],
+    ["PRO TOOLS", "NAIL UV LAMP 48W", ["1 PIECE"], "AREA000006", "SEG0000001", "UNIT000001", 8500, 12750],
+    ["PRO TOOLS", "PEDICURE STOOL", ["1 PIECE"], "AREA000006", "SEG0000002", "UNIT000001", 14500, 21750],
+    ["PRO TOOLS", "SPA BED WITH HEATER", ["1 PIECE"], "AREA000007", "SEG0000001", "UNIT000001", 48500, 72750],
+    ["PRO TOOLS", "SPA TOWEL WARMER", ["1 PIECE"], "AREA000007", "SEG0000001", "UNIT000001", 16500, 24750],
+    ["PRO TOOLS", "WAX HEATER PROFESSIONAL", ["1 PIECE"], "AREA000007", "SEG0000001", "UNIT000001", 12500, 18750],
+    ["PRO TOOLS", "MAKEUP MIRROR WITH BULBS", ["1 PIECE"], "AREA000008", "SEG0000001", "UNIT000001", 14500, 21750],
+    ["PRO TOOLS", "MAKEUP CHAIR DIRECTOR", ["1 PIECE"], "AREA000008", "SEG0000001", "UNIT000001", 18500, 27750],
+    ["PRO TOOLS", "MAKEUP CASE PROFESSIONAL", ["1 PIECE"], "AREA000008", "SEG0000001", "UNIT000001", 22500, 33750],
+    ["PRO TOOLS", "BRUSH CLEANER MACHINE", ["1 PIECE"], "AREA000008", "SEG0000002", "UNIT000001", 6500, 9750],
+    ["PRO TOOLS", "HAIR EXTENSION TOOL KIT", ["1 KIT"], "AREA000002", "SEG0000002", "UNIT000009", 7500, 11250],
+    ["PRO TOOLS", "BLOW DRYER BRUSH SET", ["1 SET"], "AREA000002", "SEG0000002", "UNIT000008", 4500, 6750],
+    ["PRO TOOLS", "STRAIGHTENING BRUSH", ["1 PIECE"], "AREA000002", "SEG0000003", "UNIT000001", 3500, 5250],
+    ["PRO TOOLS", "SALON GOWN SET", ["6 PIECE"], "AREA000002", "SEG0000003", "UNIT000006", 4500, 6750],
+    ["PRO TOOLS", "CLEANING BRUSH SET", ["1 SET"], "AREA000002", "SEG0000003", "UNIT000008", 650, 1000],
+    ["PRO TOOLS", "TOOL SANITIZING JAR", ["1 PIECE"], "AREA000002", "SEG0000002", "UNIT000001", 1250, 1900],
+    ["PRO TOOLS", "STERILIZING POUCH", ["100 PIECE"], "AREA000010", "SEG0000004", "UNIT000006", 1850, 2800],
+    ["PRO TOOLS", "HAIR CLIP HOLDER", ["1 PIECE"], "AREA000002", "SEG0000003", "UNIT000001", 850, 1300],
+  ],
+  "CAT0000008": [
+    ["SPA CEYLON", "AYURVEDIC BODY MASSAGE OIL", ["200 ML", "500 ML"], "AREA000007", "SEG0000001", "UNIT000002", 2450, 3650],
+    ["SPA CEYLON", "RELAXING AROMATHERAPY OIL", ["200 ML"], "AREA000007", "SEG0000001", "UNIT000002", 2750, 4100],
+    ["SPA CEYLON", "BODY SCRUB WITH HERBALS", ["500 G"], "AREA000007", "SEG0000001", "UNIT000017", 2850, 4250],
+    ["SPA CEYLON", "HERBAL BODY WRAP POWDER", ["500 G"], "AREA000007", "SEG0000001", "UNIT000017", 2650, 3950],
+    ["SALON CARE", "BODY MASSAGE LOTION", ["500 ML"], "AREA000007", "SEG0000002", "UNIT000002", 1350, 2000],
+    ["SALON CARE", "FIRMING BODY LOTION", ["500 ML"], "AREA000007", "SEG0000002", "UNIT000002", 1550, 2350],
+    ["SALON CARE", "FOOT MASSAGE CREAM", ["500 G"], "AREA000006", "SEG0000002", "UNIT000017", 1450, 2200],
+    ["SALON CARE", "BODY POLISH SCRUB", ["1 KG"], "AREA000007", "SEG0000002", "UNIT000017", 2250, 3400],
+    ["SALON CARE", "DETOX BODY CLAY", ["500 G"], "AREA000007", "SEG0000002", "UNIT000017", 1950, 2950],
+    ["CEYLON HERBAL", "HERBAL MASSAGE OIL", ["500 ML"], "AREA000007", "SEG0000002", "UNIT000002", 1750, 2650],
+    ["CEYLON HERBAL", "COCONUT AND LIME BODY OIL", ["500 ML"], "AREA000007", "SEG0000002", "UNIT000002", 1550, 2350],
+    ["CEYLON HERBAL", "SEA SALT BODY SCRUB", ["1 KG"], "AREA000007", "SEG0000003", "UNIT000017", 1250, 1900],
+    ["CEYLON HERBAL", "GREEN TEA BODY PACK", ["500 G"], "AREA000007", "SEG0000003", "UNIT000017", 1150, 1750],
+    ["SPA CEYLON", "AROMATIC CANDLE SET", ["1 SET"], "AREA000007", "SEG0000001", "UNIT000008", 2250, 3400],
+    ["SPA CEYLON", "ESSENTIAL OIL - LAVENDER", ["50 ML"], "AREA000007", "SEG0000001", "UNIT000002", 1950, 2950],
+    ["SPA CEYLON", "ESSENTIAL OIL - EUCALYPTUS", ["50 ML"], "AREA000007", "SEG0000001", "UNIT000002", 1850, 2800],
+    ["SPA CEYLON", "ESSENTIAL OIL - LEMON GRASS", ["50 ML"], "AREA000007", "SEG0000001", "UNIT000002", 1850, 2800],
+    ["SPA CEYLON", "ESSENTIAL OIL - SANDALWOOD", ["50 ML"], "AREA000007", "SEG0000001", "UNIT000002", 2350, 3500],
+    ["SALON CARE", "AROMA DIFFUSER", ["1 PIECE"], "AREA000007", "SEG0000002", "UNIT000001", 4500, 6750],
+    ["SALON CARE", "SPA MUSIC SYSTEM", ["1 PIECE"], "AREA000007", "SEG0000002", "UNIT000001", 8500, 12750],
+    ["SALON CARE", "SPA ROBE", ["1 PIECE"], "AREA000007", "SEG0000002", "UNIT000001", 3250, 4900],
+    ["SALON CARE", "SPA SLIPPERS", ["1 PAIR"], "AREA000007", "SEG0000003", "UNIT000010", 550, 850],
+    ["SALON CARE", "HEAD BAND TOWEL", ["1 PIECE"], "AREA000007", "SEG0000003", "UNIT000001", 650, 1000],
+    ["SALON CARE", "EYE PILLOW FOR SPA", ["1 PIECE"], "AREA000007", "SEG0000003", "UNIT000001", 850, 1300],
+    ["SALON CARE", "HOT TOWEL CABINET", ["1 PIECE"], "AREA000007", "SEG0000001", "UNIT000001", 22500, 33750],
+    ["SALON CARE", "DETOX FOOT SOAK", ["500 G"], "AREA000006", "SEG0000002", "UNIT000017", 1250, 1900],
+  ],
+  "CAT0000009": [
+    ["GENERIC", "SAREE DRAPING PINS BOX", ["1 BOX"], "AREA000008", "SEG0000003", "UNIT000007", 450, 700],
+    ["GENERIC", "HAIR PINS SET", ["1 SET"], "AREA000008", "SEG0000003", "UNIT000008", 350, 550],
+    ["GENERIC", "BRIDAL HAIR BUN EXTENSION", ["1 PIECE"], "AREA000008", "SEG0000002", "UNIT000001", 1250, 1900],
+    ["GENERIC", "HAIR EXTENSION CLIP IN", ["1 PIECE"], "AREA000008", "SEG0000002", "UNIT000001", 2450, 3650],
+    ["GENERIC", "WIG CAP", ["6 PIECE"], "AREA000008", "SEG0000003", "UNIT000006", 550, 850],
+    ["GENERIC", "BRIDAL VEIL", ["1 PIECE"], "AREA000008", "SEG0000002", "UNIT000001", 3250, 4900],
+    ["GENERIC", "FLOWER HAIR ACCESSORY", ["1 PIECE"], "AREA000008", "SEG0000002", "UNIT000001", 950, 1450],
+    ["GENERIC", "BRIDAL HEAD PIECE", ["1 PIECE"], "AREA000008", "SEG0000001", "UNIT000001", 4500, 6750],
+    ["GENERIC", "BRIDAL JEWELLERY SET", ["1 SET"], "AREA000008", "SEG0000001", "UNIT000008", 8500, 12750],
+    ["GENERIC", "BRIDAL MAKEUP TOUCH UP KIT", ["1 KIT"], "AREA000008", "SEG0000002", "UNIT000009", 3500, 5250],
+    ["GENERIC", "BRIDAL FACE PACK POWDER", ["200 G"], "AREA000008", "SEG0000002", "UNIT000004", 1150, 1750],
+    ["GENERIC", "SAREE NORMALIZING SPRAY", ["100 ML"], "AREA000008", "SEG0000003", "UNIT000002", 650, 1000],
+    ["GENERIC", "HAIR SETTING GEL STRONG", ["200 ML"], "AREA000008", "SEG0000003", "UNIT000002", 550, 850],
+    ["GENERIC", "BRIDAL BODY SHIMMER", ["100 ML"], "AREA000008", "SEG0000002", "UNIT000002", 1250, 1900],
+    ["GENERIC", "BRIDAL NAIL SET", ["1 SET"], "AREA000008", "SEG0000002", "UNIT000008", 1850, 2800],
+    ["GENERIC", "HAIR BUN NET", ["1 PIECE"], "AREA000008", "SEG0000003", "UNIT000001", 250, 400],
+    ["GENERIC", "RHINESTONE HAIR CLIPS", ["1 PACK"], "AREA000008", "SEG0000002", "UNIT000006", 750, 1150],
+    ["GENERIC", "BRIDAL HAIR CLIP SET", ["1 SET"], "AREA000008", "SEG0000002", "UNIT000008", 1450, 2200],
+  ],
+  "CAT0000010": [
+    ["IMPERIAL", "ROLL ON WAX HONEY", ["100 ML", "400 ML"], "AREA000007", "SEG0000002", "UNIT000002", 850, 1300],
+    ["IMPERIAL", "ROLL ON WAX CHOCOLATE", ["100 ML", "400 ML"], "AREA000007", "SEG0000002", "UNIT000002", 880, 1350],
+    ["IMPERIAL", "ROLL ON WAX ALOE VERA", ["100 ML", "400 ML"], "AREA000007", "SEG0000002", "UNIT000002", 900, 1400],
+    ["SALON CARE", "HOT WAX BEADS", ["1 KG"], "AREA000007", "SEG0000003", "UNIT000017", 2450, 3650],
+    ["SALON CARE", "HOT WAX STRIPS", ["100 PIECE"], "AREA000007", "SEG0000004", "UNIT000006", 1250, 1900],
+    ["SALON CARE", "WAX STRIPS ROLL", ["1 ROLL"], "AREA000007", "SEG0000004", "UNIT000012", 850, 1300],
+    ["SALON CARE", "PRE WAX CLEANSING GEL", ["500 ML"], "AREA000007", "SEG0000003", "UNIT000002", 950, 1450],
+    ["SALON CARE", "POST WAX SOOTHING OIL", ["500 ML"], "AREA000007", "SEG0000003", "UNIT000002", 1150, 1750],
+    ["SALON CARE", "THREADING COTTON ROLL", ["1 ROLL"], "AREA000007", "SEG0000004", "UNIT000012", 550, 850],
+    ["SALON CARE", "EYEBROW RAZOR SET", ["12 PIECE"], "AREA000007", "SEG0000003", "UNIT000018", 450, 700],
+    ["SALON CARE", "THREADING TWEEZER", ["1 PIECE"], "AREA000007", "SEG0000002", "UNIT000001", 650, 1000],
+    ["SALON CARE", "ANTISEPTIC AFTER THREADING GEL", ["200 ML"], "AREA000007", "SEG0000003", "UNIT000002", 750, 1150],
+  ],
+};
+
+/*
+  SERVICES — 50 rows with a duration, a price and the gender they apply to.
+    [ name, category1, area, segment, gender M/F/O, minutes, price LKR ]
+*/
+const SERVICES = [
+  /* Hair cut and styling */
+  ["HAIR CUT - LADIES", "CAT0000011", "AREA000002", "SEG0000002", "F", 45, 2500],
+  ["HAIR CUT - GENTS", "CAT0000017", "AREA000009", "SEG0000003", "M", 30, 1200],
+  ["HAIR CUT - CHILDREN", "CAT0000011", "AREA000002", "SEG0000003", "O", 30, 1000],
+  ["HAIR TRIM AND SHAPING", "CAT0000011", "AREA000002", "SEG0000002", "O", 30, 1800],
+  ["HAIR SETTING", "CAT0000014", "AREA000008", "SEG0000002", "F", 45, 2000],
+  ["HAIR IRONING", "CAT0000011", "AREA000002", "SEG0000002", "F", 45, 2500],
+  ["HAIR CURLING TONGS", "CAT0000011", "AREA000002", "SEG0000002", "F", 45, 2500],
+  /* Wash and blow dry */
+  ["WASH AND BLOW DRY - SHORT", "CAT0000011", "AREA000003", "SEG0000003", "O", 30, 1500],
+  ["WASH AND BLOW DRY - LONG", "CAT0000011", "AREA000003", "SEG0000002", "F", 45, 2200],
+  /* Colour */
+  ["HAIR COLOUR - ROOT TOUCH UP", "CAT0000011", "AREA000004", "SEG0000002", "O", 60, 4500],
+  ["HAIR COLOUR - GLOBAL", "CAT0000011", "AREA000004", "SEG0000002", "O", 90, 7500],
+  ["HAIR COLOUR - FULL HEAD WITH AMMONIA FREE", "CAT0000011", "AREA000004", "SEG0000001", "F", 120, 11500],
+  ["HIGHLIGHTS - PARTIAL", "CAT0000011", "AREA000004", "SEG0000001", "F", 120, 12500],
+  ["HIGHLIGHTS - FULL HEAD", "CAT0000011", "AREA000004", "SEG0000001", "F", 150, 18500],
+  ["BALAYAGE OR OMBRE COLOUR", "CAT0000011", "AREA000004", "SEG0000001", "F", 180, 24500],
+  ["GLOBAL BLEACH AND TONER", "CAT0000011", "AREA000004", "SEG0000002", "F", 120, 12500],
+  /* Straightening and treatments */
+  ["KERATIN SMOOTHING TREATMENT", "CAT0000011", "AREA000002", "SEG0000001", "F", 180, 32500],
+  ["HAIR STRAIGHTENING - REBONDING", "CAT0000011", "AREA000002", "SEG0000001", "F", 210, 28500],
+  ["HAIR BOTOX TREATMENT", "CAT0000011", "AREA000002", "SEG0000001", "F", 150, 22500],
+  ["HAIR SPA - BASIC", "CAT0000011", "AREA000003", "SEG0000003", "O", 45, 3500],
+  ["HAIR SPA - PREMIUM", "CAT0000011", "AREA000003", "SEG0000001", "O", 60, 5500],
+  ["SCALP TREATMENT - ANTI DANDRUFF", "CAT0000011", "AREA000003", "SEG0000002", "O", 45, 4500],
+  ["HAIR FALL TREATMENT", "CAT0000011", "AREA000003", "SEG0000002", "O", 60, 6500],
+  ["HEAD MASSAGE WITH HERBAL OIL", "CAT0000016", "AREA000007", "SEG0000002", "O", 30, 2500],
+  /* Facials */
+  ["FACIAL - BASIC CLEANSING", "CAT0000012", "AREA000005", "SEG0000003", "O", 45, 3500],
+  ["FACIAL - DEEP CLEANSING", "CAT0000012", "AREA000005", "SEG0000002", "O", 60, 5000],
+  ["FACIAL - HYDRATING", "CAT0000012", "AREA000005", "SEG0000002", "O", 60, 5500],
+  ["FACIAL - ANTI AGEING", "CAT0000012", "AREA000005", "SEG0000001", "O", 75, 8500],
+  ["FACIAL - GOLD", "CAT0000012", "AREA000005", "SEG0000001", "F", 75, 9500],
+  ["FACIAL - DIAMOND", "CAT0000012", "AREA000005", "SEG0000001", "F", 75, 11500],
+  ["FACIAL - ACNE TREATMENT", "CAT0000012", "AREA000005", "SEG0000002", "O", 60, 6500],
+  ["FACIAL - FAIRNESS TREATMENT", "CAT0000012", "AREA000005", "SEG0000002", "F", 60, 6500],
+  ["BLEACH - FACE AND NECK", "CAT0000012", "AREA000005", "SEG0000003", "O", 30, 2500],
+  /* Threading and waxing */
+  ["THREADING - EYEBROW", "CAT0000015", "AREA000005", "SEG0000003", "F", 10, 400],
+  ["THREADING - UPPER LIP", "CAT0000015", "AREA000005", "SEG0000003", "F", 10, 300],
+  ["THREADING - FULL FACE", "CAT0000015", "AREA000005", "SEG0000003", "F", 25, 1200],
+  ["WAXING - UNDER ARMS", "CAT0000015", "AREA000007", "SEG0000003", "F", 15, 900],
+  ["WAXING - HALF LEGS", "CAT0000015", "AREA000007", "SEG0000003", "F", 30, 1800],
+  ["WAXING - FULL LEGS", "CAT0000015", "AREA000007", "SEG0000002", "F", 45, 3200],
+  /* Nails */
+  ["MANICURE - BASIC", "CAT0000013", "AREA000006", "SEG0000003", "O", 40, 2000],
+  ["PEDICURE - BASIC", "CAT0000013", "AREA000006", "SEG0000003", "O", 50, 2500],
+  ["SPA MANICURE AND PEDICURE", "CAT0000013", "AREA000006", "SEG0000001", "O", 90, 6500],
+  ["NAIL EXTENSIONS - GEL", "CAT0000013", "AREA000006", "SEG0000001", "F", 90, 6500],
+  /* Makeup and bridal */
+  ["MAKEUP - PARTY", "CAT0000014", "AREA000008", "SEG0000002", "F", 60, 7500],
+  ["MAKEUP - BRIDAL", "CAT0000014", "AREA000008", "SEG0000001", "F", 120, 25000],
+  ["BRIDAL DRESSING PACKAGE", "CAT0000014", "AREA000008", "SEG0000005", "F", 240, 55000],
+  ["SAREE DRAPING", "CAT0000014", "AREA000008", "SEG0000002", "F", 30, 3500],
+  ["GROOM DRESSING", "CAT0000014", "AREA000008", "SEG0000002", "M", 45, 6500],
+  /* Body and spa */
+  ["BODY MASSAGE - FULL BODY", "CAT0000016", "AREA000007", "SEG0000001", "O", 60, 6500],
+  ["AROMA THERAPY MASSAGE", "CAT0000016", "AREA000007", "SEG0000001", "O", 90, 9500],
+];
+
+/* Item codes: "ITM" + 12 digits (CHAR(15)). These two blocks are reserved for
+   this seed, so they can never collide with codes the app has already issued. */
+const ITEM_CODE_START = 1001; // ITM000000001001 …
+const SERVICE_CODE_START = 2001; // ITM000000002001 …
+const ITEMS_PER_CATEGORY = {
+  CAT0000001: 105, // hair care
+  CAT0000002: 70, // skin care
+  CAT0000003: 48, // nail care
+  CAT0000004: 72, // makeup & cosmetics
+  CAT0000005: 40, // men's grooming
+  CAT0000006: 70, // salon consumables
+  CAT0000007: 38, // tools & equipment
+  CAT0000008: 30, // body & spa products
+  CAT0000009: 15, // bridal accessories
+  CAT0000010: 12, // wax & threading
+}; // = 500 items
+const TOTAL_ITEMS = 500;
+const TOTAL_SERVICES = 50;
+
+/* ── 4. small helpers ────────────────────────────────────────────────────── */
+
+const itemCodeFor = (n) => `ITM${String(n).padStart(12, "0")}`;
+const codeOf = (list, needle) => list.find((row) => row[1] === needle)?.[0] || "";
+
+/**
+ * “250 ML” → { qty: 250, unit: "ML" }.
+ * Litres and kilograms are converted to millilitres and grams, so a 1 LTR
+ * bottle is compared against a 250 ML one instead of looking like a single
+ * unit of a different thing.
+ */
+const SIZE_UNITS = {
+  ML: { base: "ML", factor: 1 },
+  LTR: { base: "ML", factor: 1000 },
+  G: { base: "G", factor: 1 },
+  KG: { base: "G", factor: 1000 },
+};
+
+function parseSize(size) {
+  const m = String(size).trim().match(/^(\d+(?:\.\d+)?)\s*([A-Z]+)$/);
+  if (!m) return null;
+  const unit = SIZE_UNITS[m[2]];
+  if (!unit) return { qty: Number(m[1]), unit: m[2] };
+  return { qty: Number(m[1]) * unit.factor, unit: unit.base };
+}
+
+/** How much bigger is `size` than the first (standard) size of the line? */
+function sizeFactor(size, standardSize) {
+  const a = parseSize(size);
+  const b = parseSize(standardSize);
+  if (!a || !b) return 1;
+  if (a.unit === b.unit && b.qty > 0) {
+    const factor = a.qty / b.qty;
+    // Bigger packs are cheaper per unit: dampen the straight ratio.
+    return factor > 1 ? 1 + (factor - 1) * 0.82 : Math.max(0.55, factor);
+  }
+  return 1;
+}
+
+/** Round to a “shop” price (LKR, ends in 0 or 50). */
+function nicePrice(value) {
+  if (value >= 1000) return Math.round(value / 50) * 50;
+  if (value >= 100) return Math.round(value / 10) * 10;
+  return Math.max(50, Math.round(value / 5) * 5);
+}
+
+const shorten = (text, max) =>
+  text.length <= max ? text : text.slice(0, max - 1).trimEnd() + ".";
+
+/* ── 5. build the rows ───────────────────────────────────────────────────── */
+
+/* Which supplier does a product line come from?
+   Deterministic, so a second run assigns exactly the same supplier as the
+   first: the brand decides it (its position in CATEGORY_2), nudged by one for
+   some families so one brand's families can come from two distributors — the
+   way a salon really buys. Never empty, so Stock Requirements can be grouped. */
+function supplierFor(brand, family) {
+  const brandIndex = Math.max(CATEGORY_2.findIndex(([, des]) => des === brand), 0);
+  const familySum = [...String(family)].reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
+  const index = (brandIndex + (familySum % 3 === 1 ? 1 : 0)) % SUPPLIERS.length;
+  return padCode(SUPPLIERS[index][0]);
+}
+
+function buildItemRows() {
+  const brandsByDesc = new Map(CATEGORY_2.map(([code, des]) => [des, code]));
+
+  /* First build every possible row per category (all lines × all sizes), then
+     take the number each category needs. Whatever is left over is taken from
+     the categories that still have spare lines, so the catalogue always ends
+     up with exactly TOTAL_ITEMS rows. */
+  const skippedLines = [];
+  const pools = new Map();
+  for (const [cat1, lines] of Object.entries(ITEM_LINES)) {
+    const pool = [];
+    for (const [brand, family, lineSizes, area, segment, unit, costStd, retailStd] of lines) {
+      const standard = lineSizes[0];
+      const sizes = [...lineSizes, ...(EXTRA_SIZES[`${brand}|${family}`] || [])];
+      for (const size of sizes) {
+        const name = productName(brand, family, size);
+        if (!name) {
+          skippedLines.push(`${brand} ${family} ${size}`);
+          continue;
+        }
+        const factor = sizeFactor(size, standard);
+        const cost = nicePrice(costStd * factor);
+        const retail = nicePrice(Math.max(retailStd * factor, cost * 1.25));
+        pool.push({
+          ServiceItem: 0,
+          MOF: "O",
+          ItemDes: name,
+          ItemPrintDes: shorten(name, 50),
+          MasterUnitID: unit,
+          Category1: cat1,
+          Category2: brandsByDesc.get(brand) || "BRD0000025",
+          Category3: area,
+          Category4: segment,
+          SupID: supplierFor(brand, family),
+          RawCost: cost,
+          OverallCost: cost,
+          Retailprice: retail,
+          CostMarkup: cost > 0 ? Math.round(((retail - cost) / cost) * 100) : 0,
+          SalesMargin: retail > 0 ? Math.round(((retail - cost) / retail) * 100) : 0,
+          StockBalance: stockFor(retail),
+          ROL: 3,
+          ROQ: 6,
+          MinQty: 1,
+          MaxQty: 24,
+          ExpiryItem: isConsumable(name) ? 1 : 0,
+          SerDuration: 0,
+          WSApp: 0,
+          WSQty: 0,
+          WSPrice: 0,
+          PackedItem: 0,
+          PackSize: 0,
+          PackPrice: 0,
+          SemiFinishedProd: 0,
+          Enable: 1,
+        });
+      }
+    }
+    pools.set(cat1, pool);
+  }
+
+  const taken = new Map();
+  const cursors = new Map();
+  for (const cat1 of pools.keys()) {
+    const want = ITEMS_PER_CATEGORY[cat1] || 0;
+    const pool = pools.get(cat1);
+    const take = Math.min(want, pool.length);
+    taken.set(cat1, pool.slice(0, take));
+    cursors.set(cat1, take);
+  }
+
+  let total = [...taken.values()].reduce((sum, rows) => sum + rows.length, 0);
+  const warnings = [];
+  if (total < TOTAL_ITEMS) {
+    // Top up from the categories that still have unused product lines.
+    for (const cat1 of pools.keys()) {
+      if (total >= TOTAL_ITEMS) break;
+      const pool = pools.get(cat1);
+      let cursor = cursors.get(cat1);
+      while (total < TOTAL_ITEMS && cursor < pool.length) {
+        taken.get(cat1).push(pool[cursor]);
+        cursor++;
+        total++;
+      }
+      cursors.set(cat1, cursor);
+    }
+  }
+  if (total < TOTAL_ITEMS) {
+    warnings.push(
+      `only ${total} of ${TOTAL_ITEMS} items could be built — add more product ` +
+        "lines to the ITEM_LINES block to reach the full catalogue.",
+    );
+  }
+  if (total > TOTAL_ITEMS) {
+    // Should not happen (each category is capped), but never write more than asked.
+    let overflow = total - TOTAL_ITEMS;
+    for (const cat1 of [...pools.keys()].reverse()) {
+      while (overflow > 0 && taken.get(cat1).length > 0) {
+        taken.get(cat1).pop();
+        overflow--;
+      }
+    }
+  }
+
+  const rows = [];
+  let serial = ITEM_CODE_START;
+  for (const cat1 of pools.keys()) {
+    for (const row of taken.get(cat1)) {
+      rows.push({ ...row, ItemCode: itemCodeFor(serial++) });
+    }
+  }
+
+  if (skippedLines.length) {
+    warnings.push(
+      `${skippedLines.length} product names could not fit the 50-character ` +
+        `ItemDes column and were left out (first: ${skippedLines[0]}).`,
+    );
+  }
+
+  for (const cat1 of pools.keys()) {
+    const label = (CATEGORY_1.find(([code]) => code === cat1) || ["", cat1])[1];
+    console.log(
+      `   · ${label.padEnd(24)} ${String(taken.get(cat1).length).padStart(3)} of ` +
+        `${String(pools.get(cat1).length).padStart(3)} product lines used`,
+    );
+  }
+
+  return { rows, warnings };
+}
+
+/** Things that are consumed in a service (they carry an expiry in the salon). */
+function isConsumable(name) {
+  return !/TOOL|SCISSOR|DRYER|MACHINE|CHAIR|TROLLEY|MIRROR|BRUSH SET|COMB|CAPE|TOWEL|CLIPPER|TRIMMER|RAZOR HOLDER|LAMP|HEATER|STEAMER|TABLE|BED|STAND|CASE|JAR|STERIL|MASSAGER|DIFFUSER|MUSIC|ROBE|SLIPPERS|HEAD BAND|EYE PILLOW|PINS|EXTENSION|VEIL|JEWELLERY|HEAD PIECE|ACCESSORY|WIG CAP|SET$|PALETTE|SPONGE|BIB|APRON|UNIFORM|ROLLER|TIMER|SCOOP|HOLDER|MAGNIFYING/.test(
+    name.toUpperCase(),
+  );
+}
+
+/**
+ * Brand + product + pack size, inside the 50 characters ItemDes allows.
+ *
+ * The size is never cut (it is what tells two rows apart), so when the name is
+ * too long the family is trimmed first — and the long brand names get their
+ * shop-board short form. Returns null only when nothing sensible fits.
+ */
+const BRAND_SHORT = {
+  "LOREAL PROFESSIONNEL": "L'OREAL PROF",
+  "LOREAL PARIS": "L'OREAL PARIS",
+};
+
+const FILLER_WORDS = /\b(PROFESSIONAL|WITH|AND|FOR|THE|OF|NEW|PACK|SALON GRADE)\b\s*/gi;
+
+function productName(brand, family, size) {
+  const sizePart = ` ${size}`;
+  const limit = 50;
+  const brands = [brand, BRAND_SHORT[brand]].filter(Boolean);
+
+  const families = [
+    family,
+    family.replace(FILLER_WORDS, "").replace(/\s+/g, " ").trim(),
+    family.replace(FILLER_WORDS, "").split(/\s+/).slice(0, 3).join(" "),
+  ].filter((value, index, list) => value && list.indexOf(value) === index);
+
+  /* The shop name is kept whole as long as the product word still fits; only
+     then is a long brand shortened, and only after that is the family trimmed.
+     The pack size is never touched. */
+  for (const candidate of families) {
+    for (const brandName of brands) {
+      const room = limit - brandName.length - sizePart.length - 1;
+      if (room < 6) continue;
+      if (candidate.length <= room) {
+        return `${brandName} ${candidate}${sizePart}`.replace(/\s+/g, " ").trim();
+      }
+    }
+  }
+
+  // Still too long: cut the family at a word boundary for each brand form.
+  for (const brandName of brands) {
+    const room = limit - brandName.length - sizePart.length - 1;
+    if (room < 6) continue;
+    const cut = families[0].slice(0, room);
+    const lastSpace = cut.lastIndexOf(" ");
+    const safe = (lastSpace > 4 ? cut.slice(0, lastSpace) : cut).trim();
+    if (safe.length >= 4) {
+      return `${brandName} ${safe}${sizePart}`.replace(/\s+/g, " ").trim();
+    }
+  }
+
+  return null;
+}
+
+/** A believable shelf quantity: cheap things sit in dozens, machines in ones. */
+function stockFor(retail) {
+  if (retail >= 15000) return 1;
+  if (retail >= 8000) return 2;
+  if (retail >= 3000) return 4;
+  if (retail >= 1500) return 8;
+  if (retail >= 600) return 18;
+  return 36;
+}
+
+function buildServiceRows() {
+  const rows = [];
+  let serial = SERVICE_CODE_START;
+
+  for (const [name, cat1, area, segment, mof, minutes, price] of SERVICES) {
+    const code = itemCodeFor(serial++);
+    rows.push({
+      ItemCode: code,
+      ServiceItem: 1,
+      MOF: mof,
+      ItemDes: shorten(name, 50),
+      ItemPrintDes: shorten(name, 50),
+      MasterUnitID: "UNIT000020", // SERVICE
+      Category1: cat1,
+      Category2: "",
+      Category3: area,
+      Category4: segment,
+      RawCost: 0,
+      OverallCost: 0,
+      Retailprice: price,
+      CostMarkup: 0,
+      SalesMargin: 0,
+      StockBalance: 0,
+      ROL: 0,
+      ROQ: 0,
+      MinQty: 0,
+      MaxQty: 0,
+      ExpiryItem: 0,
+      SerDuration: minutes,
+      WSApp: 0,
+      WSQty: 0,
+      WSPrice: 0,
+      PackedItem: 0,
+      PackSize: 0,
+      PackPrice: 0,
+      SemiFinishedProd: 0,
+      Enable: 1,
+    });
+  }
+
+  return rows;
+}
+
+/* ── 6. database plumbing ────────────────────────────────────────────────── */
+
+const CREATE_STATEMENTS = [
+  /* Units */
+  `CREATE TABLE IF NOT EXISTS tbl_unitmaster (
+     MasterUnitID CHAR(10) NOT NULL,
+     UnitDes VARCHAR(50) NOT NULL,
+     Enable TINYINT(1) NOT NULL DEFAULT 1,
+     PRIMARY KEY (MasterUnitID)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS tbl_unitsub (
+     SubUnitID CHAR(10) NOT NULL,
+     SubUnitDes VARCHAR(50) NOT NULL,
+     Enable TINYINT(1) NOT NULL DEFAULT 1,
+     PRIMARY KEY (SubUnitID)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS tbl_unitconversion (
+     MasterUnitID CHAR(10) NOT NULL,
+     SubUnitID CHAR(10) NOT NULL,
+     NoOfUnits FLOAT NOT NULL DEFAULT 0,
+     Enable TINYINT(1) NOT NULL DEFAULT 1,
+     PRIMARY KEY (MasterUnitID, SubUnitID)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  /* Branches */
+  `CREATE TABLE IF NOT EXISTS tbl_locationmaster (
+     LocCode CHAR(10) NOT NULL,
+     LocDes VARCHAR(50) NOT NULL,
+     Address VARCHAR(300) NOT NULL DEFAULT ' ',
+     Enable TINYINT(1) NOT NULL DEFAULT 1,
+     PRIMARY KEY (LocCode)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  /* Suppliers */
+  `CREATE TABLE IF NOT EXISTS tbl_suppliermaster (
+     SupID CHAR(10) NOT NULL,
+     SupName VARCHAR(200) NOT NULL,
+     SuppAdd1 VARCHAR(200) NOT NULL DEFAULT ' ',
+     ContactNO VARCHAR(100) NOT NULL DEFAULT ' ',
+     Emails VARCHAR(100) NOT NULL DEFAULT ' ',
+     Web VARCHAR(50) NOT NULL DEFAULT ' ',
+     DebtAmount FLOAT NOT NULL DEFAULT 0,
+     CreateUser VARCHAR(50) NOT NULL DEFAULT '0',
+     CreateDatetime DATETIME NOT NULL,
+     Remarks VARCHAR(260) NOT NULL DEFAULT ' ',
+     Enable TINYINT(1) NOT NULL DEFAULT 1,
+     PRIMARY KEY (SupID)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  /* Categories 1 - 4 */
+  ...[1, 2, 3, 4].map(
+    (n) => `CREATE TABLE IF NOT EXISTS tbl_itemcategory${n} (
+     CatCode CHAR(10) NOT NULL,
+     CatDes VARCHAR(50) NOT NULL,
+     Enable TINYINT(1) NOT NULL DEFAULT 1,
+     PRIMARY KEY (CatCode)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  ),
+  /* Items and services */
+  `CREATE TABLE IF NOT EXISTS tbl_itemmaster (
+     LocCode CHAR(10) NOT NULL,
+     ItemCode CHAR(15) NOT NULL,
+     ServiceItem TINYINT(1) NOT NULL DEFAULT 0,
+     MOF CHAR(1) NOT NULL DEFAULT 'O',
+     ItemDes VARCHAR(50) NOT NULL,
+     ItemPrintDes VARCHAR(50) NOT NULL DEFAULT ' ',
+     MasterUnitID CHAR(10) NOT NULL,
+     Category1 CHAR(10) NOT NULL DEFAULT '',
+     Category2 CHAR(10) NOT NULL DEFAULT '',
+     Category3 CHAR(10) NOT NULL DEFAULT '',
+     Category4 CHAR(10) NOT NULL DEFAULT '',
+     SupID CHAR(10) NOT NULL DEFAULT '0',
+     ROL FLOAT NOT NULL DEFAULT 0,
+     ROQ FLOAT NOT NULL DEFAULT 0,
+     MinQty FLOAT NOT NULL DEFAULT 0,
+     MaxQty FLOAT NOT NULL DEFAULT 0,
+     RawCost FLOAT NOT NULL DEFAULT 0,
+     CostMarkup FLOAT NOT NULL DEFAULT 0,
+     OverallCost FLOAT NOT NULL DEFAULT 0,
+     SalesMargin FLOAT NOT NULL DEFAULT 0,
+     StockBalance FLOAT NOT NULL DEFAULT 0,
+     ExpiryItem TINYINT(1) NOT NULL DEFAULT 0,
+     Retailprice FLOAT NOT NULL DEFAULT 0,
+     WSApp TINYINT(1) NOT NULL DEFAULT 0,
+     WSQty FLOAT NOT NULL DEFAULT 0,
+     WSPrice FLOAT NOT NULL DEFAULT 0,
+     PackedItem TINYINT(1) NOT NULL DEFAULT 0,
+     PackSize FLOAT NOT NULL DEFAULT 0,
+     PackPrice FLOAT NOT NULL DEFAULT 0,
+     SemiFinishedProd TINYINT(1) NOT NULL DEFAULT 0,
+     SerDuration INT NOT NULL DEFAULT 0,
+     CreateDate DATETIME NOT NULL,
+     CreateBy CHAR(10) NOT NULL DEFAULT '0',
+     UpdDate DATETIME NOT NULL,
+     UpdBy CHAR(10) NOT NULL DEFAULT '0',
+     Enable TINYINT(1) NOT NULL DEFAULT 1,
+     PRIMARY KEY (LocCode, ItemCode)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+];
+
+const CREATE_UNIT_TABLES = [
+  `CREATE TABLE IF NOT EXISTS tbl_unitmaster (
+     MasterUnitID CHAR(10) NOT NULL,
+     UnitDes VARCHAR(50) NOT NULL,
+     Enable TINYINT(1) NOT NULL DEFAULT 1,
+     PRIMARY KEY (MasterUnitID)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS tbl_unitsub (
+     SubUnitID CHAR(10) NOT NULL,
+     SubUnitDes VARCHAR(50) NOT NULL,
+     Enable TINYINT(1) NOT NULL DEFAULT 1,
+     PRIMARY KEY (SubUnitID)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS tbl_unitconversion (
+     MasterUnitID CHAR(10) NOT NULL,
+     SubUnitID CHAR(10) NOT NULL,
+     NoOfUnits FLOAT NOT NULL DEFAULT 0,
+     Enable TINYINT(1) NOT NULL DEFAULT 1,
+     PRIMARY KEY (MasterUnitID, SubUnitID)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+];
+
+const columnCache = new Map();
+
+async function columnsOf(conn, table) {
+  if (columnCache.has(table)) return columnCache.get(table);
+  let rows;
+  try {
+    [rows] = await conn.query(`SHOW COLUMNS FROM \`${table}\``);
+  } catch (err) {
+    throw new Error(
+      `The table ${table} does not exist in this database (${err.code}). ` +
+        "Run `npx prisma db push` once against this database, then run this script again.",
+    );
+  }
+  const columns = rows.map((r) => ({
+    name: r.Field,
+    type: String(r.Type || "").toLowerCase(),
+    nullable: String(r.Null || "").toUpperCase() === "YES",
+    hasDefault:
+      r.Default !== null && r.Default !== undefined && String(r.Default) !== "",
+    isNumber: /int|decimal|float|double|bit/.test(String(r.Type || "").toLowerCase()),
+    isDate: /date|time/.test(String(r.Type || "").toLowerCase()),
+  }));
+  columnCache.set(table, columns);
+  return columns;
+}
+
+/** A safe value for a NOT NULL column the data does not mention. */
+function synthesize(column) {
+  if (column.isNumber) return 0;
+  if (column.isDate) return new Date();
+  return "";
+}
+
+/**
+ * INSERT IGNORE every row with the columns the table really has.
+ * Values the row does not provide are filled only when the column is NOT NULL
+ * and has no default — that is what makes this work on old table layouts.
+ */
+async function insertRows(conn, table, rows, keyColumns) {
+  if (rows.length === 0) return { inserted: 0, existed: 0, filled: [] };
+
+  const columns = await columnsOf(conn, table);
+  const provided = new Set();
+  for (const row of rows) for (const k of Object.keys(row)) provided.add(k);
+
+  const filled = [];
+  const names = [];
+  for (const column of columns) {
+    if (provided.has(column.name)) {
+      names.push(column.name);
+      continue;
+    }
+    if (column.nullable || column.hasDefault) continue; // let MySQL handle it
+    names.push(column.name);
+    filled.push(column.name);
+  }
+
+  const BATCH = 100;
+  let inserted = 0;
+
+  for (let start = 0; start < rows.length; start += BATCH) {
+    const batch = rows.slice(start, start + BATCH);
+    const placeholders = [];
+    const values = [];
+    for (const row of batch) {
+      placeholders.push(`(${names.map(() => "?").join(",")})`);
+      for (const name of names) {
+        if (Object.prototype.hasOwnProperty.call(row, name)) {
+          values.push(row[name]);
+        } else {
+          const column = columns.find((c) => c.name === name);
+          values.push(synthesize(column));
+        }
+      }
+    }
+    const sql =
+      `INSERT IGNORE INTO \`${table}\` (${names.map((n) => `\`${n}\``).join(",")}) ` +
+      `VALUES ${placeholders.join(",")}`;
+    try {
+      const [result] = await conn.query(sql, values);
+      inserted += Number(result.affectedRows || 0);
+    } catch (err) {
+      if (DRY_RUN) continue;
+      console.error(
+        `\n  ✗ ${table}: MySQL refused a batch — ${err.code}: ${err.message}\n` +
+          `    Nothing else was changed. Send me this line and I will match that column too.`,
+      );
+      return { inserted, existed: 0, filled, error: err };
+    }
+  }
+
+  return { inserted, existed: rows.length - inserted, filled };
+}
+
+const padCode = (value, length = 10) =>
+  String(value ?? "").trim().toUpperCase().padEnd(length, " ");
+
+async function scalar(conn, sql, values = []) {
+  try {
+    const [rows] = await conn.query(sql, values);
+    const first = rows[0] || {};
+    return Number(Object.values(first)[0] || 0);
+  } catch {
+    return -1; // table not created yet — reported as “-” in the summary
+  }
+}
+
+/* ── 7. run ──────────────────────────────────────────────────────────────── */
+
+async function main() {
+  const [user, passPart] = (() => {
+    const m = url.match(/^mysql:\/\/([^:/?#]*)(?::([^@]*))?@/i);
+    return m ? [m[1], m[2] || ""] : ["", ""];
+  })();
+
+  const target = url.replace(/\/\/[^@]*@/, "//***@");
+  console.log(`\nAdds the salon catalogue — ${target}`);
+  console.log(`Mode: ${DRY_RUN ? "DRY RUN (nothing is written)" : "LIVE"}\n`);
+
+  /* --plan: build the catalogue in memory and stop — useful to see exactly
+     what would be written on a machine that cannot reach the database yet. */
+  if (PLAN_ONLY) {
+    const { rows: plannedItems, warnings } = buildItemRows();
+    const plannedServices = buildServiceRows();
+    console.log("Tables that will be filled (created only when missing):\n");
+    console.log(`   tbl_unitmaster      ${UNITS.length} units`);
+    console.log(`   tbl_unitsub         ${SUB_UNITS.length} sub units`);
+    console.log(`   tbl_unitconversion  ${UNIT_CONVERSIONS.length} conversions`);
+    console.log(`   tbl_locationmaster  ${LOCATIONS.length} branches`);
+    console.log(`   tbl_suppliermaster  ${SUPPLIERS.length} suppliers`);
+    console.log(`   tbl_itemcategory1   ${CATEGORY_1.length} categories (item types + service groups)`);
+    console.log(`   tbl_itemcategory2   ${CATEGORY_2.length} brands`);
+    console.log(`   tbl_itemcategory3   ${CATEGORY_3.length} usage areas`);
+    console.log(`   tbl_itemcategory4   ${CATEGORY_4.length} price segments`);
+    console.log(`   tbl_itemmaster      ${plannedItems.length} items (ServiceItem = 0)`);
+    console.log(`   tbl_itemmaster      ${plannedServices.length} services (ServiceItem = 1)\n`);
+    console.log("Items per category:");
+    warnings.forEach((w) => console.log(`   ! ${w}`));
+    console.log("\nA few examples:");
+    for (const row of [plannedItems[0], plannedItems[1], plannedItems[40], plannedServices[0], plannedServices[10]]) {
+      if (!row) continue;
+      console.log(
+        `   ${row.ItemCode}  ${String(row.ItemDes).padEnd(48)} ${String(row.MasterUnitID).padEnd(11)} ` +
+          `LKR ${Number(row.Retailprice).toLocaleString()}${Number(row.SerDuration) ? `  ${row.SerDuration} min` : ""}`,
+      );
+    }
+    console.log("\nNothing was written (--plan).\n");
+    return;
+  }
+
+  const conn = await mysql.createConnection({ uri: url, multipleStatements: false });
+
+  try {
+    /* 0 — make sure every table the seed writes to exists -------------- */
+    console.log("0. Tables (created only when missing)");
+    for (const sql of CREATE_STATEMENTS) {
+      const table = (sql.match(/tbl_\w+/) || [""])[0];
+      if (DRY_RUN) {
+        console.log(`   · ${table}: would be created if missing`);
+        continue;
+      }
+      await conn.query(sql);
+      console.log(`   · ${table}: ready`);
+    }
+    columnCache.clear(); // the shapes may have just been created
+
+    /* 1 — units -------------------------------------------------------- */
+    console.log("\n1. Units");
+
+    const unitRows = UNITS.map(([code, des]) => ({
+      MasterUnitID: padCode(code),
+      UnitDes: des,
+      Enable: 1,
+    }));
+    const subRows = SUB_UNITS.map(([code, des]) => ({
+      SubUnitID: padCode(code),
+      SubUnitDes: des,
+      Enable: 1,
+    }));
+    const convRows = UNIT_CONVERSIONS.map(([master, sub, qty]) => ({
+      MasterUnitID: padCode(master),
+      SubUnitID: padCode(sub),
+      NoOfUnits: qty,
+      Enable: 1,
+    }));
+
+    for (const [table, rows, label] of [
+      ["tbl_unitmaster", unitRows, "master units"],
+      ["tbl_unitsub", subRows, "sub units"],
+      ["tbl_unitconversion", convRows, "conversions"],
+    ]) {
+      if (DRY_RUN) {
+        console.log(`   · ${label}: ${rows.length} rows ready (not written)`);
+        continue;
+      }
+      const r = await insertRows(conn, table, rows);
+      console.log(
+        `   · ${label}: ${r.inserted} added, ${r.existed} already there` +
+          (r.filled.length ? ` (filled ${r.filled.join(", ")})` : ""),
+      );
+    }
+
+    /* 2 — locations ---------------------------------------------------- */
+    console.log("\n2. Locations");
+    const locationRows = LOCATIONS.map(([code, name, address]) => ({
+      LocCode: padCode(code),
+      LocDes: name,
+      Address: address,
+      Enable: 1,
+    }));
+    if (!DRY_RUN) {
+      const r = await insertRows(conn, "tbl_locationmaster", locationRows);
+      console.log(
+        `   · branches: ${r.inserted} added, ${r.existed} already there` +
+          (r.filled.length
+            ? ` — this table has extra NOT NULL columns, filled with a safe value: ${r.filled.join(", ")}`
+            : ""),
+      );
+    } else {
+      console.log(`   · branches: ${locationRows.length} rows ready (not written)`);
+    }
+
+    /* 3 — suppliers ---------------------------------------------------- */
+    console.log("\n3. Suppliers");
+    const supplierRows = SUPPLIERS.map(
+      ([code, name, address, contact, email, web, remarks, debt]) => ({
+        SupID: padCode(code),
+        SupName: name,
+        SuppAdd1: address,
+        ContactNO: contact,
+        Emails: email,
+        Web: web,
+        DebtAmount: debt,
+        CreateUser: "SEED",
+        CreateDatetime: new Date(),
+        Remarks: remarks,
+        Enable: 1,
+      }),
+    );
+    if (!DRY_RUN) {
+      const r = await insertRows(conn, "tbl_suppliermaster", supplierRows);
+      console.log(
+        `   · suppliers: ${r.inserted} added, ${r.existed} already there` +
+          (r.filled.length
+            ? ` — this table has extra NOT NULL columns, filled with a safe value: ${r.filled.join(", ")}`
+            : ""),
+      );
+    } else {
+      console.log(`   · suppliers: ${supplierRows.length} rows ready (not written)`);
+    }
+
+    /* 4 — categories --------------------------------------------------- */
+    console.log("\n4. Categories (item types, brands, areas, segments)");
+    const catRows = (rows) => rows.map(([code, des]) => ({ CatCode: padCode(code), CatDes: des, Enable: 1 }));
+    for (const [table, rows, label] of [
+      ["tbl_itemcategory1", catRows(CATEGORY_1), "category 1 - item type"],
+      ["tbl_itemcategory2", catRows(CATEGORY_2), "category 2 - brand"],
+      ["tbl_itemcategory3", catRows(CATEGORY_3), "category 3 - usage area"],
+      ["tbl_itemcategory4", catRows(CATEGORY_4), "category 4 - segment"],
+    ]) {
+      if (DRY_RUN) {
+        console.log(`   · ${label}: ${rows.length} rows ready (not written)`);
+        continue;
+      }
+      const r = await insertRows(conn, table, rows);
+      console.log(`   · ${label}: ${r.inserted} added, ${r.existed} already there`);
+    }
+
+    /* which locations get the items? ----------------------------------- */
+    const [locRows] = await conn.query(
+      "SELECT RTRIM(LocCode) AS LocCode, RTRIM(LocDes) AS LocDes FROM tbl_locationmaster WHERE Enable = 1 ORDER BY LocCode",
+    );
+    let locations = locRows.map((r) => ({ code: r.LocCode, name: r.LocDes }));
+    if (ONLY_LOC) {
+      const wanted = locations.find((l) => l.code.toUpperCase() === ONLY_LOC);
+      locations = wanted ? [wanted] : [{ code: ONLY_LOC, name: "(from --locCode)" }];
+    }
+    if (locations.length === 0) {
+      throw new Error(
+        "No enabled location exists, so there is nowhere to put the items. " +
+          "Run the script again without --locCode, or enable a branch in the Locations screen.",
+      );
+    }
+
+    /* 5 — items -------------------------------------------------------- */
+    console.log("\n5. Items (500)");
+    const { rows: itemRows, warnings } = buildItemRows();
+    warnings.forEach((w) => console.log(`   ! ${w}`));
+    const itemRowsPerLocation = [];
+    for (const location of locations) {
+      for (const row of itemRows) {
+        itemRowsPerLocation.push({
+          LocCode: padCode(location.code),
+          ItemCode: row.ItemCode,
+          CreateBy: "SEED",
+          UpdBy: "SEED",
+          CreateDate: new Date(),
+          UpdDate: new Date(),
+          ...row,
+        });
+      }
+    }
+    console.log(
+      `   · ${itemRows.length} items × ${locations.length} location(s) = ` +
+        `${itemRowsPerLocation.length} rows`,
+    );
+    console.log(
+      `   · branches: ${locations.map((l) => `${l.code} (${l.name})`).join(", ")}`,
+    );
+    if (!DRY_RUN) {
+      const r = await insertRows(conn, "tbl_itemmaster", itemRowsPerLocation);
+      console.log(`   · items: ${r.inserted} added, ${r.existed} already there`);
+      if (r.filled.length) console.log(`   · filled extra NOT NULL columns: ${r.filled.join(", ")}`);
+      if (r.error) throw r.error;
+
+      /* The supplier of the rows an EARLIER run of this script left blank -----
+         Older versions wrote no SupID at all (the column then defaults to "0"),
+         and without it the Purchase Order screen cannot show which supplier a
+         shortage belongs to. So the blank supplier is filled in — but only on
+         the codes this script owns, and only while it is still blank: a
+         supplier somebody has already set is never overwritten. */
+      const codesBySupplier = new Map();
+      for (const row of itemRows) {
+        const list = codesBySupplier.get(row.SupID) || [];
+        list.push(row.ItemCode);
+        codesBySupplier.set(row.SupID, list);
+      }
+      let supplierFilled = 0;
+      for (const [supID, codes] of codesBySupplier) {
+        const [res] = await conn.query(
+          `UPDATE tbl_itemmaster SET SupID = ? WHERE ItemCode IN (${codes.map(() => "?").join(",")})` +
+            ` AND (SupID IS NULL OR TRIM(SupID) IN ('', '0'))`,
+          [supID, ...codes],
+        );
+        supplierFilled += Number(res.affectedRows || 0);
+      }
+      if (supplierFilled > 0) {
+        console.log(
+          `   · supplier (SupID) filled in on ${supplierFilled} item row(s) a previous run left blank — ` +
+            "the Purchase Order screen groups Stock Requirements by it",
+        );
+      }
+    } else {
+      console.log("   · items: not written (dry run)");
+    }
+
+    /* 6 — services ----------------------------------------------------- */
+    console.log("\n6. Services (50)");
+    const serviceRows = buildServiceRows();
+    const serviceRowsPerLocation = [];
+    for (const location of locations) {
+      for (const row of serviceRows) {
+        serviceRowsPerLocation.push({
+          LocCode: padCode(location.code),
+          ItemCode: row.ItemCode,
+          CreateBy: "SEED",
+          UpdBy: "SEED",
+          CreateDate: new Date(),
+          UpdDate: new Date(),
+          ...row,
+        });
+      }
+    }
+    console.log(
+      `   · ${serviceRows.length} services × ${locations.length} location(s) = ` +
+        `${serviceRowsPerLocation.length} rows`,
+    );
+    if (!DRY_RUN) {
+      const r = await insertRows(conn, "tbl_itemmaster", serviceRowsPerLocation);
+      console.log(`   · services: ${r.inserted} added, ${r.existed} already there`);
+      if (r.error) throw r.error;
+    } else {
+      console.log("   · services: not written (dry run)");
+    }
+
+    /* report ----------------------------------------------------------- */
+    console.log("\n── what the database now holds ──");
+    if (DRY_RUN) {
+      console.log("   dry run — the counts below are what is ALREADY there\n");
+    }
+    const counts = [
+      ["tbl_unitmaster", "units"],
+      ["tbl_unitsub", "sub units"],
+      ["tbl_unitconversion", "unit conversions"],
+      ["tbl_locationmaster", "locations"],
+      ["tbl_suppliermaster", "suppliers"],
+      ["tbl_itemcategory1", "category 1 rows"],
+      ["tbl_itemcategory2", "category 2 rows"],
+      ["tbl_itemcategory3", "category 3 rows"],
+      ["tbl_itemcategory4", "category 4 rows"],
+    ];
+    for (const [table, label] of counts) {
+      const total = await scalar(conn, `SELECT COUNT(*) AS n FROM \`${table}\``);
+      console.log(`   ${(total < 0 ? "-" : String(total)).padStart(5)}  ${label}`);
+    }
+    const itemsTotal = await scalar(
+      conn,
+      "SELECT COUNT(*) AS n FROM tbl_itemmaster WHERE ServiceItem = 0",
+    );
+    const servicesTotal = await scalar(
+      conn,
+      "SELECT COUNT(*) AS n FROM tbl_itemmaster WHERE ServiceItem = 1",
+    );
+    console.log(`   ${String(itemsTotal).padStart(5)}  items (ServiceItem = 0)`);
+    console.log(`   ${String(servicesTotal).padStart(5)}  services (ServiceItem = 1)`);
+
+    const [sample] = await conn.query(`
+      SELECT RTRIM(ItemCode) AS ItemCode, RTRIM(ItemDes) AS ItemDes,
+             RTRIM(MasterUnitID) AS MasterUnitID, Retailprice, SerDuration
+        FROM tbl_itemmaster
+       WHERE ItemCode IN (?, ?, ?, ?)
+       GROUP BY ItemCode
+    `, [
+      itemCodeFor(ITEM_CODE_START),
+      itemCodeFor(ITEM_CODE_START + 12),
+      itemCodeFor(SERVICE_CODE_START),
+      itemCodeFor(SERVICE_CODE_START + 5),
+    ]);
+    if (sample.length) {
+      console.log("\n   a few rows, exactly as they were stored:");
+      for (const r of sample) {
+        console.log(
+          `     ${r.ItemCode}  ${String(r.ItemDes).padEnd(48)} ${String(r.MasterUnitID).padEnd(11)} ` +
+            `LKR ${Number(r.Retailprice).toLocaleString()}${Number(r.SerDuration) ? `  ${r.SerDuration} min` : ""}`,
+        );
+      }
+    }
+
+    console.log(
+      DRY_RUN
+        ? "\nDry run finished. Nothing was written.\n"
+        : "\nDone. Open the app → Item Master / Services to see them; " +
+            "the booking screen will now offer these services.\n",
+    );
+  } finally {
+    await conn.end();
+  }
+}
+
+main().catch((err) => {
+  console.error("\nThe script stopped:", err?.message || err);
+  if (err?.sqlMessage) console.error("MySQL said:", err.sqlMessage);
+  process.exit(1);
+});

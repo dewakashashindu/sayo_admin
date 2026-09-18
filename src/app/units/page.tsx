@@ -322,31 +322,31 @@ export default function UnitsPage() {
   /* ══ MASTER UNIT state ══ */
   const [masters,    setMasters]    = useState<MasterUnit[]>([]);
   const [selMaster,  setSelMaster]  = useState<MasterUnit | null>(null);
-  const [isNewM,     setIsNewM]     = useState(false);
+  const [isNewM,     setIsNewM]     = useState(true);   // blank form until a row is picked
   const [loadingM,   setLoadingM]   = useState(true);
   const [errorM,     setErrorM]     = useState<string | null>(null);
   const [savingM,    setSavingM]    = useState(false);
   const [deletingM,  setDeletingM]  = useState(false);
-  const [fMasterID,  setFMasterID]  = useState('');
+  const [fMasterID,  setFMasterID]  = useState('(auto-generated)');
   const [fUnitDes,   setFUnitDes]   = useState('');
   const [fMEnable,   setFMEnable]   = useState(true);
 
   /* ══ SUB UNIT state ══ */
   const [subs,      setSubs]      = useState<SubUnit[]>([]);
   const [selSub,    setSelSub]    = useState<SubUnit | null>(null);
-  const [isNewS,    setIsNewS]    = useState(false);
+  const [isNewS,    setIsNewS]    = useState(true);    // blank form until a row is picked
   const [loadingS,  setLoadingS]  = useState(true);
   const [errorS,    setErrorS]    = useState<string | null>(null);
   const [savingS,   setSavingS]   = useState(false);
   const [deletingS, setDeletingS] = useState(false);
-  const [fSubID,    setFSubID]    = useState('');
+  const [fSubID,    setFSubID]    = useState('(auto-generated)');
   const [fSubDes,   setFSubDes]   = useState('');
   const [fSEnable,  setFSEnable]  = useState(true);
 
   /* ══ CONVERSION state ══ */
   const [convs,      setConvs]      = useState<UnitConversion[]>([]);
   const [selConv,    setSelConv]    = useState<UnitConversion | null>(null);
-  const [isNewC,     setIsNewC]     = useState(false);
+  const [isNewC,     setIsNewC]     = useState(true);   // blank form until a row is picked
   const [loadingC,   setLoadingC]   = useState(true);
   const [errorC,     setErrorC]     = useState<string | null>(null);
   const [savingC,    setSavingC]    = useState(false);
@@ -368,7 +368,10 @@ export default function UnitsPage() {
     const res = await apiFetch<MasterUnit[]>(API_MASTER);
     if (res.success && res.data) {
       setMasters(res.data);
-      if (res.data.length > 0) loadMasterForm(res.data[0]);
+      /* Deliberately do NOT load the first row into the form: the panel stays
+         blank so a new unit can be typed straight away. A record appears in the
+         form only when it is SELECTED on the left (handleSelectMaster). */
+      handleNewMaster();
     } else {
       setErrorM(res.message ?? 'Failed to load master units');
     }
@@ -381,7 +384,8 @@ export default function UnitsPage() {
     const res = await apiFetch<SubUnit[]>(API_SUB);
     if (res.success && res.data) {
       setSubs(res.data);
-      if (res.data.length > 0) loadSubForm(res.data[0]);
+      // stays blank — a sub unit is shown only when it is selected
+      handleNewSub();
     } else {
       setErrorS(res.message ?? 'Failed to load sub units');
     }
@@ -394,7 +398,8 @@ export default function UnitsPage() {
     const res = await apiFetch<UnitConversion[]>(API_CONV);
     if (res.success && res.data) {
       setConvs(res.data);
-      if (res.data.length > 0) loadConvForm(res.data[0]);
+      // stays blank — a conversion is shown only when it is selected
+      handleNewConv();
     } else {
       setErrorC(res.message ?? 'Failed to load conversions');
     }
@@ -445,6 +450,15 @@ export default function UnitsPage() {
     setFUnitDes(''); setFMEnable(true);
     setSelMaster(null); setIsNewM(true);
   }
+  /* ═══════════════════════════════════════
+     SAVE CLEARS THE FORM  (asked for in this round)
+     ----------------------------------------------
+     After a successful save the panel goes straight back to a BLANK “new”
+     form, so the next unit can be typed without hunting for a New button.
+     The saved row stays in the list on the left, and the toast says which
+     record was written.
+  ═══════════════════════════════════════ */
+
   async function handleSaveMaster() {
     const trimmed = fUnitDes.trim();
     if (!trimmed) { showToast('Unit Description is required', 'error'); return; }
@@ -460,8 +474,9 @@ export default function UnitsPage() {
         });
         if (!res.success || !res.data) { showToast(res.message ?? 'Save failed', 'error'); return; }
         setMasters((p) => [...p, res.data!].sort((a, b) => a.MasterUnitID.localeCompare(b.MasterUnitID)));
-        loadMasterForm(res.data);
-        showToast(`Master unit "${res.data.UnitDes}" created ✓`);
+        // Form cleared for the next entry (the saved row is in the list).
+        handleNewMaster();
+        showToast(`Master unit "${res.data.UnitDes}" (${res.data.MasterUnitID}) created ✓ — ready for the next one`);
       } else {
         const res = await apiFetch<MasterUnit>(API_MASTER, {
           method: 'PUT',
@@ -470,8 +485,8 @@ export default function UnitsPage() {
         });
         if (!res.success || !res.data) { showToast(res.message ?? 'Update failed', 'error'); return; }
         setMasters((p) => p.map((m) => m.MasterUnitID === fMasterID ? res.data! : m));
-        loadMasterForm(res.data);
-        showToast(`Master unit "${res.data.UnitDes}" updated ✓`);
+        handleNewMaster();
+        showToast(`Master unit "${res.data.UnitDes}" updated ✓ — form cleared`);
       }
     } finally {
       setSavingM(false);
@@ -487,8 +502,7 @@ export default function UnitsPage() {
       if (!res.success) { showToast(res.message ?? 'Delete failed', 'error'); return; }
       const remaining = masters.filter((m) => m.MasterUnitID !== selMaster.MasterUnitID);
       setMasters(remaining);
-      if (remaining.length) { loadMasterForm(remaining[0]); }
-      else { setSelMaster(null); setFMasterID(''); setFUnitDes(''); setFMEnable(true); setIsNewM(false); }
+      handleNewMaster();   // blank again — ready for the next entry
       showToast('Master unit deleted');
     } finally {
       setDeletingM(false);
@@ -527,8 +541,8 @@ export default function UnitsPage() {
         });
         if (!res.success || !res.data) { showToast(res.message ?? 'Save failed', 'error'); return; }
         setSubs((p) => [...p, res.data!].sort((a, b) => a.SubUnitID.localeCompare(b.SubUnitID)));
-        loadSubForm(res.data);
-        showToast(`Sub unit "${res.data.SubUnitDes}" created ✓`);
+        handleNewSub();
+        showToast(`Sub unit "${res.data.SubUnitDes}" (${res.data.SubUnitID}) created ✓ — ready for the next one`);
       } else {
         const res = await apiFetch<SubUnit>(API_SUB, {
           method: 'PUT',
@@ -537,8 +551,8 @@ export default function UnitsPage() {
         });
         if (!res.success || !res.data) { showToast(res.message ?? 'Update failed', 'error'); return; }
         setSubs((p) => p.map((s) => s.SubUnitID === fSubID ? res.data! : s));
-        loadSubForm(res.data);
-        showToast(`Sub unit "${res.data.SubUnitDes}" updated ✓`);
+        handleNewSub();
+        showToast(`Sub unit "${res.data.SubUnitDes}" updated ✓ — form cleared`);
       }
     } finally {
       setSavingS(false);
@@ -554,8 +568,7 @@ export default function UnitsPage() {
       if (!res.success) { showToast(res.message ?? 'Delete failed', 'error'); return; }
       const remaining = subs.filter((s) => s.SubUnitID !== selSub.SubUnitID);
       setSubs(remaining);
-      if (remaining.length) { loadSubForm(remaining[0]); }
-      else { setSelSub(null); setFSubID(''); setFSubDes(''); setFSEnable(true); setIsNewS(false); }
+      handleNewSub();      // blank again — ready for the next entry
       showToast('Sub unit deleted');
     } finally {
       setDeletingS(false);
@@ -600,8 +613,8 @@ export default function UnitsPage() {
         });
         if (!res.success || !res.data) { showToast(res.message ?? 'Save failed', 'error'); return; }
         setConvs((p) => [...p, res.data!]);
-        loadConvForm(res.data);
-        showToast('Conversion created ✓');
+        handleNewConv();
+        showToast('Conversion created ✓ — ready for the next one');
       } else {
         const res = await apiFetch<UnitConversion>(API_CONV, {
           method: 'PUT',
@@ -619,8 +632,8 @@ export default function UnitsPage() {
         setConvs((p) => p.map((c) =>
           c.MasterUnitID === selConv?.MasterUnitID && c.SubUnitID === selConv?.SubUnitID ? res.data! : c
         ));
-        loadConvForm(res.data);
-        showToast('Conversion updated ✓');
+        handleNewConv();
+        showToast('Conversion updated ✓ — form cleared');
       }
     } finally {
       setSavingC(false);
@@ -639,8 +652,7 @@ export default function UnitsPage() {
       if (!res.success) { showToast(res.message ?? 'Delete failed', 'error'); return; }
       const remaining = convs.filter((c) => !(c.MasterUnitID === selConv.MasterUnitID && c.SubUnitID === selConv.SubUnitID));
       setConvs(remaining);
-      if (remaining.length) { loadConvForm(remaining[0]); }
-      else { setSelConv(null); setFCMasterID(''); setFCSubID(''); setFCUnits(0); setFCEnable(true); setIsNewC(false); }
+      handleNewConv();     // blank again — ready for the next entry
       showToast('Conversion deleted');
     } finally {
       setDeletingC(false);
@@ -804,9 +816,14 @@ export default function UnitsPage() {
                 <div style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column', overflow:'hidden' }}>
                   <div style={{ background:'#1e3a40', borderRadius:'12px 12px 0 0', padding:'14px 18px', flexShrink:0 }}>
                     <p style={{ color:'rgba(255,255,255,0.55)', fontSize:10, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase' }}>
-                      {isNewM ? 'New Master Unit' : selMaster ? 'Edit Master Unit' : 'No Unit Selected'}
+                      {isNewM ? 'New master unit' : selMaster ? 'Edit master unit' : 'No unit selected'}
                     </p>
                     <p style={{ color:'#fff', fontSize:18, fontWeight:800, marginTop:2 }}>UNIT MASTER DETAIL</p>
+                    <p style={{ color:'rgba(255,255,255,0.62)', fontSize:11, marginTop:3 }}>
+                      {isNewM
+                        ? 'The panel stays empty — type a description and Save. Pick a unit on the left to edit it.'
+                        : `Editing ${fMasterID}`}
+                    </p>
                   </div>
 
                   <div style={{ flex:1, overflowY:'auto', padding:'14px', display:'flex', flexDirection:'column', gap:13, background:'#e8f0f1' }}>
@@ -932,9 +949,14 @@ export default function UnitsPage() {
                 <div style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column', overflow:'hidden' }}>
                   <div style={{ background:'#1e3a40', borderRadius:'12px 12px 0 0', padding:'14px 18px', flexShrink:0 }}>
                     <p style={{ color:'rgba(255,255,255,0.55)', fontSize:10, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase' }}>
-                      {isNewS ? 'New Sub Unit' : selSub ? 'Edit Sub Unit' : 'No Unit Selected'}
+                      {isNewS ? 'New sub unit' : selSub ? 'Edit sub unit' : 'No sub unit selected'}
                     </p>
                     <p style={{ color:'#fff', fontSize:18, fontWeight:800, marginTop:2 }}>SUB UNIT DETAIL</p>
+                    <p style={{ color:'rgba(255,255,255,0.62)', fontSize:11, marginTop:3 }}>
+                      {isNewS
+                        ? 'The panel stays empty — type a description and Save. Pick a sub unit on the left to edit it.'
+                        : `Editing ${fSubID}`}
+                    </p>
                   </div>
 
                   <div style={{ flex:1, overflowY:'auto', padding:'14px', display:'flex', flexDirection:'column', gap:13, background:'#e8f0f1' }}>
@@ -1069,9 +1091,14 @@ export default function UnitsPage() {
                 <div style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column', overflow:'hidden' }}>
                   <div style={{ background:'#1e3a40', borderRadius:'12px 12px 0 0', padding:'14px 18px', flexShrink:0 }}>
                     <p style={{ color:'rgba(255,255,255,0.55)', fontSize:10, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase' }}>
-                      {isNewC ? 'New Unit Conversion' : selConv ? 'Edit Unit Conversion' : 'No Conversion Selected'}
+                      {isNewC ? 'New unit conversion' : selConv ? 'Edit unit conversion' : 'No conversion selected'}
                     </p>
                     <p style={{ color:'#fff', fontSize:18, fontWeight:800, marginTop:2 }}>UNIT CONVERSION DETAIL</p>
+                    <p style={{ color:'rgba(255,255,255,0.62)', fontSize:11, marginTop:3 }}>
+                      {isNewC
+                        ? 'The panel stays empty — choose the two units and Save. Pick a conversion on the left to edit it.'
+                        : `Editing ${fCMasterID} → ${fCSubID}`}
+                    </p>
                   </div>
 
                   <div style={{ flex:1, overflowY:'auto', padding:'14px', display:'flex', flexDirection:'column', gap:13, background:'#e8f0f1' }}>

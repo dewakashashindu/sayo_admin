@@ -88,7 +88,7 @@ model Tbl_SupplierMaster {
 }
 
 model Tbl_Recipes {
-  MenuItmID    String @db.Char(10)
+  MenuItmID    String @db.Char(15)
   RowItemCode  String @db.Char(15)
   MasterUnitID String @default("") @db.Char(10)
   SubUnitID    String @db.Char(10)
@@ -374,7 +374,7 @@ model tbl_ItemDetail {
 model tbl_billdetail {
   LocCode       String @db.Char(10)
   BillNo        String @db.Char(15)
-  ItemID        String @db.Char(10)
+  ItemID        String @db.Char(15)
   Qty           Float  @default(0)
   SalesPrice    Float  @default(0)
   TotalItmPrice Float  @default(0)
@@ -429,7 +429,7 @@ model tbl_bookingservicedetail {
   LocCode         String @db.Char(10)
   BookingID       String @db.Char(10)
   GuessID         String @db.Char(10)
-  ServiceItemID   String @db.Char(10)
+  ServiceItemID   String @db.Char(15)
   Qty             String @db.Char(10)
   ItemPrice       Float  @default(0)
   TechID          String @db.Char(10)
@@ -447,7 +447,7 @@ model Tbl_BookingServiceItemAddTech {
   LocCode       String @db.Char(10)
   BookingID     String @db.Char(10)
   GuessID       String @db.Char(10)
-  ServiceItemID String @db.Char(10)
+  ServiceItemID String @db.Char(15)
   TechID        String @db.Char(10)
 
   @@id([LocCode, BookingID, GuessID, ServiceItemID, TechID])
@@ -460,8 +460,8 @@ model Tbl_BookingServiceRecipe {
   LocCode       String  @db.Char(10)
   BookingID     String  @db.Char(10)
   GuessID       String  @db.Char(10)
-  ServiceItemID String  @db.Char(10)
-  RawItemCode   String  @db.Char(10)
+  ServiceItemID String  @db.Char(15)
+  RawItemCode   String  @db.Char(15)
   MasterUnitID  String  @default(" ") @db.Char(10)
   SubUnitID     String  @db.Char(10)
   QTY           Float
@@ -517,6 +517,11 @@ model tbl_taxes {
   TaxDescription String  @db.VarChar(50)
   TaxPrecentage  Float   @default(0)
   Enable         Boolean @default(true)
+  // The live table also carries ListingOrder INT NULL, ServiceCharge BIT(1) and
+  // ItemBasedTax BIT(1). They are deliberately NOT declared here: Prisma maps
+  // Boolean to TINYINT(1), so `db push` would try to convert those BIT columns
+  // on the salon database. They are read with raw SQL instead — see
+  // src/lib/billingTaxes.ts and src/app/api/taxes/route.ts.
 }
 
 model tbl_technicianspecilities {
@@ -599,4 +604,111 @@ model tbl_userdetails {
 model tbl_usergroups {
   GroupId  String @id @db.Char(10)
   GroupDes String @db.VarChar(50)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Purchase Order / GRN            (scripts/add-po-grn-tables.sql)
+// ---------------------------------------------------------------------
+// Tables come from the legacy VB application. Two additions that make a
+// legacy table usable from a web app are marked "added":
+// · LineNo        — every table needs a key; it also lets the same item
+// sit on two lines (the legacy screen allowed that)
+// · UpdItemPrice  — the GRN may push its RetailPrice into tbl_itemmaster;
+// the flag records whether the user asked for that
+// ItemCode is CHAR(15) like every other item-code column in this project.
+// ─────────────────────────────────────────────────────────────────────────
+model Tbl_POHeader {
+  LocCode     String    @default("") @db.Char(10)
+  PONO        String    @default("") @db.Char(10)
+  PODate      DateTime  @db.DateTime(0)
+  DueDate     DateTime  @db.DateTime(0)
+  SupID       String    @default("") @db.Char(10)
+  NetTotal    Float     @default(0)
+  UserID      String    @default("") @db.Char(10)
+  Remarks     String    @default("") @db.VarChar(1500)
+  DeliAdd     String    @default("") @db.VarChar(100)
+  TxnDate     DateTime  @db.DateTime(0)
+  SysSerialNo String    @default("") @db.Char(10)
+  ConUserID   String    @default("") @db.Char(10)
+  Confirmed   String    @default("N") @db.Char(1)
+  ConDatetime DateTime? @db.DateTime(0)
+
+  details Tbl_PODetails[]
+
+  @@id([LocCode, PONO])
+  @@map("tbl_poheader")
+}
+
+model Tbl_PODetails {
+  LocCode        String @default("") @db.Char(10)
+  PONo           String @default("") @db.Char(10)
+  LineNo         Int    @default(0)
+  ItemCode       String @default("") @db.Char(15)
+  UnitID         String @default("") @db.Char(10)
+  CostPrice      Float  @default(0)
+  POQty          Float  @default(0)
+  ItemValue      Float  @default(0)
+  DirectPOConfNo String @default("") @db.Char(10)
+  GRNQty         Float  @default(0)
+  GRNNOs         String @default("") @db.VarChar(500)
+
+  header Tbl_POHeader @relation(fields: [LocCode, PONo], references: [LocCode, PONO])
+
+  @@id([LocCode, PONo, LineNo])
+  @@map("tbl_podetails")
+}
+
+model Tbl_GRNHeader {
+  LocCode     String    @default("") @db.Char(10)
+  GRNNO       String    @default("") @db.VarChar(15)
+  GRNDate     DateTime  @db.DateTime(0)
+  SupID       String    @default("") @db.Char(10)
+  SupInvNo    String    @default("") @db.VarChar(20)
+  GrossTotal  Float     @default(0)
+  DisVal      Float     @default(0)
+  Adjestment  Float     @default(0)
+  NetTotal    Float     @default(0)
+  UserID      String    @default("") @db.Char(10)
+  Remarks     String    @default("") @db.VarChar(400)
+  TxnDate     DateTime  @db.DateTime(0)
+  SysSerialNo Float     @default(0)
+  Confirmed   String    @default("N") @db.Char(1)
+  ConUserID   String    @default("") @db.Char(10)
+  ConDatetime DateTime? @db.DateTime(0)
+  GRNTYPE     String    @default("GR") @db.Char(2)
+  // which purchase order this receipt belongs to — ' ' for a DIRECT GRN.
+  // scripts/add-po-grn-tables.sql has always had it; the model was missing it,
+  // so a database created by `prisma db push` could not store a PO-backed GRN.
+  PONO        String    @default(" ") @db.Char(10)
+
+  details Tbl_GRNDetails[]
+
+  @@id([LocCode, GRNNO])
+  @@map("tbl_grnheader")
+}
+
+model Tbl_GRNDetails {
+  LocCode         String    @default("") @db.Char(10)
+  GRNNo           String    @default("") @db.VarChar(15)
+  LineNo          Int       @default(0)
+  ItemCode        String    @default("") @db.Char(15)
+  UnitID          String    @default("") @db.Char(15)
+  BatchNo         String    @default("") @db.VarChar(50)
+  CostPrice       Float     @default(0)
+  RetailPrice     Float     @default(0)
+  GRNQty          Float     @default(0)
+  FreeQty         Float     @default(0)
+  ItemValue       Float     @default(0)
+  ExpDate         DateTime? @db.DateTime(0)
+  DirectGRNConfNo String    @default("") @db.VarChar(15)
+  RETYN           Boolean   @default(false)
+  RETQTY          Float     @default(0)
+  RETVAL          Float     @default(0)
+  PONO            String    @default("") @db.Char(10)
+  UpdItemPrice    Boolean   @default(false)
+
+  header Tbl_GRNHeader @relation(fields: [LocCode, GRNNo], references: [LocCode, GRNNO])
+
+  @@id([LocCode, GRNNo, LineNo])
+  @@map("tbl_grndetails")
 }

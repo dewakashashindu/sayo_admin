@@ -24,7 +24,7 @@ function check(label: string, ok: boolean, detail = "") {
 async function resetCounters() {
   await prisma.$executeRaw`
     UPDATE tbl_serials SET SeriNo = '0000000', SeriDate = NULL
-     WHERE RTRIM(SeriCode) IN ('BK', 'CUS')
+     WHERE RTRIM(SeriCode) IN ('BK', 'CUS', 'INV')
   `;
 }
 
@@ -95,6 +95,14 @@ async function main() {
   check("CUS counts from its own series",
     cus1 === "CUS0000001" && cus2 === "CUS0000002",
     [cus1, cus2].join(", "));
+  // ── the bill series behaves exactly the same way ─────────────────────────
+  const inv1 = await nextSerialTx(prisma, SERIAL_CODES.invoice);
+  const inv2 = await nextSerialTx(prisma, SERIAL_CODES.invoice);
+  check("bill numbers are INV0000001/2",
+    inv1 === "INV0000001" && inv2 === "INV0000002",
+    [inv1, inv2].join(", "));
+  check("a bill number fits tbl_billheader.BillNo char(15)", inv1.length <= 15, inv1);
+
   check("BK was not affected by the CUS calls",
     bk === `BK${String(after + 1).padStart(7, "0")}`, bk);
 

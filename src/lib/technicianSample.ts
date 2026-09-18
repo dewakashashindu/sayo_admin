@@ -2,15 +2,65 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared types + sample data for the "Technician's Appointments" screens.
 //
-// • SAMPLE_TECHNICIAN_NAME = the demo technician (Amali Fernando).
-//   Later, when technician login exists, replace getLoggedInTechnicianName()
-//   to read the real logged-in technician (e.g. from localStorage 'technician'
-//   or a session) instead of this constant.
+// • SAMPLE_TECHNICIAN_NAME = the demo technician (Amali Fernando). The screens
+//   no longer guess who is signed in from it: they resolve the technician from
+//   ?technician= → the staff session (/api/auth/admin-me) → the name saved on
+//   this device → and fall back to the WHOLE day of bookings, never to an
+//   empty screen. getLoggedInTechnicianName() stays as the last-resort label.
 // • buildSampleAppointments() is a FALLBACK shown only when the real API
 //   (/api/appointments) is unreachable or returns nothing for the technician.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SAMPLE_TECHNICIAN_NAME = "Amali Fernando";
+
+/** localStorage key older builds used to remember the technician's name. */
+export const TECHNICIAN_STORAGE_KEY = "technician";
+
+/** Name saved on this device by an older build ("" when nothing usable). */
+export function readSavedTechnicianName(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const raw = window.localStorage.getItem(TECHNICIAN_STORAGE_KEY);
+    if (!raw) return "";
+    const parsed = JSON.parse(raw) as { name?: string; UserName?: string };
+    return (parsed?.name || parsed?.UserName || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+/** Does a directory entry answer to `value` (its UserId or its UserName)? */
+export function technicianIdentityMatches(
+  entry: { UserId?: string; UserName?: string } | undefined | null,
+  value: string,
+): boolean {
+  const key = (value || "").trim().toUpperCase();
+  if (!entry || !key) return false;
+  return (
+    (entry.UserId || "").trim().toUpperCase() === key ||
+    (entry.UserName || "").trim().toUpperCase() === key
+  );
+}
+
+/**
+ * The technician who is signed in.
+ *   1. the staff session (`/api/auth/admin-me`) — the real answer,
+ *   2. the name saved on this device (older builds),
+ *   3. the demo constant, so the demo screens still render.
+ */
+export async function resolveLoggedInTechnicianName(): Promise<string> {
+  try {
+    const res = await fetch("/api/auth/admin-me", { cache: "no-store" });
+    if (res.ok) {
+      const json = (await res.json()) as { user?: { name?: string } };
+      const name = String(json?.user?.name || "").trim();
+      if (name) return name;
+    }
+  } catch {
+    /* signed out or offline — fall through */
+  }
+  return readSavedTechnicianName() || SAMPLE_TECHNICIAN_NAME;
+}
 
 /** Later: return the logged-in technician's display name here. */
 export function getLoggedInTechnicianName(): string {
@@ -53,6 +103,10 @@ export interface TechAppointment {
   serviceSchedule?: TechServiceSchedule[];
   date: string;
   timeSlot: string;
+  /** Earliest scheduled service start — the time shown inside the booking. */
+  scheduleStartTime?: string;
+  /** Latest scheduled service end ("" when the booking has no schedule). */
+  scheduleEndTime?: string;
   status: "confirmed" | "pending" | "cancelled" | "ongoing" | "done";
   mode: string;
   location: string;

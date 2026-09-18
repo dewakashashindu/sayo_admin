@@ -14,6 +14,10 @@ const PUBLIC_PAGES = ['/booking', '/admin-login', '/login', '/register', '/forgo
 
 /* API routes the public booking flow needs (method-aware) */
 const PUBLIC_API: { path: string; methods: string[] }[] = [
+  /* Database health — must stay public: when the database is unreachable
+     nobody can sign in, and this is the page that explains why. It never
+     returns the password, only host / database / user and the error. */
+  { path: '/api/health',                methods: ['GET'] },
   { path: '/api/booking-catalog',       methods: ['GET'] },
   { path: '/api/bookings',              methods: ['POST'] },
   { path: '/api/bookings/availability', methods: ['GET'] },

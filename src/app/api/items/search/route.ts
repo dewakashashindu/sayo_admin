@@ -38,6 +38,10 @@ export async function GET(req: NextRequest) {
         MasterUnitID: true,
         Retailprice: true,
         ServiceItem: true,
+        // Cost fields — the PO / GRN lines need the cost price. Additive:
+        // the bill screen and the recipe editor simply ignore it.
+        RawCost: true,
+        OverallCost: true,
       },
       // Stock items (ingredients) first, then services.
       orderBy: [{ ServiceItem: "asc" }, { ItemDes: "asc" }],
@@ -52,6 +56,7 @@ export async function GET(req: NextRequest) {
         des: (r.ItemPrintDes || "").trim() || r.ItemDes.trim(),
         masterUnitID: r.MasterUnitID.trim(),
         retailPrice: Number(r.Retailprice || 0),
+        costPrice: Number(r.OverallCost || r.RawCost || 0),
         serviceItem: Boolean(r.ServiceItem),
       })),
     });

@@ -1,6 +1,7 @@
 // src/app/api/services/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { ITEM_CODE_LENGTH } from "@/lib/itemCode";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -270,7 +271,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // An item code is the identity of the item and every code column is
+    // CHAR(15) — a longer code would be silently cut by the database.
     const itemCode = body.itemCode.trim().toUpperCase();
+    if (itemCode.length > ITEM_CODE_LENGTH) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `Item codes are at most ${ITEM_CODE_LENGTH} characters — "${itemCode}" is ${itemCode.length}.`,
+        },
+        { status: 400 },
+      );
+    }
     const serviceItem = bool(body.serviceItem);
     const requestedDetails: LocationInput[] = Array.isArray(
       body.locationDetails,

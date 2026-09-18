@@ -3,6 +3,33 @@
 import React, { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
+/* ────────────────────────────────────────────────────────────────────────────
+   LOGIN SCREEN — “look through the window” layout
+   ----------------------------------------------------------------------------
+   The dark-green colour of the old screen is now a PHOTO that covers the whole
+   window. The card's left panel has no picture of its own any more: it is a
+   cut-out that shows the exact same slice of that background, because the
+   background is pinned to the viewport (`background-attachment: fixed`).
+   Result: the photo runs seamlessly behind the card — like looking out of a
+   window.
+
+   ▸ Use your own picture: drop it into `public/` (e.g. public/login-bg.jpg) and
+     change the two lines below to  const BACKGROUND_IMAGE = "url('/login-bg.jpg')";
+   ▸ Both the page and the window panel read the same constant, so they can
+     never drift apart.
+   ──────────────────────────────────────────────────────────────────────────── */
+const BACKGROUND_IMAGE =
+  "url('https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?q=80&w=1920&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D')";
+
+/* Same picture, same size, same position, pinned to the window → the panel and
+   the page background line up pixel for pixel. */
+const WINDOW_BG: React.CSSProperties = {
+  backgroundImage: BACKGROUND_IMAGE,
+  backgroundSize: 'cover',
+  backgroundPosition: 'center',
+  backgroundAttachment: 'fixed',
+};
+
 function LoginForm() {
   const params = useSearchParams();
 
@@ -116,40 +143,45 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    // Background with correct angle cut (Bottom-Left Dark to Top-Right Light)
-    <div className="relative min-h-screen w-full flex items-center justify-center bg-[linear-gradient(150deg,#1d2627_62%,#ffffff_62%)] overflow-hidden p-6">
+    /* The whole window is the picture now — no more flat dark-green gradient. */
+    <div
+      className="relative min-h-screen w-full flex items-center justify-center overflow-hidden p-6 bg-cover bg-center bg-fixed"
+      style={{ backgroundImage: BACKGROUND_IMAGE }}
+    >
+      {/* Soft veil so the white card and the gold logo stay readable on the photo */}
+      <div className="absolute inset-0 bg-gradient-to-br from-[#0b1614]/75 via-[#12211f]/45 to-[#0b1614]/65" />
 
       {/* Top Right Logo */}
-      <div className="absolute top-6 right-8 flex flex-col items-center justify-center text-[#d4a359]">
-        <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
+      <div className="absolute top-6 right-8 z-10 flex flex-col items-center justify-center text-[#d4a359]">
+        <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 drop-shadow">
           <path d="M12 3c-1.2 2.2-2.8 4.2-4.5 6 1.7 1.8 3.3 3.8 4.5 6 1.2-2.2 2.8-4.2 4.5-6-1.7-1.8-3.3-3.8-4.5-6z" />
         </svg>
-        <span className="text-[10px] font-semibold tracking-widest text-[#d4a359] uppercase mt-0.5">SAYO</span>
+        <span className="text-[10px] font-semibold tracking-widest text-[#d4a359] uppercase mt-0.5 drop-shadow">SAYO</span>
       </div>
 
-      {/* Main Card Container with inner padding */}
-      <div className="w-[880px] max-w-full h-[500px] bg-white rounded-[24px] p-4 flex shadow-2xl">
+      {/* Main Card */}
+      <div className="relative z-10 w-[880px] max-w-full md:h-[500px] bg-white rounded-[24px] p-4 flex flex-col md:flex-row shadow-2xl">
 
-        {/* Left Side - Image Container with Rounded Corners & Padding Effect */}
+        {/* Left side — the WINDOW. No picture of its own: the same fixed
+            background shows through it, flush with the page behind the card. */}
         <div
-          className="relative w-[45%] h-full rounded-[18px] overflow-hidden bg-cover bg-center p-6 flex flex-col justify-start"
-          style={{
-            backgroundImage: `url('https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?q=80&w=1000&auto=format&fit=crop')`
-          }}
+          className="relative w-full md:w-[45%] h-[190px] md:h-full rounded-[18px] overflow-hidden p-6 flex flex-col justify-start"
+          style={WINDOW_BG}
         >
-          {/* Overlay Text */}
-          <div className="z-10">
-            <h2 className="text-[#d4a359] text-xl font-bold tracking-wider uppercase">
+          {/* gentle shading inside the window so the titles keep their contrast */}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-black/25" />
+          <div className="relative z-10">
+            <h2 className="text-[#e3b467] text-xl font-bold tracking-wider uppercase drop-shadow-[0_1px_6px_rgba(0,0,0,0.6)]">
               SAYO BEAUTY
             </h2>
-            <p className="text-black font-extrabold text-xs tracking-wider mt-0.5">
+            <p className="text-white font-extrabold text-xs tracking-wider mt-0.5 drop-shadow-[0_1px_6px_rgba(0,0,0,0.6)]">
               ADMIN PORTAL
             </p>
           </div>
         </div>
 
-        {/* Right Side - Form Container */}
-        <div className="w-[55%] h-full px-10 py-6 flex flex-col justify-center items-center text-center">
+        {/* Right side - Form */}
+        <div className="w-full md:w-[55%] md:h-full px-10 py-6 flex flex-col justify-center items-center text-center">
           <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">
             Hi SAYO..!
           </h1>

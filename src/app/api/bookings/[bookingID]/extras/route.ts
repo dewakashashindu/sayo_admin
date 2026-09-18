@@ -14,6 +14,7 @@
 // even if the generated Prisma client on the server is stale.
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { createItemCodeIndex, ITEM_CODE_LENGTH } from "@/lib/itemCode";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -39,6 +40,16 @@ const trim = (v: unknown) => String(v ?? "").trim();
  */
 function pad10(v: string): string {
   return v.padEnd(10, " ").slice(0, 10);
+}
+
+/**
+ * Pad an ITEM code for INSERTs into the CHAR(15) item-code columns
+ * (Tbl_BookingServiceRecipe.ServiceItemID / RawItemCode,
+ * Tbl_BookingServiceItemAddTech.ServiceItemID). Item codes are never cut to 10
+ * characters: the same prefix can belong to two different items.
+ */
+function padItemCode(v: string): string {
+  return v.trim().padEnd(ITEM_CODE_LENGTH, " ").slice(0, ITEM_CODE_LENGTH);
 }
 
 const EPOCH_1900 = new Date("1900-01-01T00:00:00Z").getTime();
@@ -154,14 +165,16 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     const techNames = new Map(
       techRows.map((t) => [t.UserId.trim(), t.UserName.trim()]),
     );
-    const itemByShortCode = new Map(
-      itemRows.map((i) => [
-        i.ItemCode.trim().slice(0, 10),
-        {
-          des: (i.ItemPrintDes || i.ItemDes || "").trim(),
-          retail: Number(i.Retailprice ?? 0),
-        },
-      ]),
+    // Item code → description + retail price. Resolves the full CHAR(15) code
+    // and, for rows written before the migration, the legacy 10-character
+    // prefix — but only while that prefix belongs to one item.
+    const itemIndex = createItemCodeIndex(
+      itemRows.map((i) => ({
+        code: i.ItemCode.trim(),
+        des: (i.ItemPrintDes || i.ItemDes || "").trim(),
+        retail: Number(i.Retailprice ?? 0),
+      })),
+      (i) => i.code,
     );
 
     return NextResponse.json({
@@ -178,7 +191,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
       })),
       recipe: recipeRows.map((r) => {
         const raw = r.RawItemCode.trim();
-        const item = itemByShortCode.get(raw);
+        const item = itemIndex.get(raw);
         return {
           guessID: r.GuessID.trim(),
           serviceItemID: r.ServiceItemID.trim(),
@@ -282,7 +295,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
               ${locPadded},
               ${bookingPadded},
               ${pad10(row.guessID)},
-              ${pad10(row.serviceItemID)},
+              ${padItemCode(row.serviceItemID)},
               ${pad10(row.techID)}
             )
           `;
@@ -364,8 +377,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
               ${locPadded},
               ${bookingPadded},
               ${pad10(row.guessID)},
-              ${pad10(row.serviceItemID)},
-              ${pad10(row.rawItemCode)},
+              ${padItemCode(row.serviceItemID)},
+              ${padItemCode(row.rawItemCode)},
               ${pad10(row.masterUnitID)},
               ${pad10(row.subUnitID)},
               ${row.qty},

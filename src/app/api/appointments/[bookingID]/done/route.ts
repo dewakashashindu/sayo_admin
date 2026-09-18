@@ -20,20 +20,6 @@ type Ctx = { params: Promise<{ bookingID: string }> };
 
 const trim = (v: unknown) => String(v ?? "").trim();
 
-/**
- * Pad a value to the width of the fixed-width char(10) columns — for INSERTs.
- *
- * Do NOT use this in a WHERE clause. Comparing a padded literal with a
- * char/varchar column only matches while the database uses a PAD SPACE
- * collation; on a NO PAD collation (MySQL 8's default utf8mb4_0900_ai_ci,
- * MariaDB's *_nopad_ci) 'BK0000008 ' never equals 'BK0000008' and the lookup
- * silently comes back empty. Comparisons use RTRIM(column) = value instead,
- * like the rest of the app.
- */
-function pad10(v: string): string {
-  return v.padEnd(10, " ").slice(0, 10);
-}
-
 const EPOCH_1900 = new Date("1900-01-01T00:00:00Z").getTime();
 
 interface HeaderRow {

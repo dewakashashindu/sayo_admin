@@ -66,7 +66,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Billing',
     icon: <IDollar />,
     children: [
-      { key: 'billing-dashboard',    label: 'Appointment Dashboard', path: '/appointment'    },
+      { key: 'billing-dashboard',    label: 'Billing Dashboard',     path: '/billing/dashboard'    },
       { key: 'billing-transactions', label: 'Transactions',          path: '/billing/transactions' },
       { key: 'billing-reports',      label: 'Reports',               path: '/billing/reports'      },
     ],

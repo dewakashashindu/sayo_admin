@@ -1,3 +1,4 @@
+/* Text.lk's send endpoint — fixed on purpose. */
 const TEXTLK_ENDPOINT = "https://app.text.lk/api/v3/sms/send";
 
 function maskEmail(email: string): string {
@@ -158,10 +159,41 @@ function buildAppointmentSMS({
   return `SAYO Beauty: Hi ${customerName}, your appointment ${reference} has been booked successfully.\n${schedule}${branchLine}`;
 }
 
-interface TextLkResult {
+export interface TextLkResult {
   success: boolean;
   data?: unknown;
   error?: string;
+}
+
+/* ── is Text.lk set up? ────────────────────────────────────────────────────
+
+   The two settings live in the project's .env file (the one that already holds
+   DATABASE_URL and AUTH_SECRET):
+
+       TEXTLK_API_TOKEN=…
+       TEXTLK_SENDER_ID=SAYO
+
+   Nothing is sent while one of them is empty; the screens say which one it is
+   instead of silently pretending to have sent a message. */
+
+export const SMS_ENV_KEYS = ["TEXTLK_API_TOKEN", "TEXTLK_SENDER_ID"] as const;
+
+export function smsMissingEnv(env: Record<string, string | undefined> = process.env): string[] {
+  return SMS_ENV_KEYS.filter((key) => !String(env[key] ?? "").trim());
+}
+
+export function smsConfigured(env: Record<string, string | undefined> = process.env): boolean {
+  return smsMissingEnv(env).length === 0;
+}
+
+/** The one sentence to show when the settings are not filled in yet. */
+export function smsSetupMessage(missing: string[]): string {
+  if (missing.length === 0) return "";
+  return (
+    `SMS is not set up yet — ${missing.join(" and ")} ` +
+    `${missing.length === 1 ? "is" : "are"} empty in the .env file. ` +
+    "Add the Text.lk token and sender ID, then restart the server."
+  );
 }
 
 async function sendTextLkSMS(
@@ -171,12 +203,13 @@ async function sendTextLkSMS(
   const apiToken = process.env.TEXTLK_API_TOKEN;
   const senderId = process.env.TEXTLK_SENDER_ID;
 
-  if (!apiToken || !senderId) {
-    console.error(
-      "[SMS Service] TEXTLK_API_TOKEN or TEXTLK_SENDER_ID is missing in .env.local",
-    );
-    return { success: false, error: "SMS configuration missing" };
+  const missing = smsMissingEnv();
+  if (missing.length > 0) {
+    console.error(`[SMS Service] ${smsSetupMessage(missing)}`);
+    return { success: false, error: smsSetupMessage(missing) };
   }
+
+
 
   try {
     const response = await fetch(TEXTLK_ENDPOINT, {
@@ -218,6 +251,23 @@ async function sendTextLkSMS(
       error: "Internal server error while sending SMS",
     };
   }
+}
+
+/**
+ * Send one plain message. The number is normalised to the Text.lk format
+ * (07XXXXXXXX → 947XXXXXXXX) and an empty number is refused rather than sent
+ * to nobody.
+ */
+export async function sendSms(phone: string, message: string): Promise<TextLkResult> {
+  const recipient = normalizeSmsPhone(phone);
+  if (!recipient) {
+    return { success: false, error: "Phone number is empty" };
+  }
+  const missing = smsMissingEnv();
+  if (missing.length > 0) {
+    return { success: false, error: smsSetupMessage(missing) };
+  }
+  return sendTextLkSMS(recipient, message);
 }
 
 export async function sendAppointmentSMS(

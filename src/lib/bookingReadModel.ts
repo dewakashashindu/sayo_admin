@@ -9,6 +9,7 @@
 // tables directly. This mirrors the join used by the write path
 // (assertNoProviderCapacityConflict) and keeps one source of truth.
 import { Prisma } from '@prisma/client';
+import { itemCodeJoinSql } from './itemCode';
 
 /** Read-only header — Vw_BookingHeader equivalent (columns map 1:1). */
 export const HEADER_TABLE = 'tbl_bookingheder';
@@ -31,8 +32,7 @@ export const BOOKING_SERVICE_DETAIL_FROM = Prisma.raw(`
     ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
   LEFT JOIN tbl_itemmaster i
     ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
-   AND (RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
-     OR LEFT(RTRIM(i.ItemCode), 10) = RTRIM(d.ServiceItemID))
+   AND ${itemCodeJoinSql('i.ItemCode', 'd.ServiceItemID')}
   LEFT JOIN tbl_userdetails u
     ON RTRIM(u.UserId) = RTRIM(d.TechID)
 `);
@@ -47,8 +47,47 @@ export const BOOKING_SERVICE_DETAIL_FROM_SQL = `
     ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
   LEFT JOIN tbl_itemmaster i
     ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
-   AND (RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
-     OR LEFT(RTRIM(i.ItemCode), 10) = RTRIM(d.ServiceItemID))
+   AND ${itemCodeJoinSql('i.ItemCode', 'd.ServiceItemID')}
   LEFT JOIN tbl_userdetails u
     ON RTRIM(u.UserId) = RTRIM(d.TechID)
 `;
+
+/**
+ * Collapse the item-master join back to one row per booking detail.
+ *
+ * tbl_bookingservicedetail.ServiceItemID is CHAR(15) and holds the full
+ * tbl_itemmaster.ItemCode. Rows written before
+ * scripts/migrate-itemcode-char15.sql hold only the first 10 characters, so the
+ * join above accepts an exact match and, for those short legacy values, a
+ * prefix match (see itemCodeJoinSql). A legacy value whose prefix is shared by
+ * two items still comes back more than once — which silently multiplies
+ * services, durations, prices and guest counts everywhere those rows are read.
+ *
+ * The real key of tbl_bookingservicedetail is
+ * (LocCode, BookingID, GuessID, ServiceItemID) — exactly the Prisma composite
+ * id — so keep the first row seen for each of those. Rows for the same item
+ * booked by DIFFERENT guests are different rows and are all kept.
+ */
+export function dedupeBookingDetailRows<
+  T extends {
+    LocCode?: string | null;
+    BookingID?: string | null;
+    GuessID?: string | null;
+    ServiceItemID?: string | null;
+  },
+>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const key = [
+      String(row.LocCode ?? "").trim().toUpperCase(),
+      String(row.BookingID ?? "").trim().toUpperCase(),
+      String(row.GuessID ?? "").trim().toUpperCase(),
+      String(row.ServiceItemID ?? "").trim().toUpperCase(),
+    ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}

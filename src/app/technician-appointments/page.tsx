@@ -2,8 +2,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // "Technician's Appointments" — LIST screen (READ-ONLY).
 //
-// • Shows ONLY the appointments scheduled for the logged-in technician.
-//   Demo: Amali Fernando (see SAMPLE_TECHNICIAN_NAME in @/lib/technicianSample).
+// • Shows the appointments of the technician this screen is used by. The
+//   identity is resolved from ?technician= → the signed-in staff user →
+//   this device → "All technicians" (see the resolution effect below).
+// • "All technicians" is a real, labelled answer: it lists the whole day, so a
+//   booking that the BILL screen pushed back from DONE to ONGOING (REVERT)
+//   can never be hidden here by a name that does not match.
+// • The list refreshes itself (20 s poll + whenever the tab is looked at), so a
+//   revert done on another screen appears without pressing Refresh.
 // • No edit / confirm / cancel / reschedule actions on this screen.
 // • ONLY checked-in (ongoing) appointments are clickable → opens the detail
 //   screen at /technician-appointments/[bookingID].
@@ -19,9 +25,10 @@ import {
   buildSampleAppointments,
   fmtDateLong,
   fmtDateNav,
-  getLoggedInTechnicianName,
   isTechnicianAppointment,
+  readSavedTechnicianName,
   shiftDate,
+  technicianIdentityMatches,
   todayISO,
 } from "@/lib/technicianSample";
 
@@ -89,6 +96,7 @@ const CSS = `
   .stat-card .sc-value { color: #1f2937; font-size: 30px; font-weight: 800; line-height: 1.1; }
 
   .refresh-btn { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1.5px solid rgba(30,58,64,.2); border-radius: 8px; background: rgba(30,58,64,.05); color: #1e3a40; font-family: 'Inter',sans-serif; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .tech-pick { max-width: 200px; padding: 6px 9px; border: 1.5px solid rgba(30,58,64,.2); border-radius: 8px; background: #fff; color: #1e3a40; font-family: 'Inter',sans-serif; font-size: 12px; font-weight: 600; cursor: pointer; }
   .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: #9ca3af; }
   .empty-ico { display: flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 50%; background: rgba(30,58,64,.08); }
 
@@ -217,8 +225,17 @@ function endLabel(timeSlot: string, duration: number): string {
 
 export default function TechnicianAppointmentsPage() {
   const router = useRouter();
-  // Logged-in technician (demo falls back to Amali Fernando).
-  const [techName] = useState<string>(() => getLoggedInTechnicianName());
+  /* Whose list is this? Resolved from ?technician= → the signed-in staff user
+     → the name saved on this device → ALL. ALL is the safe default: it lists
+     every technician's bookings of the day, which is exactly what makes a
+     reverted booking impossible to hide. */
+  const [techChoice, setTechChoice] = useState<string>("ALL");
+  const [choiceResolved, setChoiceResolved] = useState(false);
+  const [autoAll, setAutoAll] = useState(false);
+  const [serverFiltered, setServerFiltered] = useState(false);
+  const [techMissing, setTechMissing] = useState(false);
+  const [dayRows, setDayRows] = useState(0);
+  const [lastSync, setLastSync] = useState("");
   const [date, setDate] = useState(todayISO);
   const [search, setSearch] = useState("");
   const [appointments, setAppointments] = useState<TechAppointment[]>([]);
@@ -226,7 +243,6 @@ export default function TechnicianAppointmentsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [usingSample, setUsingSample] = useState(false);
-  const [techNotFound, setTechNotFound] = useState(false);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const toastCounter = useRef(0);
 
@@ -236,7 +252,7 @@ export default function TechnicianAppointmentsPage() {
     setTimeout(() => setToasts((c) => c.filter((t) => t.id !== id)), 2800);
   }, []);
 
-  // Technician directory → resolves display name to canonical UserId.
+  // Technician directory → resolves a name to the canonical UserId.
   useEffect(() => {
     fetch("/api/appointments?meta=filters")
       .then((r) => r.json())
@@ -246,22 +262,85 @@ export default function TechnicianAppointmentsPage() {
       .catch(() => undefined);
   }, []);
 
+  /* ── who is this screen for? ──────────────────────────────────────────────
+     1. ?technician=<UserId|name> in the URL (support / review),
+     2. the signed-in staff user, when Staff/User details knows them,
+     3. the technician saved on this device (older builds),
+     4. ALL — the whole day. A technician name that matches nothing therefore
+        shows the day's bookings instead of an empty screen. */
+  useEffect(() => {
+    if (choiceResolved || techDirectory.length === 0) return;
+    let cancelled = false;
+
+    const finish = (choice: string) => {
+      if (cancelled) return;
+      setTechChoice(choice);
+      setChoiceResolved(true);
+    };
+
+    const savedChoice = () => {
+      const saved = readSavedTechnicianName();
+      const match = techDirectory.find((t) => technicianIdentityMatches(t, saved));
+      return match ? match.UserId : "ALL";
+    };
+
+    if (typeof window !== "undefined") {
+      const fromUrl = new URLSearchParams(window.location.search).get("technician") || "";
+      const match = techDirectory.find((t) => technicianIdentityMatches(t, fromUrl));
+      if (match) {
+        finish(match.UserId);
+        return;
+      }
+    }
+
+    fetch("/api/auth/admin-me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        const me = (json?.user || {}) as { userId?: string; name?: string };
+        const mine = techDirectory.find(
+          (t) =>
+            technicianIdentityMatches(t, me.userId || "") ||
+            technicianIdentityMatches(t, me.name || ""),
+        );
+        finish(mine ? mine.UserId : savedChoice());
+      })
+      .catch(() => finish(savedChoice()));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [techDirectory, choiceResolved]);
+
+  const selectedTech = useMemo(
+    () => techDirectory.find((t) => t.UserId === techChoice),
+    [techDirectory, techChoice],
+  );
+  const chosenName = selectedTech?.UserName || techChoice;
+  const viewAll = techChoice === "ALL" || autoAll;
+  const techName = viewAll ? "All technicians" : chosenName;
+  const myUserId = viewAll ? undefined : techChoice;
+
   const fetchAppointments = useCallback(
     async (requestedDate: string, silent = false) => {
       if (silent) setRefreshing(true);
       else setLoading(true);
       try {
-        // DB-driven: the API filters by technician server-side (TechID match).
-        const params = new URLSearchParams({
-          date: requestedDate,
-          technician: techName,
-        });
+        // DB-driven. The API narrows the day to this technician (TechID,
+        // supporting technicians, provider name) — and without the parameter
+        // it returns the whole day, which is what "All technicians" shows.
+        const params = new URLSearchParams({ date: requestedDate });
+        if (!viewAll) params.set("technician", chosenName);
         const res = await fetch(`/api/appointments?${params.toString()}`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           setAppointments(json.data as TechAppointment[]);
           setUsingSample(false);
-          setTechNotFound(json.technician === null);
+          const rowsOnDay = Number(json.dayRowCount ?? json.data.length) || 0;
+          setServerFiltered(Boolean(json.filteredByTechnician));
+          // "Not in Staff/User details" only when the day really has bookings.
+          setTechMissing(!viewAll && !json.filteredByTechnician && rowsOnDay > 0);
+          setDayRows(rowsOnDay);
+          setLastSync(new Date().toLocaleTimeString());
         } else {
           throw new Error("bad payload");
         }
@@ -269,32 +348,58 @@ export default function TechnicianAppointmentsPage() {
         // Fallback: demo data (only when the API/DB is unreachable).
         setAppointments(buildSampleAppointments());
         setUsingSample(true);
-        setTechNotFound(false);
+        setServerFiltered(false);
+        setTechMissing(false);
+        setDayRows(0);
       } finally {
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [techName],
+    [viewAll, chosenName],
   );
 
   useEffect(() => {
     void fetchAppointments(date);
   }, [date, fetchAppointments]);
 
-  const myUserId = useMemo(() => {
-    const found = techDirectory.find(
-      (t) => t.UserName.trim().toUpperCase() === techName.trim().toUpperCase(),
-    );
-    return found?.UserId;
-  }, [techDirectory, techName]);
+  // Re-evaluate the fallback for every date.
+  useEffect(() => {
+    setAutoAll(false);
+  }, [date]);
 
-  // Only THIS technician's appointments for the selected date (read-only).
+  /* The bill screen can push a booking back from DONE to ONGOING while this
+     screen is open: keep the list fresh (20 s poll) and refresh again as soon
+     as the tab is looked at, so no manual Refresh is needed after a revert. */
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void fetchAppointments(date, true);
+    }, 20000);
+    return () => window.clearInterval(timer);
+  }, [date, fetchAppointments]);
+
+  useEffect(() => {
+    const onWake = () => {
+      if (document.visibilityState === "visible") void fetchAppointments(date, true);
+    };
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
+    window.addEventListener("pageshow", onWake);
+    return () => {
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
+      window.removeEventListener("pageshow", onWake);
+    };
+  }, [date, fetchAppointments]);
+
+  // Which rows belong to the selected technician? When the API already narrowed
+  // the day its answer is trusted; otherwise the same matcher is applied here.
   const mine = useMemo(
     () =>
       appointments.filter((a) => {
         if (a.date !== date) return false;
-        if (!isTechnicianAppointment(a, techName, myUserId)) return false;
+        if (!viewAll && !serverFiltered && !isTechnicianAppointment(a, techName, myUserId))
+          return false;
         if (
           search &&
           !`${a.clientName} ${a.clientPhone} ${a.serviceName}`.toLowerCase().includes(search.toLowerCase())
@@ -302,8 +407,24 @@ export default function TechnicianAppointmentsPage() {
           return false;
         return true;
       }),
-    [appointments, date, techName, myUserId, search],
+    [appointments, date, viewAll, serverFiltered, techName, myUserId, search],
   );
+
+  /* A technician with nothing on this date must not stare at an empty screen
+     while the day has bookings (a reverted booking sits on that day): fall back
+     to the whole day once and say so. */
+  useEffect(() => {
+    if (
+      choiceResolved &&
+      !viewAll &&
+      !loading &&
+      !autoAll &&
+      mine.length === 0 &&
+      dayRows > 0
+    ) {
+      setAutoAll(true);
+    }
+  }, [choiceResolved, viewAll, loading, autoAll, mine, dayRows]);
 
   const stats = useMemo(
     () => ({
@@ -364,7 +485,23 @@ export default function TechnicianAppointmentsPage() {
               />
             </div>
             <div style={{ flex: 1 }} />
-            {/* Logged-in technician chip */}
+            {/* Whose list is this? Always visible, always switchable. */}
+            <select
+              className="tech-pick"
+              value={viewAll ? "ALL" : techChoice}
+              onChange={(e) => {
+                setAutoAll(false);
+                setTechChoice(e.target.value);
+              }}
+              title="Whose appointments to show"
+            >
+              <option value="ALL">All technicians</option>
+              {techDirectory.map((t) => (
+                <option key={t.UserId} value={t.UserId}>
+                  {t.UserName}
+                </option>
+              ))}
+            </select>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div
                 style={{
@@ -378,7 +515,9 @@ export default function TechnicianAppointmentsPage() {
               </div>
               <div className="hdr-name" style={{ display: "flex", flexDirection: "column", lineHeight: 1.25 }}>
                 <span style={{ color: "#1f2937", fontSize: 14, fontWeight: 700 }}>{techName}</span>
-                <span style={{ color: "#6b7280", fontSize: 11 }}>Technician</span>
+                <span style={{ color: "#6b7280", fontSize: 11 }}>
+                  {viewAll ? "Whole day" : "Technician"}
+                </span>
               </div>
             </div>
           </header>
@@ -388,32 +527,53 @@ export default function TechnicianAppointmentsPage() {
             {/* Title + sample banner */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <h1 style={{ color: "#1e3a40", fontSize: 20, fontWeight: 800 }}>
-                My Appointments
+                {viewAll ? "Appointments — All Technicians" : "My Appointments"}
               </h1>
               <span className="badge b-pre">Read-only</span>
-              {usingSample && <span className="badge b-wlk">Sample data · {techName}</span>}
+              {usingSample && (
+                <span className="badge b-wlk">Sample data · {SAMPLE_TECHNICIAN_NAME}</span>
+              )}
               <div style={{ flex: 1 }} />
+              {lastSync && (
+                <span className="hdr-name" style={{ color: "#6b7280", fontSize: 11, fontWeight: 600 }}>
+                  Updated {lastSync}
+                </span>
+              )}
               <button className="refresh-btn" type="button" onClick={() => void fetchAppointments(date, true)}>
                 <Ico.Refresh /> {refreshing ? "Refreshing..." : "Refresh"}
               </button>
             </div>
 
-            {techNotFound && !usingSample && (
+            {techMissing && !usingSample && (
               <div
                 className="fade-up"
                 style={{
-                  padding: "10px 14px", border: "1px solid #fca5a5", borderRadius: 10,
-                  background: "#fef2f2", color: "#991b1b", fontSize: 13, fontWeight: 600,
+                  padding: "10px 14px", border: "1px solid #fcd34d", borderRadius: 10,
+                  background: "#fffbeb", color: "#92400e", fontSize: 13, fontWeight: 600,
                 }}
               >
-                Technician “{techName}” was not found in the database — check the name in Staff/User details.
+                “{chosenName}” is not in Staff/User details — showing every booking of the day instead.
+              </div>
+            )}
+            {autoAll && !techMissing && !usingSample && (
+              <div
+                className="fade-up"
+                style={{
+                  padding: "10px 14px", border: "1px solid #bfdbfe", borderRadius: 10,
+                  background: "#eff6ff", color: "#1e40af", fontSize: 13, fontWeight: 600,
+                }}
+              >
+                No bookings for {chosenName} on this date — showing all technicians. Pick a name
+                on the right to narrow the list again.
               </div>
             )}
 
             {/* Stats */}
             <div style={{ display: "flex", alignItems: "stretch", gap: 10, flexWrap: "wrap" }}>
               <div className="stat-card" style={{ background: "linear-gradient(135deg,#1e3a40,#2a5260)" }}>
-                <div className="sc-label" style={{ color: "rgba(255,255,255,.6)" }}>My Appointments</div>
+                <div className="sc-label" style={{ color: "rgba(255,255,255,.6)" }}>
+                  {viewAll ? "All Technicians" : "My Appointments"}
+                </div>
                 <div className="sc-value" style={{ color: "#fff" }}>{stats.total}</div>
                 <div style={{ color: "rgba(255,255,255,.45)", fontSize: 10, fontWeight: 500 }}>{fmtDateNav(date)}</div>
               </div>
@@ -483,7 +643,10 @@ export default function TechnicianAppointmentsPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <p style={{ color: "#374151", fontSize: 13, fontWeight: 700 }}>
                 {fmtDateLong(date)}
-                <span style={{ color: "#6b7280", fontWeight: 500 }}> · {mine.length} appointment{mine.length !== 1 ? "s" : ""} for {techName}</span>
+                <span style={{ color: "#6b7280", fontWeight: 500 }}>
+                  {" "}· {mine.length} appointment{mine.length !== 1 ? "s" : ""}{" "}
+                  {viewAll ? "across all technicians" : `for ${techName}`}
+                </span>
               </p>
 
               {loading ? (
@@ -495,13 +658,36 @@ export default function TechnicianAppointmentsPage() {
               ) : mine.length === 0 ? (
                 <div className="empty-state">
                   <div className="empty-ico"><Ico.Inbox /></div>
-                  <p style={{ color: "#6b7280", fontSize: 14, fontWeight: 600 }}>No appointments for you on this date</p>
-                  <p style={{ color: "#9ca3af", fontSize: 12 }}>Scheduled bookings for {techName} will appear here</p>
+                  <p style={{ color: "#6b7280", fontSize: 14, fontWeight: 600 }}>
+                    {viewAll
+                      ? "No appointments on this date"
+                      : `No appointments for ${chosenName} on this date`}
+                  </p>
+                  <p style={{ color: "#9ca3af", fontSize: 12 }}>
+                    {viewAll
+                      ? "Bookings scheduled for this date will appear here"
+                      : "Bookings for this technician will appear here"}
+                  </p>
+                  {!viewAll && dayRows > 0 && (
+                    <button
+                      className="refresh-btn"
+                      type="button"
+                      onClick={() => setTechChoice("ALL")}
+                    >
+                      Show all technicians
+                    </button>
+                  )}
                 </div>
               ) : (
                 mine.map((a) => {
                   const clickable = a.status === "ongoing";
                   const cancelled = a.status === "cancelled";
+                  /* Same time as inside the booking: the scheduled service
+                     window, falling back to the header label. */
+                  const startLabel = a.scheduleStartTime || a.timeSlot;
+                  const endLabelText =
+                    a.scheduleEndTime ||
+                    (a.duration > 0 ? endLabel(startLabel, a.duration) : "");
                   return (
                     <div
                       key={`${a.locCode}|${a.bookingID}`}
@@ -530,8 +716,8 @@ export default function TechnicianAppointmentsPage() {
 
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ display: "flex", alignItems: "center", gap: 3, color: "#374151", fontSize: 12, fontWeight: 600 }}>
-                          <Ico.Clock /> {a.timeSlot}
-                          {a.duration > 0 && endLabel(a.timeSlot, a.duration) ? ` – ${endLabel(a.timeSlot, a.duration)}` : ""}
+                          <Ico.Clock /> {startLabel}
+                          {endLabelText ? ` – ${endLabelText}` : ""}
                           <span style={{ color: "#9ca3af", fontWeight: 500 }}>({a.duration} min)</span>
                         </span>
                         <span style={{ display: "flex", alignItems: "center", gap: 3, color: "#6b7280", fontSize: 12 }}>
@@ -541,7 +727,10 @@ export default function TechnicianAppointmentsPage() {
                       </div>
 
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <span style={{ color: "#9ca3af", fontSize: 11 }}>Booking: {a.bookingID}</span>
+                        <span style={{ color: "#9ca3af", fontSize: 11 }}>
+                          Booking: {a.bookingID}
+                          {a.providerName ? ` · ${a.providerName}` : ""}
+                        </span>
                         {clickable ? (
                           <span style={{ display: "flex", alignItems: "center", gap: 3, color: "#1d4ed8", fontSize: 12, fontWeight: 700 }}>
                             Tap to open <Ico.Open />

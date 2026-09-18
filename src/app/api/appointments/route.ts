@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { timeLabelFromValue } from "@/lib/legacyTime";
 import { sendAppointmentSMS } from "@/lib/sms";
 import { verifyAdminToken, ADMIN_COOKIE } from "@/lib/adminSession";
 import { logActivity, maskPhoneForLog } from "@/lib/activityLog";
@@ -14,7 +15,12 @@ import {
 } from "@/lib/bookingSchedule";
 import {
   BOOKING_SERVICE_DETAIL_FROM_SQL,
+  dedupeBookingDetailRows,
 } from "@/lib/bookingReadModel";
+import {
+  isTechnicianAppointment,
+  type TechAppointment,
+} from "@/lib/technicianSample";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,11 +61,30 @@ class BookingNotFoundError extends Error {
   }
 }
 
+class BookingBilledError extends Error {
+  constructor(
+    message = "This booking is already billed — its bill is written, so the status, the schedule and the technician can no longer be changed.",
+  ) {
+    super(message);
+    this.name = "BookingBilledError";
+  }
+}
+
 class BookingValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "BookingValidationError";
   }
+}
+
+/** 1900-01-01 means “never” in the legacy schema. */
+const EPOCH_1900_MS = new Date("1900-01-02T00:00:00Z").getTime();
+
+/** True when a BillingTime value is a real timestamp, not the 1900 sentinel. */
+function isBilledAtValue(value: Date | string | null | undefined): boolean {
+  if (value === null || value === undefined) return false;
+  const ms = value instanceof Date ? value.getTime() : new Date(String(value)).getTime();
+  return Number.isFinite(ms) && ms > EPOCH_1900_MS;
 }
 
 function technicianBelongsToBranch(
@@ -125,29 +150,9 @@ function dateTimeIso(value: unknown): string | null {
 }
 
 function timeLabelFromDateTime(value: unknown): string | null {
-  if (value === null || value === undefined || value === "") return null;
-
-  if (typeof value === "string") {
-    const match = value.match(/[ T](\d{1,2}):(\d{2})(?::\d{2})?/);
-    if (match) {
-      let hour = Number(match[1]);
-      const minute = Number(match[2]);
-      if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-        const period = hour >= 12 ? "PM" : "AM";
-        hour %= 12;
-        if (hour === 0) hour = 12;
-        return `${hour}:${String(minute).padStart(2, "0")} ${period}`;
-      }
-    }
-  }
-
-  const parsed = new Date(value as any);
-  if (Number.isNaN(parsed.getTime())) return null;
-
-  const period = parsed.getHours() >= 12 ? "PM" : "AM";
-  let hour = parsed.getHours() % 12;
-  if (hour === 0) hour = 12;
-  return `${hour}:${String(parsed.getMinutes()).padStart(2, "0")} ${period}`;
+  // Wall-clock value, read as the database holds it — see src/lib/legacyTime.ts
+  // (the server's own timezone must never be added to a stored 10:00 AM).
+  return timeLabelFromValue(value);
 }
 
 function toBookingDateTime(
@@ -610,6 +615,22 @@ export async function GET(req: NextRequest) {
   const requestedDate = searchParams.get("date");
   const locCode = searchParams.get("locCode");
 
+  /* The appointment grid only tracks work that still has to be done: once the
+     technician marks a booking DONE it leaves the grid and moves to the Billing
+     Dashboard, which is the only place it can be picked up again.
+     Screens that still need the DONE rows (the technician screens) simply omit
+     `excludeDone`. */
+  const excludeDone = ["1", "true", "yes"].includes(
+    (searchParams.get("excludeDone") || "").trim().toLowerCase(),
+  );
+
+  /* Technician screens pass ?technician=<name|UserId>. The value is resolved
+     against tbl_userdetails and the day is narrowed to that technician's
+     bookings with the SAME matcher the screen uses, so the screen no longer
+     has to guess. An unresolvable value is answered with `technician: null`
+     and hides nothing — a wrong or unknown name can never empty the screen. */
+  const technicianParam = (searchParams.get("technician") || "").trim();
+
   if (searchParams.get("meta") === "filters") {
     try {
       const [
@@ -714,7 +735,7 @@ export async function GET(req: NextRequest) {
 
     // BookingDate is now the source of truth. The Remarks fallback keeps old
     // rows created before BookingDate was added visible on the calendar.
-    const filtered = requestedDate
+    const onDate = requestedDate
       ? headers.filter(
           (header) =>
             dateOnly(header.BookingDate) === requestedDate ||
@@ -723,8 +744,21 @@ export async function GET(req: NextRequest) {
         )
       : headers;
 
+    // DONE bookings are hidden from the grid when the caller asks for it — they
+    // are billed from the Billing Dashboard instead.
+    const filtered = excludeDone
+      ? onDate.filter((header) => mapStatus(trimValue(header.Status)) !== "done")
+      : onDate;
+
     if (filtered.length === 0) {
-      return NextResponse.json({ success: true, data: [] });
+      // Same shape as the full answer, so screens can rely on the fields.
+      return NextResponse.json({
+        success: true,
+        data: [],
+        technician: null,
+        filteredByTechnician: false,
+        dayRowCount: 0,
+      });
     }
 
     const bookingIDList = [
@@ -734,7 +768,7 @@ export async function GET(req: NextRequest) {
       ...new Set(filtered.map((header) => trimValue(header.LocCode))),
     ];
 
-    const details = await prisma.$queryRaw<RawDetail[]>`
+    const rawDetails = await prisma.$queryRaw<RawDetail[]>`
       SELECT
         RTRIM(h.BookingID)     AS BookingID,
         RTRIM(h.LocCode)       AS LocCode,
@@ -757,6 +791,15 @@ export async function GET(req: NextRequest) {
       WHERE RTRIM(h.BookingID) IN (${Prisma.join(bookingIDList)})
         AND RTRIM(h.LocCode)   IN (${Prisma.join(locCodeList)})
     `;
+
+    /* The item-master join resolves the stored ServiceItemID (the full
+       CHAR(15) item code, or a legacy 10-character prefix) and can therefore
+       return the same detail row more than once — colour/size variants and
+       duplicated items share a prefix, and a legacy row whose prefix is not
+       unique matches every item under it. That multiplies services, prices,
+       durations and guest counts. Collapse back to the real key: one row per
+       (LocCode, BookingID, GuessID, ServiceItemID). */
+    const details = dedupeBookingDetailRows(rawDetails);
 
     const cusCodeList = [
       ...new Set(filtered.map((header) => trimValue(header.CusCode))),
@@ -993,6 +1036,24 @@ export async function GET(req: NextRequest) {
         scheduleStart >= 0 && scheduleEnd >= scheduleStart
           ? scheduleEnd - scheduleStart
           : 0;
+
+      /* The time the technician actually works to is the scheduled service
+         time. The header label (`timeSlot` — BookingDate, or the legacy
+         Remarks time behind it) can be stale, and that is what made the
+         technician list disagree with the booking itself (noticed after a
+         bill-screen REVERT put the booking back on the list, where only the
+         list is visible). The technician screens read these two fields; every
+         other screen keeps `timeSlot` exactly as before. */
+      const scheduledStartLabel = schedulePairs.length
+        ? minutesToClock(
+            Math.min(...schedulePairs.map((pair) => pair.entry.startMin)),
+          )
+        : "";
+      const scheduledEndLabel = schedulePairs.length
+        ? minutesToClock(
+            Math.max(...schedulePairs.map((pair) => pair.entry.endMin)),
+          )
+        : "";
       // Collapsed for display only. `serviceSchedule` still carries one entry
       // per stored row, so totals, durations and the timeline are unaffected.
       const orderedServiceNames = collapseServiceNames(
@@ -1024,6 +1085,8 @@ export async function GET(req: NextRequest) {
         date: appointmentDate,
         bookingDate: appointmentDate,
         timeSlot: appointmentTime,
+        scheduleStartTime: scheduledStartLabel || appointmentTime,
+        scheduleEndTime: scheduledEndLabel,
         status: mapStatus(trimValue(header.Status)),
         mode: mapMode(trimValue(header.ConfirmationType)),
         bookingTypeID: trimValue(header.BookingTypeID),
@@ -1048,7 +1111,49 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ success: true, data });
+    /* ── technician narrowing ────────────────────────────────────────────
+       Applied to the assembled rows, so the matcher (primary TechID,
+       supporting technicians, provider name) is exactly the one the screen
+       would apply. A booking that the bill screen pushed back from DONE to
+       ONGOING is owned by the same technician as before, so it stays in the
+       list instead of disappearing. */
+    let technician: { userId: string; name: string } | null = null;
+    let rows = data;
+
+    if (technicianParam) {
+      const technicianRows = await prisma.$queryRaw<RawTechnician[]>`
+        SELECT
+          RTRIM(UserId) AS UserId,
+          RTRIM(UserName) AS UserName,
+          RTRIM(WorkingLocID) AS WorkingLocID
+        FROM tbl_userdetails
+        WHERE UPPER(RTRIM(UserId)) = ${technicianParam.toUpperCase()}
+           OR UPPER(RTRIM(UserName)) = ${technicianParam.toUpperCase()}
+        LIMIT 1
+      `;
+      const foundTechnician = technicianRows[0];
+      if (foundTechnician) {
+        technician = {
+          userId: trimValue(foundTechnician.UserId),
+          name: trimValue(foundTechnician.UserName),
+        };
+        rows = data.filter((appointment) =>
+          isTechnicianAppointment(
+            appointment as unknown as TechAppointment,
+            technicianParam,
+            technician ? technician.userId : undefined,
+          ),
+        );
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: rows,
+      technician,
+      filteredByTechnician: technician !== null,
+      dayRowCount: data.length,
+    });
   } catch (err: any) {
     console.error("[GET /api/appointments]", err);
     return NextResponse.json(
@@ -1170,12 +1275,14 @@ export async function PATCH(req: NextRequest) {
           Remarks: string | null;
           BookingDate: Date | string | null;
           Status: string | null;
+          BillingTime: Date | string | null;
         }[]
       >`
         SELECT
           Remarks,
           DATE_FORMAT(BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
-          RTRIM(Status) AS Status
+          RTRIM(Status) AS Status,
+          BillingTime
         FROM tbl_bookingheder
         WHERE RTRIM(BookingID) = ${bookingID}
           AND RTRIM(LocCode) = ${locCode}
@@ -1184,6 +1291,14 @@ export async function PATCH(req: NextRequest) {
       `;
 
       if (!headerRows[0]) throw new BookingNotFoundError();
+
+      // A billed booking is closed. Its money is already in the four bill
+      // tables, so cancelling / re-checking-in / rescheduling it from the
+      // calendar would leave the bill and the booking disagreeing. Correcting a
+      // finished sale is a refund flow, not a status change.
+      if (isBilledAtValue(headerRows[0].BillingTime)) {
+        throw new BookingBilledError();
+      }
 
       const currentRemarks = headerRows[0].Remarks || "";
       const currentDate =
@@ -1770,6 +1885,13 @@ export async function PATCH(req: NextRequest) {
         { status: 404 },
       );
     }
+    if (err instanceof BookingBilledError) {
+      return NextResponse.json(
+        { success: false, error: err.message },
+        { status: 409 },
+      );
+    }
+
     if (err instanceof BookingValidationError) {
       return NextResponse.json(
         { success: false, error: err.message },

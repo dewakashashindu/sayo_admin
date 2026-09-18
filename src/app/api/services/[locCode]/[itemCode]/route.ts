@@ -1,6 +1,7 @@
 // src/app/api/services/[locCode]/[itemCode]/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
+import { itemCode, legacyItemCode } from "@/lib/itemCode";
 
 export const runtime = "nodejs";
 
@@ -347,24 +348,183 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Ctx) {
+/**
+ * Where an item code can still be referenced once the item row is gone.
+ *
+ * A hard delete leaves every one of these pointing at a code nothing can name
+ * any more: booking, recipe and bill lines keep the raw code instead of the
+ * item description. The check below turns that silent data loss into a clear
+ * answer and offers “deactivate” (Enable = 0) instead — the item leaves every
+ * picker while the history stays readable.
+ */
+const USAGE_QUERIES: {
+  key: string;
+  label: string;
+  sql: (code: string, legacy: string) => Prisma.Sql;
+}[] = [
+  {
+    key: "bookings",
+    label: "booked service rows",
+    sql: (code, legacy) => Prisma.sql`
+      SELECT COUNT(*) AS n FROM tbl_bookingservicedetail
+      WHERE RTRIM(ServiceItemID) IN (${Prisma.join([code, legacy])})
+    `,
+  },
+  {
+    key: "supportTech",
+    label: "supporting-technician rows",
+    sql: (code, legacy) => Prisma.sql`
+      SELECT COUNT(*) AS n FROM Tbl_BookingServiceItemAddTech
+      WHERE RTRIM(ServiceItemID) IN (${Prisma.join([code, legacy])})
+    `,
+  },
+  {
+    key: "bookingRecipe",
+    label: "materials recorded on bookings",
+    sql: (code, legacy) => Prisma.sql`
+      SELECT COUNT(*) AS n FROM Tbl_BookingServiceRecipe
+      WHERE RTRIM(ServiceItemID) IN (${Prisma.join([code, legacy])})
+         OR RTRIM(RawItemCode)   IN (${Prisma.join([code, legacy])})
+    `,
+  },
+  {
+    key: "recipeMaster",
+    label: "recipe rows",
+    sql: (code, legacy) => Prisma.sql`
+      SELECT COUNT(*) AS n FROM tbl_recipes
+      WHERE RTRIM(MenuItmID)   IN (${Prisma.join([code, legacy])})
+         OR RTRIM(RowItemCode) IN (${Prisma.join([code, legacy])})
+    `,
+  },
+  {
+    key: "bills",
+    label: "billed lines",
+    sql: (code, legacy) => Prisma.sql`
+      SELECT COUNT(*) AS n FROM tbl_billdetail
+      WHERE RTRIM(ItemID) IN (${Prisma.join([code, legacy])})
+    `,
+  },
+];
+
+async function countUsage(code: string): Promise<{
+  total: number;
+  byTable: Record<string, number>;
+  checked: boolean;
+}> {
+  const legacy = legacyItemCode(code);
+  const byTable: Record<string, number> = {};
+  let total = 0;
+
+  for (const entry of USAGE_QUERIES) {
+    try {
+      const rows = await prisma.$queryRaw<{ n: bigint | number }[]>(
+        entry.sql(code, legacy),
+      );
+      const count = Number(rows[0]?.n ?? 0) || 0;
+      byTable[entry.key] = count;
+      total += count;
+    } catch (err) {
+      // A missing/unreadable table must never silently allow an orphaned delete.
+      console.warn(
+        `DELETE /api/services — usage check failed for ${entry.key}:`,
+        err,
+      );
+      return { total: -1, byTable, checked: false };
+    }
+  }
+
+  return { total, byTable, checked: true };
+}
+
+export async function DELETE(req: NextRequest, { params }: Ctx) {
   try {
     const resolvedParams = await params;
     const locCode = decodeURIComponent(resolvedParams.locCode).trim();
-    const itemCode = decodeURIComponent(resolvedParams.itemCode).trim();
+    const code = itemCode(decodeURIComponent(resolvedParams.itemCode));
+
+    if (!code) {
+      return NextResponse.json(
+        { success: false, message: "itemCode is required" },
+        { status: 400 },
+      );
+    }
+
+    const mode = (req.nextUrl.searchParams.get("mode") ?? "").trim().toLowerCase();
+
+    /* ── Deactivate (soft delete) — leaves the row in place, so every booking,
+          recipe and bill that points at this code still resolves a name.
+          RTRIM matching: the column is CHAR(15) and a padded literal never
+          matches on a NO PAD collation. ───────────────────────────────────── */
+    if (mode === "deactivate") {
+      const disabled = await prisma.$executeRaw`
+        UPDATE tbl_itemmaster
+        SET Enable = 0, UpdDate = NOW(), UpdBy = ${"ADMIN"}
+        WHERE RTRIM(ItemCode) = ${code}
+      `;
+
+      return NextResponse.json({
+        success: true,
+        deactivated: Number(disabled) || 0,
+        message: `Item deactivated at ${Number(disabled) || 0} location(s). It is hidden from every picker and its history stays readable.`,
+      });
+    }
+
+    const row = await prisma.tbl_ItemMaster.findUnique({
+      where: { LocCode_ItemCode: { LocCode: locCode, ItemCode: code } },
+      select: { ItemCode: true },
+    });
+    if (!row) {
+      return NextResponse.json(
+        { success: false, message: "Item not found for this location" },
+        { status: 404 },
+      );
+    }
+
+    const usage = await countUsage(code);
+
+    if (!usage.checked || usage.total > 0) {
+      const used = Object.entries(usage.byTable)
+        .filter(([, count]) => count > 0)
+        .map(([key, count]) => {
+          const entry = USAGE_QUERIES.find((q) => q.key === key);
+          return `${count} ${entry?.label ?? key}`;
+        });
+
+      return NextResponse.json(
+        {
+          success: false,
+          canDeactivate: true,
+          usage: usage.byTable,
+          message: usage.checked
+            ? `"${code}" is used by ${used.join(", ")}. Deleting it would leave those records without an item name. Deactivate it instead?`
+            : `Could not check where "${code}" is used (see the server log). Deactivate it instead?`,
+        },
+        { status: 409 },
+      );
+    }
 
     await prisma.tbl_ItemMaster.delete({
       where: {
         LocCode_ItemCode: {
           LocCode: locCode,
-          ItemCode: itemCode,
+          ItemCode: code,
         },
       },
     });
 
+    const remainingRows = await prisma.$queryRaw<{ n: bigint | number }[]>`
+      SELECT COUNT(*) AS n FROM tbl_itemmaster WHERE RTRIM(ItemCode) = ${code}
+    `;
+    const remaining = Number(remainingRows[0]?.n ?? 0) || 0;
+
     return NextResponse.json({
       success: true,
-      message: "Item location row deleted successfully",
+      deletedLocations: 1,
+      remainingLocations: remaining,
+      message:
+        remaining > 0
+          ? `Item deleted from ${locCode}. It still exists at ${remaining} other location(s).`
+          : "Item location row deleted successfully",
     });
   } catch (err) {
     console.error("DELETE /api/services/[locCode]/[itemCode] error:", err);

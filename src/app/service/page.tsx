@@ -2536,25 +2536,57 @@ export default function ItemMasterPage() {
     if (!current.itemCode || isNew) return;
     if (
       !confirm(
-        `Delete "${current.itemDes}" (${current.itemCode})?\nCannot be undone.`,
+        `Delete "${current.itemDes}" (${current.itemCode})?\n\n` +
+          `An item that is still used by bookings, recipes or bills cannot be ` +
+          `deleted — you will be offered to deactivate it instead.`,
       )
     )
       return;
 
     setDeleting(true);
 
+    const endpoint = `/api/services/${encodeURIComponent(current.locCode)}/${encodeURIComponent(current.itemCode)}`;
+
     try {
-      const response = await fetch(
-        `/api/services/${encodeURIComponent(current.locCode)}/${encodeURIComponent(current.itemCode)}`,
-        { method: "DELETE" },
-      );
+      const response = await fetch(endpoint, { method: "DELETE" });
       const json = (await response.json()) as {
         success: boolean;
         message?: string;
+        canDeactivate?: boolean;
+        usage?: Record<string, number>;
       };
+
+      /* The item is still referenced: deleting it would leave those booking,
+         recipe and bill rows without an item name. Offer the soft delete. */
+      if (!json.success && json.canDeactivate) {
+        const proceed = confirm(
+          `${json.message}\n\n` +
+            `Deactivate it instead?\n` +
+            `The item disappears from every picker (Enable = 0) and every past ` +
+            `booking, recipe and bill keeps its item name.`,
+        );
+        if (!proceed) return;
+
+        const offResponse = await fetch(`${endpoint}?mode=deactivate`, {
+          method: "DELETE",
+        });
+        const offJson = (await offResponse.json()) as {
+          success: boolean;
+          message?: string;
+        };
+        if (!offJson.success) {
+          throw new Error(offJson.message ?? "Deactivate failed");
+        }
+
+        showToast("Item deactivated — hidden from every picker");
+        await loadItems();
+        handleNew();
+        return;
+      }
+
       if (!json.success) throw new Error(json.message ?? "Delete failed");
 
-      showToast("Deleted");
+      showToast(json.message ?? "Deleted");
       await loadItems();
       handleNew();
     } catch (error) {

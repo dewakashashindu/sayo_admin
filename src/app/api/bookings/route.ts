@@ -6,6 +6,7 @@ import nodemailer from 'nodemailer';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { logActivity, maskPhoneForLog } from '@/lib/activityLog';
+import { timeLabelFromValue } from '@/lib/legacyTime';
 import {
   clockToMinutes,
   composeBookingRemarks,
@@ -19,8 +20,15 @@ import {
   HEADER_TABLE,
   TXN_DETAIL_TABLE,
   BOOKING_SERVICE_DETAIL_FROM,
+  dedupeBookingDetailRows,
 } from '@/lib/bookingReadModel';
 import { nextSerialTx, SERIAL_CODES } from '@/lib/serials';
+import {
+  ITEM_CODE_LENGTH,
+  createItemCodeIndex,
+  itemCode,
+  itemCodeJoinSql,
+} from '@/lib/itemCode';
 
 /* ─────────────────────────────────────────────────────────────────────────────
    TYPES
@@ -29,6 +37,8 @@ interface BookingService {
   name:          string;
   price:         string;
   duration:      string;
+  /** Optional: some clients send the number of services in one line. */
+  qty?:          number | string;
   /** Optional legacy identifiers for clients that already use the master catalog. */
   itemCode?:     string;
   serviceItemID?: string;
@@ -300,6 +310,7 @@ interface LegacyItem {
   ItemDes: string;
   ItemPrintDes: string | null;
   SerDuration: number | string | null;
+  Retailprice: number | string | null;
 }
 
 interface PreparedService {
@@ -314,6 +325,7 @@ interface PreparedProvider extends BookingProvider {
 
 interface LegacyCapacityRow {
   BookingID: string;
+  GuessID?: string;
   StartMin: number;
   TechID: string;
   ServiceItemID: string;
@@ -359,6 +371,11 @@ function normalizeLookup(value: unknown): string {
 function parsePrice(value: unknown): number {
   const parsed = Number(String(value ?? '').replace(/[^\d.-]/g, ''));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseQuantity(value: unknown): number {
+  const qty = Number(value);
+  return Number.isFinite(qty) && qty > 0 ? qty : 1;
 }
 
 function parseDuration(value: unknown): number {
@@ -495,9 +512,10 @@ async function assertNoProviderCapacityConflict(
 ): Promise<void> {
   if (incoming.length === 0) return;
 
-  const rows = await tx.$queryRaw<LegacyCapacityRow[]>`
+  const rawRows = await tx.$queryRaw<LegacyCapacityRow[]>`
     SELECT
       RTRIM(h.BookingID) AS BookingID,
+      RTRIM(d.GuessID) AS GuessID,
       (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
       RTRIM(d.TechID) AS TechID,
       RTRIM(d.ServiceItemID) AS ServiceItemID,
@@ -511,13 +529,17 @@ async function assertNoProviderCapacityConflict(
       ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
     LEFT JOIN tbl_itemmaster i
       ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
-     AND (RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
-       OR LEFT(RTRIM(i.ItemCode), 10) = RTRIM(d.ServiceItemID))
+     AND ${Prisma.raw(itemCodeJoinSql('i.ItemCode', 'd.ServiceItemID'))}
     WHERE RTRIM(h.LocCode) = ${locCode.trim()}
       AND DATE(h.BookingDate) = ${date}
       AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL')
     FOR UPDATE
   `;
+
+  // A legacy 10-character detail code whose prefix is shared by two items comes
+  // back once per item. Keep one row per detail key so a duplicated row can
+  // never create a second busy window and a false "technician is busy".
+  const rows = dedupeBookingDetailRows(rawRows);
 
   const existingByBookingAndProvider = new Map<string, ProviderWindow>();
   const scheduledExistingWindows: ProviderWindow[] = [];
@@ -636,35 +658,56 @@ async function resolveLegacyServices(
       ItemDes: true,
       ItemPrintDes: true,
       SerDuration: true,
+      Retailprice: true,
     },
   }) as LegacyItem[];
 
   const usedCodes = new Set<string>();
 
+  // Item codes are CHAR(15) and are the real identity of a service. Older
+  // clients (and rows written before scripts/migrate-itemcode-char15.sql) can
+  // still hold the 10-character prefix, so one index answers for both — and it
+  // refuses a prefix that belongs to more than one item instead of picking an
+  // arbitrary (wrong) service.
+  const itemByCode = createItemCodeIndex(items, (item) => item.ItemCode);
+
   return services.map((service) => {
     const requestedCode = String(service.itemCode || service.serviceItemID || '').trim();
     const wantedName = normalizeLookup(service.name);
-    const item = items.find((candidate) => {
-      if (requestedCode) {
-        const requested = normalizeLookup(requestedCode);
-        const candidateFull = normalizeLookup(candidate.ItemCode);
-        const candidateShort = normalizeLookup(candidate.ItemCode.trim().slice(0, 10));
-        if (candidateFull === requested || candidateShort === requested ||
-            candidateFull.startsWith(requested) || requested.startsWith(candidateShort)) {
-          return true;
-        }
+
+    let item = requestedCode ? itemByCode.get(requestedCode) : undefined;
+
+    if (!item && requestedCode) {
+      // A partially typed code is only accepted while it points at exactly one
+      // of the location's services.
+      const partial = normalizeLookup(requestedCode);
+      const candidates = items.filter((candidate) => {
+        const full = normalizeLookup(candidate.ItemCode);
+        return full.startsWith(partial) || partial.startsWith(full);
+      });
+      if (candidates.length === 1) [item] = candidates;
+    }
+
+    if (!item && wantedName) {
+      const byName = items.filter((candidate) => {
+        const candidateNames = [
+          normalizeLookup(candidate.ItemPrintDes),
+          normalizeLookup(candidate.ItemDes),
+        ].filter(Boolean);
+        return candidateNames.some((candidateName) =>
+          candidateName === wantedName ||
+          (candidateName.length >= 6 &&
+            (candidateName.startsWith(wantedName) || wantedName.startsWith(candidateName))),
+        );
+      });
+      // Same name configured more than once at this location: the first code
+      // wins, so a retry always lands on the same item.
+      if (byName.length > 0) {
+        item = [...byName].sort((a, b) =>
+          itemCode(a.ItemCode).localeCompare(itemCode(b.ItemCode)),
+        )[0];
       }
-      if (!wantedName) return false;
-      const candidateNames = [
-        normalizeLookup(candidate.ItemPrintDes),
-        normalizeLookup(candidate.ItemDes),
-      ].filter(Boolean);
-      return candidateNames.some((candidateName) =>
-        candidateName === wantedName ||
-        (candidateName.length >= 6 &&
-          (candidateName.startsWith(wantedName) || wantedName.startsWith(candidateName))),
-      );
-    });
+    }
 
     if (!item) {
       throw new BookingConfigurationError(
@@ -672,20 +715,18 @@ async function resolveLegacyServices(
       );
     }
 
-    const fullItemCode = item.ItemCode.trim();
+    const fullItemCode = itemCode(item.ItemCode);
     if (!fullItemCode) {
       throw new BookingConfigurationError(
         `Service "${service.name}" has an invalid legacy item code for the selected location.`,
       );
     }
 
-    // tbl_itemmaster.ItemCode is CHAR(15) but the booking detail column
-    // tbl_bookingservicedetail.ServiceItemID is CHAR(10). These are linked by
-    // the first 10 characters of the item code:
-    //   LEFT(RTRIM(i.ItemCode), 10) = RTRIM(d.ServiceItemID)
-    // Store the 10-char service code (this is also how the availability view
-    // and the read-back query resolve a booking detail back to its item).
-    const serviceItemID = fullItemCode.slice(0, 10);
+    // tbl_itemmaster.ItemCode is CHAR(15) and is stored AS IT IS in
+    // tbl_bookingservicedetail.ServiceItemID (CHAR(15) after
+    // scripts/migrate-itemcode-char15.sql). Never cut it to 10 characters: two
+    // services sharing a prefix used to resolve to the same — wrong — service.
+    const serviceItemID = fullItemCode;
     if (!serviceItemID) {
       throw new BookingConfigurationError(
         `Service "${service.name}" has an invalid legacy item code for the selected location.`,
@@ -698,12 +739,44 @@ async function resolveLegacyServices(
     }
     usedCodes.add(serviceItemID);
 
-    // Price and duration come from the Item Master. The public payload may
-    // contain display values, but it must never override the catalog duration
-    // used by availability and overlap checks.
+    // ── Server-authoritative pricing ─────────────────────────────────────
+    // Never trust the price sent by the browser. It is recomputed from
+    // tbl_itemmaster.Retailprice (× qty for clients that send a quantity), so
+    // a tampered payload (devtools) cannot book a LKR 5,000 service at LKR 500
+    // and then have the bill use that price. A mismatch is logged and the
+    // database price is stored, exactly like the admin appointment form does.
+    const retailPrice = Number(item.Retailprice) || 0;
+    const qty = parseQuantity(service.qty);
+    const sentPrice = parsePrice(service.price);
+    let itemPrice = sentPrice;
+
+    if (retailPrice > 0) {
+      const correctPrice = Math.round(retailPrice * qty * 100) / 100;
+      if (Math.abs(sentPrice - correctPrice) > 0.009) {
+        console.warn(
+          `[PRICE_FIXED] Item "${fullItemCode}": client sent LKR ${sentPrice}, ` +
+            `tbl_ItemMaster.Retailprice = LKR ${retailPrice} × ${qty} = LKR ${correctPrice}. ` +
+            `Storing the DB price.`,
+        );
+      }
+      itemPrice = correctPrice;
+    } else if (sentPrice <= 0) {
+      console.warn(
+        `[PRICE_MISSING] Item "${fullItemCode}" has no Retailprice in tbl_itemmaster ` +
+          `and the booking arrived without a price — booking it at LKR 0.`,
+      );
+    } else {
+      console.warn(
+        `[PRICE_MISSING] Item "${fullItemCode}" has no Retailprice in tbl_itemmaster — ` +
+          `keeping the LKR ${sentPrice} sent by the page. Set the price in the Item Master.`,
+      );
+    }
+
+    // Duration still comes from the Item Master (never from the payload) so the
+    // availability and overlap checks cannot be shortened by a client.
     return {
       serviceItemID,
-      itemPrice: parsePrice(service.price),
+      itemPrice,
       durationMin: parseDuration(item.SerDuration),
     };
   });
@@ -1802,7 +1875,7 @@ export async function POST(req: NextRequest) {
               ${toChar(branch.LocCode, 10)},
               ${toChar(bookingID, 10)},
               ${toChar('MAIN', 10)},
-              ${toChar(service.serviceItemID, 10)},
+              ${toChar(service.serviceItemID, ITEM_CODE_LENGTH)},
               ${toChar('1', 10)},
               ${service.itemPrice},
               ${toChar(service.techID || '0', 10)},
@@ -1981,26 +2054,8 @@ function dateOnlyValue(value: unknown): string {
 }
 
 function timeLabelValue(value: unknown): string {
-  if (typeof value === 'string') {
-    const match = value.match(/[ T](\d{1,2}):(\d{2})(?::\d{2})?/);
-    if (match) {
-      let hour = Number(match[1]);
-      const minute = Number(match[2]);
-      if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-        const period = hour >= 12 ? 'PM' : 'AM';
-        hour %= 12;
-        if (hour === 0) hour = 12;
-        return `${hour}:${String(minute).padStart(2, '0')} ${period}`;
-      }
-    }
-  }
-
-  const parsed = value instanceof Date ? value : new Date(value as any);
-  if (Number.isNaN(parsed.getTime())) return '';
-  const period = parsed.getHours() >= 12 ? 'PM' : 'AM';
-  let hour = parsed.getHours() % 12;
-  if (hour === 0) hour = 12;
-  return `${hour}:${String(parsed.getMinutes()).padStart(2, '0')} ${period}`;
+  // Shared wall-clock reader — see src/lib/legacyTime.ts.
+  return timeLabelFromValue(value) || '';
 }
 
 function eventDateValue(value: unknown): string | null {

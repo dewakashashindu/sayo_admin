@@ -381,7 +381,15 @@ export async function DELETE(req: NextRequest) {
       const existing = await prisma.tbl_UnitMaster.findUnique({ where: { MasterUnitID: masterUnitID } });
       if (!existing) return err('Master unit not found', 404);
 
-      const usedInConv = await prisma.tbl_UnitConversion.findFirst({ where: { MasterUnitID: masterUnitID } });
+      /* Is it used by a conversion? If the conversion table is not there at all
+         (a database that has not been set up completely), do not block the
+         delete with a message about a missing table — carry on and delete. */
+      let usedInConv: Awaited<ReturnType<typeof prisma.tbl_UnitConversion.findFirst>> = null;
+      try {
+        usedInConv = await prisma.tbl_UnitConversion.findFirst({ where: { MasterUnitID: masterUnitID } });
+      } catch (err) {
+        console.warn('[units] could not check conversions for', masterUnitID, err);
+      }
       if (usedInConv) {
         return err(
           `Cannot delete "${existing.UnitDes}" — it is used in one or more unit conversions. Delete those conversions first.`,
@@ -401,7 +409,12 @@ export async function DELETE(req: NextRequest) {
       const existing = await prisma.tbl_UnitSub.findUnique({ where: { SubUnitID: subUnitID } });
       if (!existing) return err('Sub unit not found', 404);
 
-      const usedInConv = await prisma.tbl_UnitConversion.findFirst({ where: { SubUnitID: subUnitID } });
+      let usedInConv: Awaited<ReturnType<typeof prisma.tbl_UnitConversion.findFirst>> = null;
+      try {
+        usedInConv = await prisma.tbl_UnitConversion.findFirst({ where: { SubUnitID: subUnitID } });
+      } catch (err) {
+        console.warn('[units] could not check conversions for', subUnitID, err);
+      }
       if (usedInConv) {
         return err(
           `Cannot delete "${existing.SubUnitDes}" — it is used in one or more unit conversions. Delete those conversions first.`,

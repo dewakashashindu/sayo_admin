@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { stripBookingSchedule } from '@/lib/bookingSchedule';
+import { minutesFromRemarks, minutesFromValue } from '@/lib/legacyTime';
 import { BOOKING_SERVICE_DETAIL_FROM } from '@/lib/bookingReadModel';
 
 export const dynamic = 'force-dynamic';
@@ -149,11 +150,15 @@ export async function GET(req: NextRequest) {
           conf === 'wo' || btype === 'WALKIN' || conf === 'wi'
             ? 'without_confirmation'
             : 'pre_booking';
-        const headerDate = new Date(r.BookingDate as any);
+        /* Wall-clock minutes, exactly as stored (src/lib/legacyTime.ts): the
+           server's own timezone must not move an appointment to another hour.
+           A header time of exactly midnight counts as “no time stored” — the
+           legacy rows keep it in Remarks, and midnight is not a shop slot. */
+        const headerMinutes = minutesFromValue(r.BookingDate);
         const startFromHeader =
-          !Number.isNaN(headerDate.getTime())
-            ? headerDate.getHours() * 60 + headerDate.getMinutes()
-            : -1;
+          headerMinutes && headerMinutes > 0
+            ? headerMinutes
+            : minutesFromRemarks(r.Remarks) ?? -1;
         b = {
           BookingId: (r.BookingID || '').trim(),
           Location: locMap.get((r.LocCode || '').trim()) || (r.LocCode || '').trim(),

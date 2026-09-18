@@ -49,9 +49,104 @@ export const SERIAL_CODES = {
   booking: "BK",
   /** Customer code     -> CUS0000001 */
   customer: "CUS",
+  /** Bill / invoice no -> INV0000001 (Tbl_Serials row with SeriCode = "INV") */
+  invoice: "INV",
+  /** Purchase order no -> PO0000001 (fits tbl_poheader.PONO CHAR(10)) */
+  purchaseOrder: "PO",
+  /** Goods received note no -> GRN0000001 (fits tbl_grnheader.GRNNO varchar(15)) */
+  goodsReceived: "GRN",
 } as const;
 
 export type SerialCodeName = keyof typeof SERIAL_CODES;
+
+/**
+ * The same series can sit under a different `SeriCode` in a real database:
+ * the counter that the old system used. The invoice series, for example, is
+ * often just `I` because `SeriCode` is char(10) and the old screens printed
+ * `I0000042`. Every series is therefore looked up by its canonical code first
+ * and by these aliases second — an existing counter (with real numbers in it)
+ * is always used before a new row is created.
+ *
+ * Add to this list (never rename a series) when a database holds another code.
+ */
+export const SERIAL_CODE_ALIASES: Record<string, string[]> = {
+  BK: ["BK", "B", "BOOK", "BOOKING"],
+  CUS: ["CUS", "C", "CUST", "CUSTOMER"],
+  INV: ["INV", "I", "INVOICE", "BILL", "BILLNO"],
+  PO: ["PO", "P", "PORDER", "PURCHASE"],
+  GRN: ["GRN", "G", "GR", "GOODSREC"],
+};
+
+/**
+ * Which `SeriCode` to use for a series: the one the database actually holds
+ * (alias aware), otherwise the canonical code, which is then created on first
+ * use. Nothing is written here — this is a plain read.
+ */
+export async function resolveSerialCode(
+  db: SerialClient,
+  code: string,
+): Promise<string> {
+  const row = await resolveSerialRow(db, code);
+  return row.code;
+}
+
+/** Digits to pad with: the counter the database holds decides (7 by default). */
+function widthFromCounter(seriNo: string, fallback: number): number {
+  const digits = String(seriNo ?? "").trim();
+  const value = Number.parseInt(digits, 10);
+  if (!Number.isSafeInteger(value) || value <= 0) return fallback;
+  return digits.length >= 3 && digits.length <= 9 ? digits.length : fallback;
+}
+
+/**
+ * The counter row this database uses for a series plus the number it holds.
+ * Nothing is written here — this is a plain read.
+ */
+export async function resolveSerialRow(
+  db: SerialClient,
+  code: string,
+): Promise<{ code: string; seriNo: string }> {
+  const canonical = String(code ?? "")
+    .trim()
+    .toUpperCase();
+  if (!canonical) return { code: canonical, seriNo: "" };
+
+  const candidates = SERIAL_CODE_ALIASES[canonical] || [canonical];
+
+  let rows: { SeriCode: string; SeriNo: string }[] = [];
+  try {
+    rows = await db.$queryRaw<{ SeriCode: string; SeriNo: string }[]>`
+      SELECT RTRIM(SeriCode) AS SeriCode, TRIM(SeriNo) AS SeriNo
+        FROM tbl_serials
+    `;
+  } catch {
+    // No Tbl_Serials yet — the caller's normal path creates it.
+    return { code: canonical, seriNo: "" };
+  }
+
+  const byCode = new Map<string, string>();
+  rows.forEach((row) =>
+    byCode.set(
+      String(row.SeriCode ?? "").trim().toUpperCase(),
+      String(row.SeriNo ?? "").trim(),
+    ),
+  );
+
+  const found = candidates.filter((candidate) => byCode.has(candidate));
+  if (found.length === 0) return { code: canonical, seriNo: "" };
+  if (found.length === 1) {
+    return { code: found[0], seriNo: byCode.get(found[0]) || "" };
+  }
+
+  /* More than one candidate exists (an old empty row next to the live one):
+     the one that has already issued numbers wins — using the empty row would
+     hand out bill numbers that are already in the tables. */
+  const issued = found.filter(
+    (candidate) => Number.parseInt(byCode.get(candidate) || "0", 10) > 0,
+  );
+  const chosen = issued[0] || found[0];
+  return { code: chosen, seriNo: byCode.get(chosen) || "" };
+}
 
 /** Digits in the numeric part. 7 gives BK0000001 … BK9999999. */
 const DEFAULT_WIDTH = 7;
@@ -90,20 +185,29 @@ export async function nextSerialTx(
   code: string,
   options: NextSerialOptions = {},
 ): Promise<string> {
-  const seriCode = String(code ?? "")
+  const requested = String(code ?? "")
     .trim()
     .toUpperCase();
 
-  if (!seriCode) {
+  if (!requested) {
     throw new Error("nextSerialTx: a SeriCode is required.");
   }
+
+  // Use the counter this database really holds ("I" for the invoice series,
+  // "INV" when that is what is stored) — see SERIAL_CODE_ALIASES. The padding
+  // follows that counter as well, so a legacy series with 6 digits keeps them.
+  const resolved = await resolveSerialRow(db, requested);
+  const seriCode = resolved.code;
   if (seriCode.length > CODE_WIDTH) {
     throw new Error(
       `nextSerialTx: SeriCode "${seriCode}" is longer than the char(10) column.`,
     );
   }
 
-  const width = options.width && options.width > 0 ? options.width : DEFAULT_WIDTH;
+  const width =
+    options.width && options.width > 0
+      ? options.width
+      : widthFromCounter(resolved.seriNo, DEFAULT_WIDTH);
   const startAt = Number.isSafeInteger(options.startAt) ? (options.startAt as number) : 0;
   const maxValue = 10 ** width - 1;
 
@@ -199,9 +303,8 @@ export async function peekSerial(
   value: number;
   seriDate: Date | null;
 } | null> {
-  const seriCode = String(code ?? "")
-    .trim()
-    .toUpperCase();
+  // Alias aware: "INV" finds the "I" row this database actually keeps.
+  const seriCode = await resolveSerialCode(db, code);
   const seriKey = seriCode.padEnd(CODE_WIDTH, " ");
 
   const rows = await db.$queryRaw<{ SeriNo: string; SeriDate: Date | null }[]>`
@@ -234,9 +337,8 @@ export async function ensureSerialRow(
   startAt = 0,
   width = DEFAULT_WIDTH,
 ): Promise<void> {
-  const seriCode = String(code ?? "")
-    .trim()
-    .toUpperCase();
+  // Alias aware: seed the row this database uses for the series.
+  const seriCode = await resolveSerialCode(db, code);
   const seriKey = seriCode.padEnd(CODE_WIDTH, " ");
   const seed = padSerial(startAt, width);
 
