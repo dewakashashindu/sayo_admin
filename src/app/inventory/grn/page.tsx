@@ -26,6 +26,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 import ItemSuggestInput, { type SuggestedItem } from '@/components/ItemSuggestInput';
+import InventoryPrintSheet, { INVENTORY_PRINT_CSS } from '@/components/InventoryPrintSheet';
 import {
   displayPhone,
   notifyMoney,
@@ -115,6 +116,8 @@ export default function GrnPage() {
   const [units, setUnits] = useState<LookupUnit[]>([]);
   const [lookupErrors, setLookupErrors] = useState<Record<string, string>>({});
   const [lookupNote, setLookupNote] = useState('Loading locations and suppliers…');
+  const [company, setCompany] = useState<{name:string;address:string;phone:string}>({name:'SAYO',address:'',phone:''});
+  const [printJob, setPrintJob] = useState<{at:Date}|null>(null);
 
   const [openPos, setOpenPos] = useState<OpenPo[]>([]);
   const [poErr, setPoErr] = useState('');
@@ -189,6 +192,7 @@ export default function GrnPage() {
         setLocations(locs);
         setSuppliers(sups);
         setUnits(json.units ?? []);
+        if((json as any).company) setCompany({name:(json as any).company.name||'SAYO',address:(json as any).company.address||'',phone:(json as any).company.phone||''});
         setLookupErrors(json.errors ?? {});
         setLookupNote(`${locs.length} location(s) · ${sups.length} supplier(s) loaded from the database`);
         setLocCode((prev) => prev || locs[0]?.code || '');
@@ -1041,7 +1045,7 @@ export default function GrnPage() {
                 <button className="btn" onClick={() => void handleConfirm()} disabled={busy || confirmed}>
                   {confirming ? 'Confirming…' : 'Confirmation'}
                 </button>
-                <button className="btn" onClick={() => window.print()} disabled={busy}>Print</button>
+                <button className="btn" onClick={() => grnNo.trim()? setPrintJob({at:new Date()}): showToast('Save first, then print',true)} disabled={busy||!grnNo.trim()}>Print</button>
                 <button className="btn" onClick={() => void openNotify()} disabled={busy || !grnNo || confirmed}
                   title="SMS an admin so they can come and confirm this receipt">
                   Message Admin
@@ -1056,6 +1060,34 @@ export default function GrnPage() {
               </div>
 
               {lastResult && <div className="po-ok no-print">{lastResult}</div>}
+              {printJob && (
+                <>
+                  <style>{INVENTORY_PRINT_CSS}</style>
+                  <InventoryPrintSheet
+                    title={direct ? 'Direct Good Received Note' : 'Good Received Note'}
+                    docNo={grnNo.trim()}
+                    docDate={grnDate}
+                    printDate={printJob.at.toLocaleDateString()}
+                    printTime={printJob.at.toLocaleTimeString()}
+                    user="admin"
+                    companyName={company.name}
+                    companyAddress={company.address}
+                    companyPhone={company.phone}
+                    branch={locations.find(l=>l.code===locCode)?.des||locCode}
+                    partnerLabel="Supplier"
+                    partnerCode={supID}
+                    partnerName={suppliers.find(s=>s.supID===supID)?.name||supID}
+                    partnerAddress={suppliers.find(s=>s.supID===supID)?.contact||''}
+                    columns={{code:'ItemCode',des:'Item Description',unit:'Unit',qty:'GRN Qty',cost:'Cost Price',value:'Item Value'}}
+                    rows={lines.filter(l=> (l.itemCode||'').trim() || (l.itemName||'').trim()).map(l=>({ itemCode:(l.itemCode||l.itemName).trim(), name:l.itemName||l.itemCode, unit:unitName(units,l.unitID), qty:String(Number(l.grnQty)||0), costPrice: money(Number(l.costPrice)||0), itemValue: money(lineValue(l.costPrice,l.grnQty,l.freeQty)) }))}
+                    totalLabel="Net Value"
+                    total={money(totals.net)}
+                    deliAdd={poNo? `PO: ${poNo}`:''}
+                    remarks={remarks}
+                  />
+                  <div className="no-print" style={{textAlign:'right',marginTop:8}}><button className="btn primary" onClick={()=>window.print()}>Print now</button> <button className="btn" onClick={()=>setPrintJob(null)}>Close preview</button></div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -1341,7 +1373,7 @@ const PAGE_CSS = `
     .po-shell { display:block; height:auto; background:#fff; }
     .po-main { overflow:visible; padding:0; }
     .po-card { border:none; padding:0; }
-    .po-print-head { display:block; font-size:12px; margin-bottom:8px; }
+    .po-print-head { display:none !important; } /* PO-style InventoryPrintSheet owns the header */
     .po-grid-wrap { max-height:none; overflow:visible; border:none; }
     .po-table thead th { background:#eee; }
   }

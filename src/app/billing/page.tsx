@@ -746,6 +746,7 @@ function BillingContent() {
 
   const [discountPct,  setDiscountPct]  = useState<number|''>(0);
   const [discountAmt,  setDiscountAmt]  = useState<number|''>('');
+  const [discountSource, setDiscountSource] = useState<'pct'|'amt'|''>('pct');
 
   /* ── taxes: straight from tbl_taxes (Enable = 1 only) ─────────────
      The cashier never types a percentage here. Whatever the salon has
@@ -780,6 +781,47 @@ function BillingContent() {
         );
       })
       .finally(() => { if (active) setTaxesLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  /* ── payment modes: Vw_PaymentModes = Tbl_PaymentModes LEFT JOIN Tbl_PaymentGroup ──
+     Quick buttons + dropdowns source from the DB so the cashier sees exactly what
+     the salon enabled (Enable=1, DoNotShowInSales=0). Falls back to PAY_METHODS. */
+  type VwMode = { PayCode: string; PayDes: string; PayGroup: string | null; PayGroupID: string | null };
+  const [vwModes, setVwModes] = useState<VwMode[]>([]);
+  const [vwGroups, setVwGroups] = useState<Record<string, VwMode[]>>({});
+  const [payModesLoading, setPayModesLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    fetch('/api/payment-modes', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(json => {
+        if (!active) return;
+        if (json?.success && Array.isArray(json.data)) {
+          const list = (json.data as VwMode[]).filter(m => m.PayCode && m.PayDes);
+          setVwModes(list);
+          if (json.groups && typeof json.groups === 'object') {
+            const g: Record<string, VwMode[]> = {};
+            for (const [k, v] of Object.entries(json.groups as Record<string, VwMode[]>)) {
+              if (Array.isArray(v) && v.length) g[k] = v;
+            }
+            setVwGroups(g);
+          } else {
+            const grouped: Record<string, VwMode[]> = {};
+            for (const m of list) {
+              const key = (m.PayGroup || 'Other').trim() || 'Other';
+              if (!grouped[key]) grouped[key] = [];
+              grouped[key].push(m);
+            }
+            setVwGroups(grouped);
+          }
+        } else {
+          setVwModes([]);
+          setVwGroups({});
+        }
+      })
+      .catch(() => { if (active) { setVwModes([]); setVwGroups({}); } })
+      .finally(() => { if (active) setPayModesLoading(false); });
     return () => { active = false; };
   }, []);
 
@@ -822,6 +864,22 @@ function BillingContent() {
     if (discountPct !== '') return gross * (clamp(Number(discountPct),0,100)/100);
     return 0;
   },[gross, discountPct, discountAmt]);
+
+  // When the bill total changes after a discount was already typed, keep the
+  // % ↔ value pair consistent so both boxes stay truthful.
+  useEffect(() => {
+    if (gross <= 0) return;
+    if (discountSource === 'pct' && discountPct !== '') {
+      const pct = clamp(Number(discountPct), 0, 100);
+      const amt = Number((gross * pct / 100).toFixed(2));
+      if (Number(discountAmt) !== amt) setDiscountAmt(amt);
+    } else if (discountSource === 'amt' && discountAmt !== '') {
+      const amtV = Number(discountAmt);
+      if (!Number.isFinite(amtV)) return;
+      const pct = Number(((Math.min(amtV, gross) / gross) * 100).toFixed(2));
+      if (Number(discountPct) !== pct) setDiscountPct(pct);
+    }
+  }, [gross]); // keep %↔value synced when services/items change
 
   /* The whole worksheet in one call:
        (C) = gross - discount
@@ -877,6 +935,43 @@ function BillingContent() {
     }]);
     setNewName(''); setNewPrice(''); setNewSupporters(''); setNewItemCode('');
     setItemOptions([]); setShowSuggest(false);
+  }
+
+  /* ── helpers: Vw_PaymentModes → PayMethod + icons ─────────────── */
+  function vwGroupToMethod(group: string): PayMethod {
+    const g = (group || '').toLowerCase();
+    if (g.includes('cash')) return 'cash';
+    if (g.includes('voucher') || g.includes('gift') || g.includes('complement')) return 'voucher';
+    if (g.includes('online') || g.includes('bank') || g.includes('wallet') || g.includes('gateway') || g.includes('transfer')) return 'online';
+    if (g.includes('card') || g.includes('credit') || g.includes('visa') || g.includes('master') || g.includes('amex')) return 'card';
+    return 'cash';
+  }
+  function vwTypesForMethod(method: PayMethod): string[] {
+    const out: string[] = [];
+    for (const [group, modes] of Object.entries(vwGroups)) {
+      if (vwGroupToMethod(group) === method) {
+        for (const m of modes) if (m.PayDes && !out.includes(m.PayDes)) out.push(m.PayDes);
+      }
+    }
+    return out.length ? out : methodTypes(method);
+  }
+  function payGroupIcon(group: string) {
+    const m = vwGroupToMethod(group);
+    if (m === 'cash') return <ICash />;
+    if (m === 'card') return <ICard />;
+    if (m === 'online') return <IOnline />;
+    return <ITicket />;
+  }
+  function addPaymentFromGroup(group: string) {
+    const method = vwGroupToMethod(group);
+    const owed = Math.max(0, netTotal - paidAmt);
+    const modes = vwGroups[group] || [];
+    const firstType = modes[0]?.PayDes || vwTypesForMethod(method)[0] || '';
+    // Respect Enable/ZeroVal: if group has a Cash mode with ZeroVal maybe? Keep simple.
+    setPayments(prev => [
+      ...prev,
+      { id: Date.now() + Math.floor(Math.random() * 1000), method, type: firstType, amount: owed > 0 ? owed.toFixed(2) : '', remark: '' },
+    ]);
   }
 
   /* ── split payment handlers ─────────────────────────────────────── */
@@ -1484,12 +1579,28 @@ function BillingContent() {
                       <span style={{fontWeight:500}}>Discount</span>
                       <div style={{display:'flex',gap:6,width:'100%',alignItems:'center'}}>
                         <div style={{position:'relative',flex:1}}>
-                          <input className="sum-inp" type="number" min={0} max={100} placeholder="0" value={discountPct} onChange={e=>{ setDiscountPct(e.target.value===''?'':Number(e.target.value)); setDiscountAmt(''); }} style={{width:'100%',paddingRight:22}}/>
+                          <input className="sum-inp" type="number" min={0} max={100} placeholder="0" value={discountPct} onChange={e=>{
+                            const raw = e.target.value;
+                            if (raw === '') { setDiscountPct(''); setDiscountAmt(''); setDiscountSource(''); return; }
+                            const pct = clamp(Number(raw), 0, 100);
+                            setDiscountPct(pct);
+                            setDiscountSource('pct');
+                            if (gross > 0) setDiscountAmt(Number((gross * pct / 100).toFixed(2)));
+                            else setDiscountAmt('');
+                          }} style={{width:'100%',paddingRight:22}}/>
                           <span style={{position:'absolute',right:7,top:'50%',transform:'translateY(-50%)',fontSize:11,color:'#9ca3af',pointerEvents:'none'}}>%</span>
                         </div>
                         <span style={{fontSize:11,color:'#9ca3af',flexShrink:0}}>or</span>
                         <div style={{flex:1}}>
-                          <input className="sum-inp" type="number" min={0} placeholder="0.00" value={discountAmt} onChange={e=>{ setDiscountAmt(e.target.value===''?'':Number(e.target.value)); setDiscountPct(''); }} style={{width:'100%'}}/>
+                          <input className="sum-inp" type="number" min={0} placeholder="0.00" value={discountAmt} onChange={e=>{
+                            const raw = e.target.value;
+                            if (raw === '') { setDiscountPct(''); setDiscountAmt(''); setDiscountSource(''); return; }
+                            const amt = clamp(Number(raw), 0, gross > 0 ? gross : Number(raw));
+                            setDiscountAmt(amt);
+                            setDiscountSource('amt');
+                            if (gross > 0) setDiscountPct(Number(((amt / gross) * 100).toFixed(2)));
+                            else setDiscountPct('');
+                          }} style={{width:'100%'}}/>
                         </div>
                       </div>
                       {discAmt>0&&<div style={{display:'flex',justifyContent:'flex-end',width:'100%'}}><span style={{fontSize:11.5,color:'#b91c1c',fontWeight:600}}>– {fmtMoney(discAmt)}</span></div>}
@@ -1549,14 +1660,14 @@ function BillingContent() {
                               >
                                 {PAY_METHODS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
                               </select>
-                              {methodTypes(p.method).length > 0 && (
+                              {vwTypesForMethod(p.method).length > 0 && (
                                 <select
                                   className="pay-inp"
                                   value={p.type}
                                   aria-label="Payment type"
                                   onChange={e=>updatePayment(p.id,{ type: e.target.value })}
                                 >
-                                  {methodTypes(p.method).map(t => (
+                                  {vwTypesForMethod(p.method).map(t => (
                                     <option key={t} value={t}>{t}</option>
                                   ))}
                                 </select>
@@ -1596,12 +1707,27 @@ function BillingContent() {
                       </div>
                     )}
 
-                    <div style={{display:'flex',gap:7,marginBottom:10}}>
-                      <button className="pay-opt" type="button" onClick={()=>addPayment('cash')}><ICash/><span className="pay-opt-lbl">Cash</span></button>
-                      <button className="pay-opt" type="button" onClick={()=>addPayment('card')}><ICard/><span className="pay-opt-lbl">Card</span></button>
-                      <button className="pay-opt" type="button" onClick={()=>addPayment('online')}><IOnline/><span className="pay-opt-lbl">Online</span></button>
-                      <button className="pay-opt" type="button" onClick={()=>addPayment('voucher')}><ITicket/><span className="pay-opt-lbl">Voucher</span></button>
+                    <div style={{display:'flex',gap:7,marginBottom:10,flexWrap:'wrap'}}>
+                      {payModesLoading ? (
+                        <span style={{fontSize:11,color:'#9ca3af',padding:'10px 0'}}>Loading payment modes…</span>
+                      ) : Object.keys(vwGroups).length > 0 ? (
+                        Object.keys(vwGroups).sort().map(group => (
+                          <button key={group} className="pay-opt" type="button" onClick={()=>addPaymentFromGroup(group)} title={group}>
+                            {payGroupIcon(group)}<span className="pay-opt-lbl">{group}</span>
+                          </button>
+                        ))
+                      ) : (
+                        <>
+                          <button className="pay-opt" type="button" onClick={()=>addPayment('cash')}><ICash/><span className="pay-opt-lbl">Cash</span></button>
+                          <button className="pay-opt" type="button" onClick={()=>addPayment('card')}><ICard/><span className="pay-opt-lbl">Card</span></button>
+                          <button className="pay-opt" type="button" onClick={()=>addPayment('online')}><IOnline/><span className="pay-opt-lbl">Online</span></button>
+                          <button className="pay-opt" type="button" onClick={()=>addPayment('voucher')}><ITicket/><span className="pay-opt-lbl">Voucher</span></button>
+                        </>
+                      )}
                     </div>
+                    {Object.keys(vwGroups).length > 0 && (
+                      <p style={{fontSize:10,color:'#9ca3af',marginTop:-4,marginBottom:8}}>Modes from Vw_PaymentModes (Tbl_PaymentModes + Tbl_PaymentGroup) — Enable=1, DoNotShowInSales=0.</p>
+                    )}
 
                     <div className="sum-row" style={{paddingTop:2}}>
                       <span>Total Paid</span>

@@ -712,3 +712,150 @@ model Tbl_GRNDetails {
   @@id([LocCode, GRNNo, LineNo])
   @@map("tbl_grndetails")
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Tbl_TxnMovement — old stock ledger (VB6 frmStocks.StockAddition)
+// Created from your MSSQL script, ported to MySQL for Sayo.
+// One row per receipt/issue: PreQty + TxnQty = LastQty, AddDeduct '+'/'-'
+// Written together with GRN confirm (same transaction) when we want to keep
+// the old program's stock in sync.
+// See scripts/create-Tbl_TxnMovement-mysql.sql
+// ─────────────────────────────────────────────────────────────────────────
+model Tbl_TxnMovement {
+  LocCode           String   @db.Char(15)
+  RowItemCode       String   @db.VarChar(20)
+  TxnNo             String   @db.VarChar(20)
+  TxnType           String   @db.VarChar(100)
+  TxnDate           DateTime @default(now()) @db.DateTime(0)
+  TxndateTime       DateTime @default(now()) @db.DateTime(0)
+  PreQty            Float    @default(0)
+  TxnQty            Float    @default(0)
+  LastQty           Float    @default(0)
+  UserId            String   @db.VarChar(20)
+  SysSerialId       Float    @default(0)
+  Remarks           String   @default("") @db.VarChar(200)
+  AddDeduct         String   @db.Char(1)
+  TXNDATETIMEMANUAL DateTime @db.DateTime(0)
+  SourceItemCode    String   @default("0") @db.VarChar(200)
+
+  @@id([LocCode, RowItemCode, TxnNo, TxnType, TxndateTime])
+  @@index([LocCode, RowItemCode], map: "idx_TxnMovement_Loc_Item")
+  @@index([TxnNo], map: "idx_TxnMovement_TxnNo")
+  @@map("tbl_txnmovement")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SRN / Damage / Recon — ported from your MSSQL script (Vb sysobjects)
+// Covers: Tbl_SRNHeader, Tbl_SRNDetails, Tbl_DamageHeder, Tbl_DamageDetails,
+//         Tbl_ReconcilHeder, Tbl_ReconcilDetails + views Vw_*
+// See scripts/create-Tbl_SRN_Damage_Recon-mysql.sql
+// ─────────────────────────────────────────────────────────────────────────
+model Tbl_SRNHeader {
+  LocCode     String   @default("") @db.Char(10)
+  SRNNO       String   @default("") @db.VarChar(15)
+  SRNDate     DateTime @db.DateTime(0)
+  SupID       String   @default("") @db.Char(10)
+  SupInvNo    String   @default("") @db.VarChar(20)
+  NetTotal    Float    @default(0)
+  UserID      String   @default("") @db.Char(10)
+  Remarks     String   @default("") @db.VarChar(400)
+  TxnDate     DateTime @default(now()) @db.DateTime(0)
+  SysSerialNo Float    @default(0)
+  Confirmed   String   @default("N") @db.Char(1)
+  ConUserID   String   @default("") @db.Char(10)
+  ConDatetime DateTime @db.DateTime(0)
+  SRNTYPE     String   @default("SR") @db.Char(2)
+
+  details Tbl_SRNDetails[]
+
+  @@id([LocCode, SRNNO])
+  @@map("tbl_srnheader")
+}
+
+model Tbl_SRNDetails {
+  LocCode         String @default("") @db.Char(10)
+  SRNNo           String @default("") @db.VarChar(15)
+  ItemCode        String @default("") @db.Char(20)
+  UnitID          String @default("") @db.Char(15)
+  CostPrice       Float  @default(0)
+  SRNQty          Float  @default(0)
+  ItemValue       Float  @default(0)
+  DirectSRNConfNo String @default("") @db.VarChar(15)
+  GRNQty          Float  @default(0)
+
+  header Tbl_SRNHeader @relation(fields: [LocCode, SRNNo], references: [LocCode, SRNNO])
+
+  @@id([LocCode, SRNNo, ItemCode])
+  @@map("tbl_srndetails")
+}
+
+model Tbl_DamageHeder {
+  LocCode     String   @default("") @db.Char(10)
+  DamNo       String   @default("") @db.Char(10)
+  NetTotal    Float    @default(0)
+  UserId      String   @default("") @db.Char(10)
+  Remarks     String   @default("") @db.VarChar(400)
+  TxnDate     DateTime @db.DateTime(0)
+  TxndateTime DateTime @default(now()) @db.DateTime(0)
+  SysSerialNo Float    @default(0)
+  Confirmed   String   @default("N") @db.Char(1)
+  ConUserID   String   @default("") @db.Char(10)
+  ConDatetime DateTime @db.DateTime(0)
+
+  details Tbl_DamageDetails[]
+
+  @@id([LocCode, DamNo])
+  @@map("tbl_damageheder")
+}
+
+model Tbl_DamageDetails {
+  LocCode   String @default("") @db.Char(10)
+  DamNo     String @default("") @db.Char(10)
+  ItemCode  String @default("") @db.Char(15)
+  UnitId    String @default("") @db.Char(10)
+  CostPrice Float  @default(0)
+  DmgQty    Float  @default(0)
+  ItemValue Float  @default(0)
+  DmgConfNo String @default("") @db.Char(10)
+
+  header Tbl_DamageHeder @relation(fields: [LocCode, DamNo], references: [LocCode, DamNo])
+
+  @@id([LocCode, DamNo, ItemCode])
+  @@map("tbl_damagedetails")
+}
+
+model Tbl_ReconcilHeder {
+  LocCode     String   @default("") @db.Char(10)
+  RecNo       String   @default("") @db.Char(10)
+  RecDate     DateTime @default(now()) @db.DateTime(0)
+  TxnDateTime DateTime @default(now()) @db.DateTime(0)
+  UserId      String   @default("") @db.Char(10)
+  Remarks     String   @default("") @db.VarChar(400)
+  NetValue    Float    @default(0)
+  SysSerialNo Float    @default(0)
+  Confirmed   String   @default("N") @db.Char(1)
+  ConDatetime DateTime @default(now()) @db.DateTime(0)
+  ConUserID   String   @default("") @db.Char(10)
+
+  details Tbl_ReconcilDetails[]
+
+  @@id([LocCode, RecNo])
+  @@map("tbl_reconcilheder")
+}
+
+model Tbl_ReconcilDetails {
+  LocCode      String @default("") @db.Char(10)
+  RecNo        String @default("") @db.Char(10)
+  ItemCode     String @default("") @db.VarChar(15)
+  UnitId       String @default("") @db.Char(10)
+  CostPrice    Float  @default(0)
+  SysQty       Float  @default(0)
+  RecQty       Float  @default(0)
+  RecItemValue Float  @default(0)
+  RecConfNo    String @default("") @db.Char(10)
+
+  header Tbl_ReconcilHeder @relation(fields: [LocCode, RecNo], references: [LocCode, RecNo])
+
+  @@id([LocCode, RecNo, ItemCode])
+  @@map("tbl_reconcildetails")
+}

@@ -210,13 +210,17 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       ExpDate: Date | null;
       UpdItemPrice: number | boolean | null;
       StockBalance: number | null;
+      RETQTY: number | null;
+      RETVAL: number | null;
+      RETYN: number | boolean | null;
     }
 
     const lines = batchColumn
       ? await prisma.$queryRaw<GrnDetailRow[]>`
           SELECT d.LineNo, RTRIM(d.ItemCode) AS ItemCode, i.ItemDes, i.ItemPrintDes,
                  RTRIM(d.UnitID) AS UnitID, d.BatchNo AS BatchNo, d.CostPrice, d.RetailPrice,
-                 d.GRNQty, d.FreeQty, d.ItemValue, d.ExpDate, d.UpdItemPrice, i.StockBalance
+                 d.GRNQty, d.FreeQty, d.ItemValue, d.ExpDate, d.UpdItemPrice, i.StockBalance,
+                 d.RETQTY AS RETQTY, d.RETVAL AS RETVAL, d.RETYN AS RETYN
           FROM tbl_grndetails d
           LEFT JOIN tbl_itemmaster i
             ON ${keySql("i.LocCode")} = ${keySql("d.LocCode")} AND ${keySql("i.ItemCode")} = ${keySql("d.ItemCode")}
@@ -226,7 +230,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       : await prisma.$queryRaw<GrnDetailRow[]>`
           SELECT d.LineNo, RTRIM(d.ItemCode) AS ItemCode, i.ItemDes, i.ItemPrintDes,
                  RTRIM(d.UnitID) AS UnitID, d.CostPrice, d.RetailPrice,
-                 d.GRNQty, d.FreeQty, d.ItemValue, d.ExpDate, d.UpdItemPrice, i.StockBalance
+                 d.GRNQty, d.FreeQty, d.ItemValue, d.ExpDate, d.UpdItemPrice, i.StockBalance,
+                 d.RETQTY AS RETQTY, d.RETVAL AS RETVAL, d.RETYN AS RETYN
           FROM tbl_grndetails d
           LEFT JOIN tbl_itemmaster i
             ON ${keySql("i.LocCode")} = ${keySql("d.LocCode")} AND ${keySql("i.ItemCode")} = ${keySql("d.ItemCode")}
@@ -264,6 +269,10 @@ export async function GET(req: NextRequest, ctx: Ctx) {
           grnQty: Number(r.GRNQty || 0),
           freeQty: Number(r.FreeQty || 0),
           itemValue: Number(r.ItemValue || 0),
+          retQty: Number((r as any).RETQTY || 0),
+          retVal: Number((r as any).RETVAL || 0),
+          retYN: (r as any).RETYN === true || Number((r as any).RETYN || 0) === 1,
+          remainingQty: Number(r.GRNQty || 0) - Number((r as any).RETQTY || 0),
           /* a blank expiry is stored as the legacy empty date 1900-01-01
              (see EMPTY_DATE) because some tables declare the column NOT NULL —
              report it as blank, never as a date in 1900. */

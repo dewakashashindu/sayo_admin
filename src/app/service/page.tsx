@@ -1314,15 +1314,18 @@ function IngredientAC({
    LOCATION GRID
    Enable is location-level. Disabling an enabled location
    is allowed only when its stock is exactly zero.
+   Retail is AUTO = overallCost * (1 + salesMargin/100)
 ═══════════════════════════════════════════════════════ */
 function LocationGrid({
   rows,
   onChange,
   onError,
+  overallCost,
 }: {
   rows: LocationDetail[];
   onChange: (rows: LocationDetail[]) => void;
   onError?: (message: string) => void;
+  overallCost: number;
 }) {
   function updateRow(
     index: number,
@@ -1332,6 +1335,19 @@ function LocationGrid({
     onChange(
       rows.map((row, rowIndex) =>
         rowIndex === index ? { ...row, [key]: value } : row,
+      ),
+    );
+  }
+
+  function updateSalesMargin(index: number, newMarginRaw: number) {
+    const newMargin = Number.isFinite(newMarginRaw) ? newMarginRaw : 0;
+    const base = Number.isFinite(overallCost) ? overallCost : 0;
+    const newRetail = Number((base * (1 + newMargin / 100)).toFixed(2));
+    onChange(
+      rows.map((row, rowIndex) =>
+        rowIndex === index
+          ? { ...row, salesMargin: newMargin, retailPrice: newRetail }
+          : row,
       ),
     );
   }
@@ -1477,28 +1493,30 @@ function LocationGrid({
                     type="number"
                     value={row.salesMargin}
                     onChange={(event) =>
-                      updateRow(
-                        index,
-                        "salesMargin",
-                        Number(event.target.value),
-                      )
+                      updateSalesMargin(index, Number(event.target.value))
                     }
                     min={0}
+                    title="Retail auto = Overall Cost × (1 + margin%)"
                   />
                 </td>
                 <td>
                   <input
                     className="loc-grid-input"
                     type="number"
-                    value={row.retailPrice}
-                    onChange={(event) =>
-                      updateRow(
-                        index,
-                        "retailPrice",
-                        Number(event.target.value),
-                      )
-                    }
-                    min={0}
+                    value={(() => {
+                      const base = Number.isFinite(overallCost)
+                        ? overallCost
+                        : 0;
+                      const m = Number(row.salesMargin) || 0;
+                      return Number((base * (1 + m / 100)).toFixed(2));
+                    })()}
+                    readOnly
+                    style={{
+                      background: "#f0fdf4",
+                      color: "#15803d",
+                      fontWeight: 700,
+                    }}
+                    title="Auto from Overall Cost + Sales Margin"
                   />
                 </td>
                 <td>
@@ -2273,6 +2291,25 @@ export default function ItemMasterPage() {
     () => current.rawCost * (1 + current.costMarkup / 100),
     [current.rawCost, current.costMarkup],
   );
+  // Keep per-location retail in sync: Retail = Overall × (1 + margin/100)
+  // When cost/markup changes, overallCost changes and every location's stored retail must follow.
+  useEffect(() => {
+    setCurrent((prev) => {
+      if (!prev.locationDetails.length) return prev;
+      const base = Number.isFinite(overallCost) ? overallCost : 0;
+      let changed = false;
+      const next = prev.locationDetails.map((loc) => {
+        const m = Number(loc.salesMargin) || 0;
+        const expected = Number((base * (1 + m / 100)).toFixed(2));
+        if (Number(loc.retailPrice) !== expected) {
+          changed = true;
+          return { ...loc, retailPrice: expected };
+        }
+        return loc;
+      });
+      return changed ? { ...prev, locationDetails: next } : prev;
+    });
+  }, [overallCost]);
   const currentType = itemType(current);
   const hasRecipeRights = canHaveRecipe(current);
   const primaryLocCode = recipeLocCodes[0] ?? current.locCode;
@@ -2481,6 +2518,13 @@ export default function ItemMasterPage() {
         ...current,
         locCode: savedLocCode,
         itemCode: savedItemCode,
+        // Per-location retail is always derived: Overall(=Raw*(1+markup%)) * (1+margin%)
+        locationDetails: current.locationDetails.map((loc) => ({
+          ...loc,
+          retailPrice: Number(
+            (overallCost * (1 + (Number(loc.salesMargin) || 0) / 100)).toFixed(2),
+          ),
+        })),
       };
 
       const response = isNew
@@ -3618,7 +3662,7 @@ export default function ItemMasterPage() {
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr",
+                          gridTemplateColumns: "1fr 1fr 1fr",
                           gap: 12,
                         }}
                       >
@@ -3660,34 +3704,6 @@ export default function ItemMasterPage() {
                             }}
                           />
                         </FieldRow>
-                        <FieldRow label="Sales Margin %">
-                          <input
-                            className="frm-input"
-                            type="number"
-                            value={current.salesMargin}
-                            onChange={(event) =>
-                              updateItem(
-                                "salesMargin",
-                                Number(event.target.value),
-                              )
-                            }
-                            min={0}
-                          />
-                        </FieldRow>
-                        <FieldRow label="Retail Price">
-                          <input
-                            className="frm-input"
-                            type="number"
-                            value={current.retailPrice}
-                            onChange={(event) =>
-                              updateItem(
-                                "retailPrice",
-                                Number(event.target.value),
-                              )
-                            }
-                            min={0}
-                          />
-                        </FieldRow>
                         <FieldRow label="Service Duration (Minutes)">
                           <input
                             className="frm-input"
@@ -3714,7 +3730,7 @@ export default function ItemMasterPage() {
                           borderRadius: 10,
                           padding: "10px 16px",
                           display: "grid",
-                          gridTemplateColumns: "1fr 1fr 1fr",
+                          gridTemplateColumns: "1fr 1fr",
                           gap: 12,
                         }}
                       >
@@ -3726,10 +3742,6 @@ export default function ItemMasterPage() {
                           {
                             label: "Overall Cost",
                             value: `LKR ${overallCost.toFixed(2)}`,
-                          },
-                          {
-                            label: "Retail Price",
-                            value: `LKR ${current.retailPrice.toLocaleString()}`,
                           },
                         ].map((summary) => (
                           <div key={summary.label}>
@@ -3862,6 +3874,7 @@ export default function ItemMasterPage() {
                       </p>
                       <LocationGrid
                         rows={current.locationDetails}
+                        overallCost={overallCost}
                         onChange={updateLocationDetails}
                         onError={(message) => showToast(message, true)}
                       />
@@ -3932,7 +3945,7 @@ export default function ItemMasterPage() {
                                 },
                                 {
                                   label: "Retail",
-                                  value: `LKR ${location.retailPrice.toFixed(2)}`,
+                                  value: `LKR ${(overallCost * (1 + (Number(location.salesMargin) || 0) / 100)).toFixed(2)}`,
                                 },
                                 {
                                   label: "WS Price",
