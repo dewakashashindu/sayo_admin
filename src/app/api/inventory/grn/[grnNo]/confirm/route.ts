@@ -37,6 +37,7 @@ import { invActor, invChar, invFail, invId, InvError,
   keySql,
   keyVal,
 }from "@/lib/inventoryServer";
+import { stockAsItIs } from "@/lib/stockAsItIs";
 import { overReceiptQty, round2, safeQty } from "@/lib/inventoryTotals";
 
 export const runtime = "nodejs";
@@ -188,18 +189,21 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           poLine = headerPoNo;
         }
 
-        /* stock — only for real stock items */
+        /* stock — only for real stock items — galapena VB StockAsItIs */
         let newBalance: number | null = null;
         if (!isService) {
           const stock = safeQty(item[0].StockBalance);
           const qtyIn = round2(received + free);
           newBalance = round2(stock + qtyIn);
+          const sysSer = Number(grnNo.replace(/\D/g,'')) || 0;
 
-          await tx.$executeRaw`
-            UPDATE tbl_itemmaster
-            SET StockBalance = ${newBalance}
-            WHERE ${keySql("LocCode")} = ${keyVal(locCode)} AND ${keySql("ItemCode")} = ${keyVal(code)}
-          `;
+          // VB: Insert Tbl_TxnMovement + Update Tbl_RowItems — one Txn per line, PreQty = old StkBal, TxnQty = LastQty = newBalance
+          await stockAsItIs(tx, {
+            locCode, rowItemCode: code, txnNo: grnNo, txnType: grnType || 'GR',
+            txnQty: newBalance, sysSerialId: sysSer, userId: actor.userId,
+            remarks: `GRN ${grnNo}${poLine?` PO ${poLine}`:''} ${free>0?`(incl ${free} free)`:''}`.slice(0,200),
+            addDeduct: '+', txnDate: now, txnDateTimeManual: now,
+          });
 
           /* …and the batch-wise row the Item Master screen reads, out of the
              same qtyIn — so the two tables cannot show two different numbers. */

@@ -27,6 +27,7 @@ import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 import ItemSuggestInput, { type SuggestedItem } from '@/components/ItemSuggestInput';
 import InventoryPrintSheet, { INVENTORY_PRINT_CSS } from '@/components/InventoryPrintSheet';
+import { PO_PRINT_COPY_CHOICES, poPrintCopyLabel, poPrintValueColumns, type PoPrintCopy } from '@/lib/poPrint';
 import {
   displayPhone,
   notifyMoney,
@@ -117,7 +118,15 @@ export default function GrnPage() {
   const [lookupErrors, setLookupErrors] = useState<Record<string, string>>({});
   const [lookupNote, setLookupNote] = useState('Loading locations and suppliers…');
   const [company, setCompany] = useState<{name:string;address:string;phone:string}>({name:'SAYO',address:'',phone:''});
-  const [printJob, setPrintJob] = useState<{at:Date}|null>(null);
+  const [printAsk, setPrintAsk] = useState(false);
+  const [printJob, setPrintJob] = useState<{copy:PoPrintCopy;at:Date}|null>(null);
+  const [actor, setActor] = useState('');
+  const [mailAsk, setMailAsk] = useState(false);
+  const [mailTo, setMailTo] = useState('');
+  const [mailCopy, setMailCopy] = useState<PoPrintCopy>('standard');
+  const [mailSubject, setMailSubject] = useState('');
+  const [mailMessage, setMailMessage] = useState('');
+  const [mailSending, setMailSending] = useState(false);
 
   const [openPos, setOpenPos] = useState<OpenPo[]>([]);
   const [poErr, setPoErr] = useState('');
@@ -207,6 +216,11 @@ export default function GrnPage() {
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ── who is signed in (printed as "User") ──────────────────────────────── */
+  useEffect(()=>{
+    let a=true; (async()=>{ try{ const r=await fetch('/api/auth/admin-me',{cache:'no-store'}); const j=await r.json() as any; if(!a||!j?.success) return; setActor(j.user?.username||j.user?.name||''); }catch{} })(); return()=>{a=false};
+  },[]);
 
   /* ── open purchase orders for the dropdown ─────────────────────────────── */
   const loadOpenPos = useCallback(async () => {
@@ -590,6 +604,43 @@ export default function GrnPage() {
   function handleNavigate(key: string, path: string) {
     if (dirty && !confirm('Leave the page without saving the receipt?')) return;
     router.push(path);
+  }
+
+  /* ── printing (like PO) ──────────────────────────────────────────── */
+  const printableLines = lines.filter(l=> (l.itemCode||'').trim() || (l.itemName||'').trim());
+  const supplierEmail = (suppliers.find(s=>s.supID===supID) as any)?.email || suppliers.find(s=>s.supID===supID)?.contact?.split(/[;,]/)?.find(x=>x.includes('@'))?.trim() || '';
+  function handlePrint(){
+    if(printableLines.length===0){ showToast('Add at least one item before printing',true); return; }
+    if(!grnNo.trim()){ showToast('Save first, then print',true); return; }
+    setPrintAsk(true);
+  }
+  function startPrint(copy: PoPrintCopy){
+    setPrintAsk(false);
+    setPrintJob({copy, at:new Date()});
+  }
+  useEffect(()=>{ if(!printJob) return; const id=window.setTimeout(()=>window.print(),60); return()=>window.clearTimeout(id); },[printJob]);
+
+  /* ── email to supplier (PDF like PO) ─────────────────────────────── */
+  function openMailDialog(){
+    if(printableLines.length===0){ showToast('Add at least one item before emailing',true); return; }
+    if(!supID){ showToast('Choose supplier first',true); return; }
+    if(!grnNo.trim()){ showToast('Save the GRN first, then it can be emailed',true); return; }
+    const supMail = (suppliers.find(s=>s.supID===supID) as any)?.emails || (suppliers.find(s=>s.supID===supID) as any)?.email || supplierEmail;
+    setMailTo(prev=> prev || (supMail||'').split(/[;,]/)[0]?.trim() || '');
+    setMailSubject(prev=> prev || `${direct?'Direct Good Received Note':'Good Received Note'} ${grnNo.trim()}`);
+    setMailCopy(prev=> prev||'standard');
+    setMailAsk(true);
+  }
+  async function sendMail(){
+    const to=mailTo.trim(); if(!to){ showToast('Type the address to send to',true); return; }
+    setMailSending(true);
+    try{
+      const res=await fetch(`/api/inventory/grn/${encodeURIComponent(grnNo.trim())}/email`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ locCode, copy: mailCopy, to, subject: mailSubject.trim(), message: mailMessage.trim() }) });
+      const j=await res.json() as any;
+      if(!res.ok||!j?.success) throw new Error(j?.message||'Email failed');
+      setMailAsk(false); showToast(j.message||'Emailed ✓');
+      if(j.ignored?.length) showToast(`Sent — but "${j.ignored.join(', ')}" not an email and was left out`,true);
+    }catch(e:any){ showToast(e?.message||'Email failed',true); } finally{ setMailSending(false); }
   }
 
   /* ── tell an admin to come and confirm ─────────────────────────────────── */
@@ -1045,7 +1096,8 @@ export default function GrnPage() {
                 <button className="btn" onClick={() => void handleConfirm()} disabled={busy || confirmed}>
                   {confirming ? 'Confirming…' : 'Confirmation'}
                 </button>
-                <button className="btn" onClick={() => grnNo.trim()? setPrintJob({at:new Date()}): showToast('Save first, then print',true)} disabled={busy||!grnNo.trim()}>Print</button>
+                <button className="btn" onClick={() => handlePrint()} disabled={busy||!grnNo.trim()}>Print</button>
+                <button className="btn" onClick={()=>void openMailDialog()} disabled={busy||!grnNo.trim()||mailSending} title={supplierEmail?`Email to ${supplierEmail}`:'Email this GRN to the supplier as PDF'}>{mailSending?'Sending…':'Email to Supplier'}</button>
                 <button className="btn" onClick={() => void openNotify()} disabled={busy || !grnNo || confirmed}
                   title="SMS an admin so they can come and confirm this receipt">
                   Message Admin
@@ -1060,7 +1112,7 @@ export default function GrnPage() {
               </div>
 
               {lastResult && <div className="po-ok no-print">{lastResult}</div>}
-              {printJob && (
+                            {printJob && (
                 <>
                   <style>{INVENTORY_PRINT_CSS}</style>
                   <InventoryPrintSheet
@@ -1069,7 +1121,7 @@ export default function GrnPage() {
                     docDate={grnDate}
                     printDate={printJob.at.toLocaleDateString()}
                     printTime={printJob.at.toLocaleTimeString()}
-                    user="admin"
+                    user={actor||'admin'}
                     companyName={company.name}
                     companyAddress={company.address}
                     companyPhone={company.phone}
@@ -1078,14 +1130,13 @@ export default function GrnPage() {
                     partnerCode={supID}
                     partnerName={suppliers.find(s=>s.supID===supID)?.name||supID}
                     partnerAddress={suppliers.find(s=>s.supID===supID)?.contact||''}
-                    columns={{code:'ItemCode',des:'Item Description',unit:'Unit',qty:'GRN Qty',cost:'Cost Price',value:'Item Value'}}
-                    rows={lines.filter(l=> (l.itemCode||'').trim() || (l.itemName||'').trim()).map(l=>({ itemCode:(l.itemCode||l.itemName).trim(), name:l.itemName||l.itemCode, unit:unitName(units,l.unitID), qty:String(Number(l.grnQty)||0), costPrice: money(Number(l.costPrice)||0), itemValue: money(lineValue(l.costPrice,l.grnQty,l.freeQty)) }))}
+                    columns={(() => { const c = poPrintValueColumns(printJob.copy); return {code:'ItemCode',des:'Item Description',unit:'Unit',qty:'GRN Qty',cost: c.costPrice ? 'Cost Price' : undefined as any, value: c.itemValue ? 'Item Value' : undefined as any } as any; })()}
+                    rows={lines.filter(l=> (l.itemCode||'').trim() || (l.itemName||'').trim()).map(l=>({ itemCode:(l.itemCode||l.itemName).trim(), name:l.itemName||l.itemCode, unit:unitName(units,l.unitID), qty:String(Number(l.grnQty)||0), costPrice: poPrintValueColumns(printJob.copy).costPrice ? money(Number(l.costPrice)||0) : '', itemValue: poPrintValueColumns(printJob.copy).itemValue ? money(lineValue(l.costPrice,l.grnQty,l.freeQty)) : '' }))}
                     totalLabel="Net Value"
-                    total={money(totals.net)}
+                    total={poPrintValueColumns(printJob.copy).total ? money(totals.net) : ''}
                     deliAdd={poNo? `PO: ${poNo}`:''}
                     remarks={remarks}
                   />
-                  <div className="no-print" style={{textAlign:'right',marginTop:8}}><button className="btn primary" onClick={()=>window.print()}>Print now</button> <button className="btn" onClick={()=>setPrintJob(null)}>Close preview</button></div>
                 </>
               )}
             </div>
@@ -1164,6 +1215,42 @@ export default function GrnPage() {
                 {notifySending ? 'Sending…' : 'Send SMS'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── WHICH COPY? (Print like PO) ─────────────────────────── */}
+      {printAsk && (
+        <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Print GRN">
+          <div className="ask-card">
+            <h2>Print {direct ? 'Direct Good Received Note' : 'Good Received Note'}</h2>
+            <p>{grnNo? <><span className="mono">{grnNo.trim()}</span> — </>:null} which copy do you want to print?</p>
+            <div className="ask-choices">
+              {PO_PRINT_COPY_CHOICES.map(choice=> (
+                <button key={choice.id} className="ask-choice" onClick={()=> startPrint(choice.id as PoPrintCopy)}>
+                  <span className="ask-choice-title">{choice.label}</span>
+                  <span className="ask-choice-hint">{choice.hint}</span>
+                </button>
+              ))}
+            </div>
+            <div className="ask-foot"><button className="btn" onClick={()=> setPrintAsk(false)}>Cancel</button></div>
+          </div>
+        </div>
+      )}
+      {mailAsk && (
+        <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Email GRN">
+          <div className="ask-card mail-card">
+            <h2>Email {direct ? 'Direct Good Received Note' : 'Good Received Note'}</h2>
+            <p><span className="mono">{grnNo.trim()}</span> goes to <b>{suppliers.find(s=>s.supID===supID)?.name||supID}</b> as a PDF.</p>
+            <div className="mail-field"><label htmlFor="mail-to">To</label><input id="mail-to" value={mailTo} onChange={e=>setMailTo(e.target.value)} placeholder="supplier@example.com" spellCheck={false} /></div>
+            {!supplierEmail && !mailTo.trim() && <div className="mail-warn">This supplier has no e-mail on its record — type one here.</div>}
+            <div className="mail-field"><label>Copy to send</label><div className="mail-copies">{PO_PRINT_COPY_CHOICES.map(choice=> (
+              <label key={choice.id} className={`mail-radio ${mailCopy===choice.id?'on':''}`}><input type="radio" name="mail-copy" checked={mailCopy===choice.id} onChange={()=> setMailCopy(choice.id as PoPrintCopy)} /><span><b>{choice.label}</b><span className="mail-radio-hint">{choice.hint}</span></span></label>
+            ))}</div></div>
+            <div className="mail-field"><label htmlFor="mail-subject">Subject</label><input id="mail-subject" value={mailSubject} onChange={e=>setMailSubject(e.target.value)} /></div>
+            <div className="mail-field"><label htmlFor="mail-message">Message</label><textarea id="mail-message" rows={4} value={mailMessage} onChange={e=>setMailMessage(e.target.value)} placeholder="Leave empty for standard note (GRN number, dates, line count)." /></div>
+            <div className="mail-attach">Attachment: <b>{(grnNo.trim()||'grn').trim()}.pdf</b> · {printableLines.length} line(s) · {mailCopy==='supplier'?'no prices':'total '+money(totals.net)}</div>
+            <div className="ask-foot"><button className="btn" onClick={()=> setMailAsk(false)} disabled={mailSending}>Cancel</button><button className="btn primary" onClick={()=> void sendMail()} disabled={mailSending||!mailTo.trim()}>{mailSending?'Sending…':'Send to Supplier'}</button></div>
           </div>
         </div>
       )}
@@ -1365,6 +1452,32 @@ const PAGE_CSS = `
   .notify-sent { font-size:11.5px; font-weight:700; color:#15803d; margin-right:auto; }
 
   .po-print-head { display:none; }
+
+  
+  /* ── "which copy?" + email dialogs (like PO) ─────────────────────────── */
+  .ask-back{position:fixed;inset:0;background:rgba(16,32,36,0.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px}
+  .ask-card{background:#fff;color:#1f2937;border-radius:14px;padding:20px 22px;width:min(680px,94vw);box-shadow:0 18px 50px rgba(0,0,0,0.32);display:flex;flex-direction:column;gap:12px}
+  .ask-card h2{font-size:15px;font-weight:800;color:#16333a;letter-spacing:0.02em}
+  .ask-card p{font-size:12.5px;color:#42585e}
+  .ask-choices{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .ask-choice{display:flex;flex-direction:column;gap:6px;text-align:left;cursor:pointer;font-family:inherit;border:1px solid rgba(30,58,64,0.22);border-radius:11px;background:#f3f8f8;padding:14px 15px}
+  .ask-choice:hover{background:#e6f0f0;border-color:#1e3a40}
+  .ask-choice-title{font-size:14px;font-weight:800;color:#16333a}
+  .ask-choice-hint{font-size:11.5px;color:#5b7176;line-height:1.45}
+  .ask-foot{display:flex;justify-content:flex-end;gap:8px}
+  .mail-card{width:min(760px,95vw);max-height:92vh;overflow:auto}
+  .mail-field{display:flex;flex-direction:column;gap:5px}
+  .mail-field > label{font-size:11px;font-weight:700;color:#3c5a60;text-transform:uppercase;letter-spacing:0.03em}
+  .mail-field input,.mail-field textarea{border:1px solid rgba(30,58,64,0.22);border-radius:8px;background:#fff;color:#1f2937;padding:8px 10px;font-size:12.5px;font-family:inherit;width:100%;color-scheme:light}
+  .mail-field textarea{resize:vertical;line-height:1.5}
+  .mail-copies{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .mail-radio{display:flex;gap:8px;align-items:flex-start;border:1px solid rgba(30,58,64,0.18);border-radius:9px;padding:9px 11px;background:#f6fafa;cursor:pointer;font-size:12px}
+  .mail-radio.on{border-color:#1e3a40;background:#e7f0f0}
+  .mail-radio input{margin-top:2px;accent-color:#1e3a40}
+  .mail-radio-hint{display:block;font-size:11px;color:#5b7176;margin-top:3px;line-height:1.4}
+  .mail-warn{font-size:11.5px;font-weight:600;color:#b45309;background:#fef3c7;border-radius:8px;padding:8px 10px}
+  .mail-hint{font-size:11.5px;color:#5b7176}
+  .mail-attach{font-size:11.5px;color:#3c5a60;background:#eef4f4;border-radius:8px;padding:8px 10px}
 
   @media print {
     .no-print, .po-tabs, .po-note, .po-state { display:none !important; }

@@ -859,3 +859,132 @@ model Tbl_ReconcilDetails {
   @@id([LocCode, RecNo, ItemCode])
   @@map("tbl_reconcildetails")
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Transfer — requisition / note / return (VB6 Tbl_TransferReq/Note/Return)
+// See scripts/create-Tbl_Transfer-mysql.sql  &  scripts/create-Vw_Transfer-mysql.sql
+// ─────────────────────────────────────────────────────────────────────────
+model Tbl_TransferReqHeder {
+  FromLocCode      String   @default("") @db.Char(10)
+  ToLoc            String   @default("") @db.Char(10)
+  TRNO             String   @default("") @db.Char(10)
+  TRDate           DateTime @db.DateTime(0)
+  TRDueDate        DateTime @db.DateTime(0)
+  NetTotal         Float    @default(0)
+  UserID           String   @default("") @db.Char(10)
+  Remarks          String   @default("") @db.VarChar(500)
+  TxnDate          DateTime @db.DateTime(0)
+  SysSerialNo      Float    @default(0)
+  ConUserID        String   @default("") @db.Char(10)
+  Confirmed        String   @default("N") @db.Char(1)
+  ConDatetime      DateTime @db.DateTime(0)
+  TakenForTransfer String   @default("N") @db.Char(1)
+
+  details Tbl_TransferReqDetail[]
+
+  @@id([FromLocCode, ToLoc, TRNO])
+  @@map("tbl_transferreqheder")
+}
+
+model Tbl_TransferReqDetail {
+  FromLocCode    String @default("") @db.Char(10)
+  ToLoc          String @default("") @db.Char(10)
+  TRNo           String @default("") @db.VarChar(50)
+  ItemCode       String @default("") @db.VarChar(20)
+  UnitID         String @default("") @db.Char(10)
+  CostPrice      Float  @default(0)
+  TRQty          Float  @default(0)
+  ItemValue      Float  @default(0)
+  TransferConfNo String @default("") @db.Char(20)
+  IssuedQTY      Float  @default(0)
+
+  heder Tbl_TransferReqHeder @relation(fields: [FromLocCode, ToLoc, TRNo], references: [FromLocCode, ToLoc, TRNO])
+
+  @@id([FromLocCode, ToLoc, TRNo, ItemCode])
+  @@map("tbl_transferreqdetail")
+}
+
+model Tbl_TransferNoteHeader {
+  FromLocCode         String   @default("") @db.Char(10)
+  ToLoc               String   @default("") @db.Char(10)
+  TranNo              String   @default("") @db.VarChar(15)
+  TraDate             DateTime @db.DateTime(0)
+  GrossTotal          Float    @default(0)
+  DisVal              Float    @default(0)
+  Adjestment          Float    @default(0)
+  NetTotal            Float    @default(0)
+  UserID              String   @default("") @db.Char(10)
+  Remarks             String   @default("") @db.VarChar(400)
+  TxnDate             DateTime @db.DateTime(0)
+  SysSerialNo         Float    @default(0)
+  Confirmed           String   @default("N") @db.Char(1)
+  ConUserID           String   @default("") @db.Char(10)
+  ConDatetime         DateTime @db.DateTime(0)
+  TReqNO              String   @default("") @db.Char(10)
+  TakenForTransferRtn Boolean  @default(false) @db.TinyInt
+
+  details Tbl_TransferNoteDetail[]
+
+  @@id([FromLocCode, TranNo, ToLoc])
+  @@map("tbl_transfernoteheader")
+}
+
+model Tbl_TransferNoteDetail {
+  FromLocCode String @default("") @db.Char(10)
+  ToLoc       String @default("") @db.Char(10)
+  TranNo      String @default("") @db.VarChar(15)
+  ItemCode    String @default("") @db.Char(20)
+  UnitID      String @default("") @db.Char(15)
+  CostPrice   Float  @default(0)
+  TRQTy       Float  @default(0)
+  TranQty     Float  @default(0)
+  ItemValue   Float  @default(0)
+  TranConfNo  String @default("") @db.VarChar(15)
+  NewItem     String @default("") @db.Char(2)
+  TranRtnQTY  Float  @default(0)
+
+  header Tbl_TransferNoteHeader @relation(fields: [FromLocCode, ToLoc, TranNo], references: [FromLocCode, ToLoc, TranNo])
+
+  @@id([FromLocCode, ToLoc, TranNo, ItemCode])
+  @@map("tbl_transfernotedetail")
+}
+
+model Tbl_TransferReturnHeader {
+  FromLocCode String   @default("") @db.Char(10)
+  ToLoc       String   @default("") @db.Char(10)
+  TRtnNo      String   @default("") @db.Char(10)
+  TRtnDate    DateTime @db.DateTime(0)
+  NetTotal    Float    @default(0)
+  UserID      String   @default("") @db.Char(10)
+  Remarks     String   @default("") @db.VarChar(1000)
+  TxnDate     DateTime @db.DateTime(0)
+  SysSerialNo String   @default("") @db.Char(10)
+  ConUserID   String   @default("") @db.Char(10)
+  Confirmed   String   @default("N") @db.Char(1)
+  ConDatetime DateTime @db.DateTime(0)
+  TNNO        String   @default("") @db.Char(10)
+
+  details Tbl_TransferReturnDetail[]
+
+  @@id([FromLocCode, ToLoc, TRtnNo])
+  @@map("tbl_transferreturnheader")
+}
+
+model Tbl_TransferReturnDetail {
+  FromLocCode String @default("") @db.Char(10)
+  ToLoc       String @default("") @db.Char(10)
+  TRtnNo      String @default("") @db.Char(10)
+  ItemCode    String @default("") @db.Char(10)
+  UnitID      String @default("") @db.Char(10)
+  CostPrice   Float  @default(0)
+  TNQty       Float  @default(0)
+  TranRtnQty  Float  @default(0)
+  ItemValue   Float  @default(0)
+  TranConfNo  String @default("") @db.Char(10)
+
+  header Tbl_TransferReturnHeader @relation(fields: [FromLocCode, ToLoc, TRtnNo], references: [FromLocCode, ToLoc, TRtnNo])
+
+  @@id([FromLocCode, ToLoc, TRtnNo, ItemCode])
+  @@map("tbl_transferreturndetail")
+}
+

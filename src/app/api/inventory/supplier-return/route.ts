@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { invActor, invFail, invId, InvError, keySql, keyVal, invChar, invDateField } from '@/lib/inventoryServer';
+import { stockAsItIs } from '@/lib/stockAsItIs';
 import { nextSerialTx } from '@/lib/serials';
 
 export const runtime = 'nodejs';
@@ -155,9 +156,9 @@ export async function POST(req: NextRequest) {
           if (!isService) {
             const oldBal = Number(itemRows[0].StockBalance || 0);
             const newBal = oldBal - d.returnQty;
-            await tx.$executeRaw`UPDATE tbl_itemmaster SET StockBalance=${newBal} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(d.itemCode)}`;
+            // galapena VB StockAsItIs — TxnQty = LastQty = newBal (absolute), PreQty = oldBal
+            await stockAsItIs(tx, { locCode, rowItemCode: d.itemCode, txnNo: srnNo, txnType: 'SR', txnQty: newBal, sysSerialId: sysSer, userId: actor.userId, remarks: `Supplier Return ${srnNo} vs ${grnNoRaw}`.slice(0,200), addDeduct: '-', txnDate: now, txnDateTimeManual: now });
             try { await tx.$executeRaw`UPDATE tbl_itemdetail SET ItemQty = ItemQty - ${d.returnQty} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(d.itemCode)}`; } catch {}
-            await tx.$executeRaw`INSERT INTO tbl_txnmovement (LocCode, RowItemCode, TxnNo, TxnType, TxnDate, TxndateTime, PreQty, TxnQty, LastQty, UserId, SysSerialId, Remarks, AddDeduct, TXNDATETIMEMANUAL, SourceItemCode) VALUES (${invChar(locCode, 15)}, ${invChar(d.itemCode, 20)}, ${invChar(srnNo, 20)}, ${'SR'}, ${now}, ${now}, ${oldBal}, ${d.returnQty}, ${newBal}, ${invChar(actor.userId, 20)}, ${sysSer}, ${`Supplier Return ${srnNo} vs ${grnNoRaw}`.slice(0, 200)}, ${'-'}, ${now}, ${'0'})`;
             // also tbl_stocktxn if used by reports (optional)
             try { await tx.$executeRaw`INSERT INTO tbl_stocktxn (LocCode, ItemCode, TxnType, RefNo, TxnDate, QtyIn, QtyOut, Balance, CostPrice, UserID, Remarks) VALUES (${invChar(locCode, 10)}, ${invChar(d.itemCode, 15)}, ${'SR'}, ${srnNo.slice(0, 20)}, ${now}, 0, ${d.returnQty}, ${newBal}, ${d.costPrice}, ${invChar(actor.userId, 10)}, ${`Return to supplier ${srnNo}`.slice(0, 200)})`; } catch {}
           }

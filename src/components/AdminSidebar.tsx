@@ -17,6 +17,8 @@ interface SubItem {
   key: string;
   label: string;
   path: string;
+  heading?: boolean;
+  children?: SubItem[];
 }
 
 interface NavGroup {
@@ -73,22 +75,28 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     key: 'inventory',
-    label: 'Inventory Control',
+    label: 'Inventory',
     icon: <IBox />,
     children: [
+      { key: 'inv-head-ref',   label: '— Reference —',   path: '',              heading: true },
       { key: 'inv-location',   label: 'Location Master', path: '/locations'   },
       { key: 'inv-categories', label: 'Categories',      path: '/categories' },
       { key: 'inv-items',      label: 'Item Master',     path: '/service'      },
-      
       { key: 'inv-units',      label: 'Unit Master',     path: '/units'      },
       { key: 'inv-suppliers',  label: 'Supplier Master', path: '/suppliers'  },
+      { key: 'inv-head-txn',   label: '— Transaction —', path: '',              heading: true },
       { key: 'inv-po',         label: 'Purchase Orders', path: '/inventory/po'         },
       { key: 'inv-grn',        label: 'GRN / DGRN',      path: '/inventory/grn'        },
       { key: 'inv-srn',        label: 'SRN',             path: '/inventory/srn'        },
       { key: 'inv-damage',     label: 'Damage',          path: '/inventory/damage'     },
-      { key: 'inv-transfer',   label: 'Transfer',        path: '/inventory/transfer'   },
+      { key: 'inv-transfer',   label: 'Transfer',        path: '', children: [
+        { key: 'inv-tr-req',  label: 'Requisition Note', path: '/inventory/transfer/requisitions' },
+        { key: 'inv-tr-note', label: 'Transfer Note',    path: '/inventory/transfer/notes'       },
+        { key: 'inv-tr-ret',  label: 'Return Note',      path: '/inventory/transfer/returns'     },
+      ]},
       { key: 'inv-issue',      label: 'Issue',           path: '/inventory/issue'      },
       { key: 'inv-recon',      label: 'Stock Recon.',    path: '/inventory/recon'      },
+      { key: 'inv-head-rep',   label: '— Reports —',     path: '',              heading: true },
       { key: 'inv-reports',    label: 'Reports',         path: '/inventory/reports'    },
     ],
   },
@@ -274,9 +282,16 @@ export const SIDEBAR_CSS = `
 function activeGroupKey(activeKey: string): string {
   for (const g of NAV_GROUPS) {
     if (g.key === activeKey) return g.key;
-    if (g.children?.some(c => c.key === activeKey)) return g.key;
+    if (g.children?.some(c => {
+      if (c.key === activeKey) return true;
+      if (c.children?.some(sc => sc.key === activeKey)) return true;
+      return false;
+    })) return g.key;
   }
   return '';
+}
+function isTransferActive(active: string): boolean {
+  return ['inv-transfer','inv-tr-req','inv-tr-note','inv-tr-ret'].includes(active);
 }
 
 /* ─────────────────────────────────────────
@@ -389,28 +404,73 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
                 <div
                   className="sb-children"
                   style={{
-                    maxHeight: isExpanded ? `${group.children.length * 36}px` : '0px',
+                    maxHeight: isExpanded ? `${(group.children.length + 3) * 36}px` : '0px',
                     opacity:   isExpanded ? 1 : 0,
                   }}
                 >
                   <div style={{ paddingBottom: 4 }}>
-                    {group.children.map(child => (
-                      <button
-                        key={child.key}
-                        className={`sb-sub-btn ${active === child.key ? 'active' : ''}`}
-                        onClick={() => onNav(child.key, child.path)}
-                      >
-                        <span style={{
-                          width: 4, height: 4, borderRadius: '50%', flexShrink: 0,
-                          background: active === child.key
-                            ? '#7dd3d8'
-                            : 'rgba(255,255,255,0.25)',
-                        }} />
-                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {child.label}
-                        </span>
-                      </button>
-                    ))}
+                    {group.children.map(child => {
+                      if (child.heading) {
+                        return (
+                          <div key={child.key} style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.35)', padding: '8px 10px 2px 14px', textTransform: 'uppercase' }}>
+                            {child.label.replace(/—/g,'').trim()}
+                          </div>
+                        );
+                      }
+                      if (child.children && child.children.length) {
+                        const isOpen = expanded['transfer'] ?? isTransferActive(active);
+                        const isParentActive = isTransferActive(active);
+                        return (
+                          <div key={child.key}>
+                            <button
+                              className={`sb-sub-btn ${isParentActive ? 'active' : ''}`}
+                              onClick={() => setExpanded(p => ({ ...p, transfer: !isOpen }))}
+                              style={{ justifyContent: 'space-between', paddingRight: 10 }}
+                            >
+                              <span style={{display:'flex',alignItems:'center',gap:8}}>
+                                <span style={{ width:4,height:4,borderRadius:'50%',flexShrink:0, background: isParentActive ? '#7dd3d8' : 'rgba(255,255,255,0.25)' }} />
+                                <span style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{child.label}</span>
+                              </span>
+                              <span style={{display:'flex',alignItems:'center',opacity:0.55}}>
+                                {isOpen ? <IChevDown /> : <IChevRight />}
+                              </span>
+                            </button>
+                            <div style={{ overflow:'hidden', transition:'max-height 0.22s ease, opacity 0.18s ease', maxHeight: isOpen ? `${child.children.length * 32}px` : '0px', opacity: isOpen ? 1 : 0 }}>
+                              <div style={{paddingLeft:16}}>
+                                {child.children.map(sc => (
+                                  <button
+                                    key={sc.key}
+                                    className={`sb-sub-btn ${active === sc.key ? 'active' : ''}`}
+                                    onClick={() => sc.path && onNav(sc.key, sc.path)}
+                                    style={{paddingLeft:28, fontSize:11.5}}
+                                  >
+                                    <span style={{width:4,height:4,borderRadius:'50%',flexShrink:0, background: active===sc.key ? '#7dd3d8' : 'rgba(255,255,255,0.18)'}} />
+                                    <span style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sc.label}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return (
+                        <button
+                          key={child.key}
+                          className={`sb-sub-btn ${active === child.key ? 'active' : ''}`}
+                          onClick={() => child.path && onNav(child.key, child.path)}
+                        >
+                          <span style={{
+                            width: 4, height: 4, borderRadius: '50%', flexShrink: 0,
+                            background: active === child.key
+                              ? '#7dd3d8'
+                              : 'rgba(255,255,255,0.25)',
+                          }} />
+                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {child.label}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}

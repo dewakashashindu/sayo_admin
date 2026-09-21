@@ -15,6 +15,7 @@ import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 import ItemSuggestInput, { type SuggestedItem } from '@/components/ItemSuggestInput';
 import InventoryPrintSheet, { INVENTORY_PRINT_CSS } from '@/components/InventoryPrintSheet';
+import { poPrintValueColumns, type PoPrintCopy } from '@/lib/poPrint';
 
 interface LookupLocation { code: string; des: string; address: string; enable: boolean }
 interface LookupSupplier { supID: string; name: string; enable: boolean }
@@ -52,7 +53,15 @@ export default function DamageNotePage(){
   const [units,setUnits]=useState<LookupUnit[]>([]);
   const [lookupNote,setLookupNote]=useState('Loading locations…');
   const [company,setCompany]=useState<{name:string;address:string;phone:string}>({name:'SAYO',address:'',phone:''});
-  const [printJob,setPrintJob]=useState<{at:Date}|null>(null);
+  const [printAsk,setPrintAsk]=useState(false);
+  const [printJob,setPrintJob]=useState<{copy:PoPrintCopy;at:Date}|null>(null);
+  const [actor,setActor]=useState('');
+  const [mailAsk,setMailAsk]=useState(false);
+  const [mailTo,setMailTo]=useState('');
+  const [mailCopy,setMailCopy]=useState<PoPrintCopy>('standard');
+  const [mailSubject,setMailSubject]=useState('');
+  const [mailMessage,setMailMessage]=useState('');
+  const [mailSending,setMailSending]=useState(false);
 
   const [locCode,setLocCode]=useState('');
   const [damNo,setDamNo]=useState('');
@@ -87,6 +96,8 @@ export default function DamageNotePage(){
     })();
     return()=>{active=false};
   },[]);
+
+  useEffect(()=>{ let a=true; (async()=>{ try{ const r=await fetch('/api/auth/admin-me',{cache:'no-store'}); const j=await r.json() as any; if(!a||!j?.success) return; setActor(j.user?.username||j.user?.name||''); }catch{} })(); return()=>{a=false}; },[]);
 
   const unitName=(id:string)=> units.find(u=>u.id===id)?.des || id || '—';
   const netValue=useMemo(()=> lines.reduce((s,l)=> s+ ((Number(l.costPrice)||0)*(Number(l.damageQty)||0)),0),[lines]);
@@ -159,6 +170,36 @@ export default function DamageNotePage(){
   function handleClear(){ setLines([newLine()]); setDamNo(''); setConfirmed(false); setDirty(false); setRemarks(''); }
   function handleCancel(){ if(dirty && !confirm('Discard changes?')) return; handleClear(); showToast('Cleared'); }
   function handleNav(k:string,p:string){ if(dirty && !confirm('Leave without saving?')) return; router.push(p); }
+
+  /* ── printing — internal note: supplier copy na (standard only), PO/GRN wage ── */
+  const printableLines = lines.filter(l=> (l.itemCode||'').trim() || (l.itemName||'').trim());
+  function handlePrint(){
+    if(printableLines.length===0){ showToast('Add at least one item before printing',true); return; }
+    if(!damNo.trim()){ showToast('Save first, then print',true); return; }
+    setPrintAsk(true);
+  }
+  function startPrint(copy:PoPrintCopy){ setPrintAsk(false); setPrintJob({copy, at:new Date()}); }
+  React.useEffect(()=>{ if(!printJob) return; const id=window.setTimeout(()=>window.print(),60); return()=>window.clearTimeout(id); },[printJob as any]);
+
+  /* ── email (PDF like PO) ──────────────────────────── */
+  function openMailDialog(){
+    if(printableLines.length===0){ showToast('Add at least one item before emailing',true); return; }
+    if(!damNo.trim()){ showToast('Save the Damage Note first, then it can be emailed',true); return; }
+    setMailTo(prev=> prev||'');
+    setMailSubject(prev=> prev||`Damage Note ${damNo.trim()} — ${locDes}`);
+    setMailCopy(prev=> prev||'standard');
+    setMailAsk(true);
+  }
+  async function sendMail(){
+    const to=mailTo.trim(); if(!to){ showToast('Type the address to send to',true); return; }
+    setMailSending(true);
+    try{
+      const res=await fetch(`/api/inventory/damage/${encodeURIComponent(damNo.trim())}/email`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ locCode, copy: mailCopy, to, subject: mailSubject.trim(), message: mailMessage.trim() }) });
+      const j=await res.json() as any;
+      if(!res.ok||!j?.success) throw new Error(j?.message||'Email failed');
+      setMailAsk(false); showToast(j.message||'Emailed ✓');
+    }catch(e:any){ showToast(e?.message||'Email failed',true); } finally{ setMailSending(false); }
+  }
 
   const busy=saving||deleting||confirming;
   const locked=confirmed;
@@ -295,17 +336,48 @@ export default function DamageNotePage(){
                 <button className="btn" onClick={addLine} disabled={locked}>+ Add line</button>
                 <button className="btn" onClick={handleClear} disabled={busy}>Clear</button>
                 <button className="btn" onClick={()=>void handleConfirm()} disabled={busy || confirmed}>{confirming?'Confirming…':'Confirmation'}</button>
-                <button className="btn" onClick={()=> damNo.trim()? setPrintJob({at:new Date()}): showToast('Save first, then print',true)} disabled={busy||!damNo.trim()}>Print</button>
+                <button className="btn" onClick={()=> handlePrint()} disabled={busy||!damNo.trim()}>Print</button>
+                <button className="btn" onClick={()=> void openMailDialog()} disabled={busy||!damNo.trim()||mailSending} title="Email this Damage Note as PDF">{mailSending?'Sending…':'Email'}</button>
                 <button className="btn danger" onClick={()=>void handleDelete()} disabled={busy || !damNo || confirmed}>{deleting?'Deleting…':'Delete'}</button>
                 <button className="btn primary" onClick={()=>void handleSave()} disabled={busy || locked}>{saving?'Saving…':'Save'}</button>
                 <button className="btn" onClick={handleCancel} disabled={busy}>Cancel</button>
               </div>
-              {printJob && <InventoryPrintSheet title="Damage Note" docNo={damNo.trim()} docDate={damDate} printDate={printJob.at.toLocaleDateString()} printTime={printJob.at.toLocaleTimeString()} user="admin" companyName={company.name} companyAddress={company.address} companyPhone={company.phone} branch={locDes} partnerLabel="Location" partnerCode={locCode} partnerName={locDes} partnerAddress={locations.find(l=>l.code===locCode)?.address||''} columns={{code:'ItemCode',des:'Item Description',unit:'Unit',qty:'Dmg Qty',cost:'Cost Price',value:'Item Value'}} rows={printRows} totalLabel="Damage Cost" total={money(netValue)} remarks={remarks} />}
-              {printJob && <div className="no-print" style={{textAlign:'right'}}><button className="btn primary" onClick={()=>window.print()}>Print now</button> <button className="btn" onClick={()=>setPrintJob(null)}>Close preview</button></div>}
+              {printJob && <InventoryPrintSheet title="Damage Note" docNo={damNo.trim()} docDate={damDate} printDate={printJob.at.toLocaleDateString()} printTime={printJob.at.toLocaleTimeString()} user={actor||'admin'} companyName={company.name} companyAddress={company.address} companyPhone={company.phone} branch={locDes} partnerLabel="Location" partnerCode={locCode} partnerName={locDes} partnerAddress={locations.find(l=>l.code===locCode)?.address||''} columns={(() => { const c = poPrintValueColumns(printJob.copy); return {code:'ItemCode',des:'Item Description',unit:'Unit',qty:'Dmg Qty',cost: c.costPrice ? 'Cost Price' : undefined as any, value: c.itemValue ? 'Item Value' : undefined as any } as any; })()} rows={printRows.map(r=>({ ...r, costPrice: poPrintValueColumns(printJob.copy).costPrice ? r.costPrice : '', itemValue: poPrintValueColumns(printJob.copy).itemValue ? r.itemValue : '' }))} totalLabel="Damage Cost" total={poPrintValueColumns(printJob.copy).total ? money(netValue) : ''} remarks={remarks} />}
             </div>
           )}
         </div>
       </div>
+      {/* internal note — no supplier copy */}
+      {printAsk && (
+        <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Print Damage Note">
+          <div className="ask-card">
+            <h2>Print Damage Note</h2>
+            <p><span className="mono">{damNo.trim()}</span> — COLOMBO MAIN BRANCH</p>
+            <p style={{fontSize:'11.5px',color:'#5b7176'}}>Damage Note ekata supplier copy ne — eliye danna copy ekak na, standard copy withara print karanne GRN/PO wage.</p>
+            <div className="ask-choices" style={{gridTemplateColumns:'1fr'}}>
+              <button className="ask-choice" onClick={()=> startPrint('standard' as PoPrintCopy)}>
+                <span className="ask-choice-title">Standard Copy — Print</span>
+                <span className="ask-choice-hint">Item code · item name · unit · Dmg Qty · cost price · item value · Damage Cost — the salon's internal copy (same paper as PO/GRN)</span>
+              </button>
+            </div>
+            <div className="ask-foot"><button className="btn" onClick={()=> setPrintAsk(false)}>Cancel</button></div>
+          </div>
+        </div>
+      )}
+      {mailAsk && (
+        <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Email Damage Note">
+          <div className="ask-card mail-card">
+            <h2>Email Damage Note</h2>
+            <p><span className="mono">{damNo.trim()}</span> at <b>{locDes}</b> as a PDF.</p>
+            <div className="mail-field"><label htmlFor="mail-to">To</label><input id="mail-to" value={mailTo} onChange={e=>setMailTo(e.target.value)} placeholder="recipient@example.com" spellCheck={false} /></div>
+            <div className="mail-field"><label style={{fontSize:'11px',fontWeight:700,color:'#3c5a60',textTransform:'uppercase',letterSpacing:'0.03em'}}>Copy to send</label><div className="mail-copies" style={{gridTemplateColumns:'1fr'}}><label className="mail-radio on"><input type="radio" checked readOnly /><span><b>Standard Copy</b><span className="mail-radio-hint">Internal note — supplier copy na, cost/value included like PO/GRN standard</span></span></label></div></div>
+            <div className="mail-field"><label htmlFor="mail-subject">Subject</label><input id="mail-subject" value={mailSubject} onChange={e=>setMailSubject(e.target.value)} /></div>
+            <div className="mail-field"><label htmlFor="mail-message">Message</label><textarea id="mail-message" rows={4} value={mailMessage} onChange={e=>setMailMessage(e.target.value)} placeholder="Leave empty for standard note (Damage number, date, line count)." /></div>
+            <div className="mail-attach">Attachment: <b>{(damNo.trim()||'damage-note').trim()}.pdf</b> · {printableLines.length} line(s) · {mailCopy==='supplier'?'no prices':'total '+money(netValue)}</div>
+            <div className="ask-foot"><button className="btn" onClick={()=> setMailAsk(false)} disabled={mailSending}>Cancel</button><button className="btn primary" onClick={()=> void sendMail()} disabled={mailSending||!mailTo.trim()}>{mailSending?'Sending…':'Send Email'}</button></div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -377,5 +449,31 @@ const PAGE_CSS = `
   .pp-table{width:100%;border-collapse:collapse;font-size:11.5px}
   .pp-table th{background:#dbe9ff;padding:5px 6px;text-align:left;font-size:10.5px}
   .pp-table td{padding:4px 6px;border-bottom:1px solid #eee}
+  
+  /* ── "which copy?" + email dialogs (like PO) ─────────────────────────── */
+  .ask-back{position:fixed;inset:0;background:rgba(16,32,36,0.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px}
+  .ask-card{background:#fff;color:#1f2937;border-radius:14px;padding:20px 22px;width:min(680px,94vw);box-shadow:0 18px 50px rgba(0,0,0,0.32);display:flex;flex-direction:column;gap:12px}
+  .ask-card h2{font-size:15px;font-weight:800;color:#16333a;letter-spacing:0.02em}
+  .ask-card p{font-size:12.5px;color:#42585e}
+  .ask-choices{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .ask-choice{display:flex;flex-direction:column;gap:6px;text-align:left;cursor:pointer;font-family:inherit;border:1px solid rgba(30,58,64,0.22);border-radius:11px;background:#f3f8f8;padding:14px 15px}
+  .ask-choice:hover{background:#e6f0f0;border-color:#1e3a40}
+  .ask-choice-title{font-size:14px;font-weight:800;color:#16333a}
+  .ask-choice-hint{font-size:11.5px;color:#5b7176;line-height:1.45}
+  .ask-foot{display:flex;justify-content:flex-end;gap:8px}
+  .mail-card{width:min(760px,95vw);max-height:92vh;overflow:auto}
+  .mail-field{display:flex;flex-direction:column;gap:5px}
+  .mail-field > label{font-size:11px;font-weight:700;color:#3c5a60;text-transform:uppercase;letter-spacing:0.03em}
+  .mail-field input,.mail-field textarea{border:1px solid rgba(30,58,64,0.22);border-radius:8px;background:#fff;color:#1f2937;padding:8px 10px;font-size:12.5px;font-family:inherit;width:100%;color-scheme:light}
+  .mail-field textarea{resize:vertical;line-height:1.5}
+  .mail-copies{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .mail-radio{display:flex;gap:8px;align-items:flex-start;border:1px solid rgba(30,58,64,0.18);border-radius:9px;padding:9px 11px;background:#f6fafa;cursor:pointer;font-size:12px}
+  .mail-radio.on{border-color:#1e3a40;background:#e7f0f0}
+  .mail-radio input{margin-top:2px;accent-color:#1e3a40}
+  .mail-radio-hint{display:block;font-size:11px;color:#5b7176;margin-top:3px;line-height:1.4}
+  .mail-warn{font-size:11.5px;font-weight:600;color:#b45309;background:#fef3c7;border-radius:8px;padding:8px 10px}
+  .mail-hint{font-size:11.5px;color:#5b7176}
+  .mail-attach{font-size:11.5px;color:#3c5a60;background:#eef4f4;border-radius:8px;padding:8px 10px}
+
   @media print{.no-print{display:none!important} html,body{background:#fff!important} .po-shell{display:block;height:auto} .po-main{overflow:visible;padding:0} .po-card{border:none;padding:0} .po-grid-wrap{max-height:none;overflow:visible;border:none}}
 `;

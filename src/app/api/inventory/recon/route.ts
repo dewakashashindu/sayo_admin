@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { invActor, invFail, invId, InvError, keySql, keyVal, invChar, invDateField } from '@/lib/inventoryServer';
+import { stockAsItIs } from '@/lib/stockAsItIs';
 import { nextSerialTx, SERIAL_CODES } from '@/lib/serials';
 
 export const runtime = 'nodejs';
@@ -157,11 +158,9 @@ export async function POST(req: NextRequest) {
           // 1. ledger — mirror VB6 StockAsItIs: Insert into Tbl_TxnMovement
           // VB: Insert Into Tbl_TxnMovement (LocCode,RowItemCode,TxnNo,TxnType,TxnDate,PreQty,TxnQty,LastQty,UserId,SysSerialId,Remarks,AddDeduct,TXNDATETIMEMANUAL) Values(...)
           // Here TxnQty=lastQty, LastQty=lastQty (set), TxndateTime = now
-          const sysSer = Number(recNo.replace(/\D/g, '')) || 0;
-          await tx.$executeRaw`INSERT INTO tbl_txnmovement (LocCode, RowItemCode, TxnNo, TxnType, TxnDate, TxndateTime, PreQty, TxnQty, LastQty, UserId, SysSerialId, Remarks, AddDeduct, TXNDATETIMEMANUAL, SourceItemCode) VALUES (${invChar(locCode, 15)}, ${invChar(d.itemCode, 20)}, ${invChar(recNo, 20)}, ${'RC'}, ${now}, ${now}, ${preQty}, ${lastQty}, ${lastQty}, ${invChar(actor.userId, 20)}, ${sysSer}, ${'Stock Reconciliation'.slice(0, 200)}, ${addDeduct}, ${now}, ${'0'})`;
-          // 2. master stock — VB: Update Tbl_RowItems Set StkBal = dblTxnQty
-          await tx.$executeRaw`UPDATE tbl_itemmaster SET StockBalance = ${lastQty} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(d.itemCode)}`;
-          // optional detail stock: keep tbl_itemdetail in sync (add diff to existing lot)
+            const sysSer = Number(recNo.replace(/\D/g, '')) || 0;
+          await stockAsItIs(tx, { locCode, rowItemCode: d.itemCode, txnNo: recNo, txnType: 'RC', txnQty: lastQty, sysSerialId: sysSer, userId: actor.userId, remarks: 'Stock Reconciliation', addDeduct, txnDate: now, txnDateTimeManual: now });
+          // keep tbl_itemdetail in sync (absolute)
           try {
             await tx.$executeRaw`UPDATE tbl_itemdetail SET ItemQty = ${lastQty} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(d.itemCode)}`;
           } catch {}

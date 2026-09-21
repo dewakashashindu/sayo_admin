@@ -55,6 +55,12 @@ export const SERIAL_CODES = {
   purchaseOrder: "PO",
   /** Goods received note no -> GRN0000001 (fits tbl_grnheader.GRNNO varchar(15)) */
   goodsReceived: "GRN",
+  /** Transfer requisition no -> TC000001 (fits tbl_transferreqheder.TRNO CHAR(10)) VB GetTxnNo(..., "TRQ") */
+  transferReq: "TC",
+  /** Transfer note no      -> TN000001 (fits tbl_transfernoteheader.TranNo VARCHAR(15)) */
+  transferNote: "TN",
+  /** Transfer return no    -> TR000001 (fits tbl_transferreturnheader.TRtnNo CHAR(10)) */
+  transferReturn: "TR",
 } as const;
 
 export type SerialCodeName = keyof typeof SERIAL_CODES;
@@ -75,6 +81,9 @@ export const SERIAL_CODE_ALIASES: Record<string, string[]> = {
   INV: ["INV", "I", "INVOICE", "BILL", "BILLNO"],
   PO: ["PO", "P", "PORDER", "PURCHASE"],
   GRN: ["GRN", "G", "GR", "GOODSREC"],
+  TC: ["TC", "TRQ", "TR", "TRANSFERREQ", "TRANSFERREQUISITION"],
+  TN: ["TN", "TRANSFERNOTE", "TRANSFER", "ISSUE"],
+  TR: ["TR", "TRTN", "TRANSFERRETURN", "RETURN"],
 };
 
 /**

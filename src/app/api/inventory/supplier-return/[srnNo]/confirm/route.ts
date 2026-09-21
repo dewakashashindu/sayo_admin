@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { invActor, invFail, invId, InvError, keySql, keyVal, invChar } from '@/lib/inventoryServer';
+import { stockAsItIs } from '@/lib/stockAsItIs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -65,9 +66,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         if (Number(item[0].ServiceItem) !== 1) {
           const oldBal = Number(item[0].StockBalance || 0);
           const newBal = oldBal - Number(l.SRNQty);
-          await tx.$executeRaw`UPDATE tbl_itemmaster SET StockBalance=${newBal} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(code)}`;
+          await stockAsItIs(tx, { locCode, rowItemCode: code, txnNo: srnNo, txnType: 'SR', txnQty: newBal, sysSerialId: sysSer, userId: actor.userId, remarks: `Supplier Return ${srnNo} vs ${grnNo}`.slice(0,200), addDeduct: '-', txnDate: now, txnDateTimeManual: now });
           try { await tx.$executeRaw`UPDATE tbl_itemdetail SET ItemQty = ItemQty - ${Number(l.SRNQty)} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(code)}`; } catch {}
-          await tx.$executeRaw`INSERT INTO tbl_txnmovement (LocCode, RowItemCode, TxnNo, TxnType, TxnDate, TxndateTime, PreQty, TxnQty, LastQty, UserId, SysSerialId, Remarks, AddDeduct, TXNDATETIMEMANUAL, SourceItemCode) VALUES (${invChar(locCode, 15)}, ${invChar(code, 20)}, ${invChar(srnNo, 20)}, ${'SR'}, ${now}, ${now}, ${oldBal}, ${Number(l.SRNQty)}, ${newBal}, ${invChar(actor.userId, 20)}, ${sysSer}, ${`Supplier Return ${srnNo} vs ${grnNo}`.slice(0, 200)}, ${'-'}, ${now}, ${'0'})`;
           try { await tx.$executeRaw`INSERT INTO tbl_stocktxn (LocCode, ItemCode, TxnType, RefNo, TxnDate, QtyIn, QtyOut, Balance, CostPrice, UserID, Remarks) VALUES (${invChar(locCode, 10)}, ${invChar(code, 15)}, ${'SR'}, ${srnNo.slice(0, 20)}, ${now}, 0, ${Number(l.SRNQty)}, ${newBal}, ${Number(l.CostPrice) || 0}, ${invChar(actor.userId, 10)}, ${`Return ${srnNo}`.slice(0, 200)})`; } catch {}
         }
       }

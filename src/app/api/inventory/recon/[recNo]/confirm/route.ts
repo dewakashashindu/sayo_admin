@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import { invActor, invFail, invId, InvError, keySql, keyVal, invChar } from '@/lib/inventoryServer';
+import { stockAsItIs } from '@/lib/stockAsItIs';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -52,8 +53,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         const item = await tx.$queryRaw<{ StockBalance: number }[]>`SELECT StockBalance FROM tbl_itemmaster WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(code)} FOR UPDATE`;
         if (!item.length) throw new InvError(`Item ${code} not found in item master for ${locCode}.`, 409);
 
-        await tx.$executeRaw`INSERT INTO tbl_txnmovement (LocCode, RowItemCode, TxnNo, TxnType, TxnDate, TxndateTime, PreQty, TxnQty, LastQty, UserId, SysSerialId, Remarks, AddDeduct, TXNDATETIMEMANUAL, SourceItemCode) VALUES (${invChar(locCode, 15)}, ${invChar(code, 20)}, ${invChar(recNo, 20)}, ${'RC'}, ${now}, ${now}, ${preQty}, ${lastQty}, ${lastQty}, ${invChar(actor.userId, 20)}, ${sysSer}, ${'Stock Reconciliation'.slice(0, 200)}, ${addDeduct}, ${now}, ${'0'})`;
-        await tx.$executeRaw`UPDATE tbl_itemmaster SET StockBalance = ${lastQty} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(code)}`;
+        await stockAsItIs(tx, { locCode, rowItemCode: code, txnNo: recNo, txnType: 'RC', txnQty: lastQty, sysSerialId: sysSer, userId: actor.userId, remarks: 'Stock Reconciliation', addDeduct, txnDate: now, txnDateTimeManual: now });
         try { await tx.$executeRaw`UPDATE tbl_itemdetail SET ItemQty = ${lastQty} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(code)}`; } catch {}
       }
 
