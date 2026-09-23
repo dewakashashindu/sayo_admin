@@ -4,14 +4,16 @@
 // UI only → now wired to real tables tbl_transfernoteheader / detail
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { nextSerialTx, SERIAL_CODES } from "@/lib/serials";
+import { postNoteConfirmation } from "@/lib/transferPosting";
 import { findLocation, invActor, invChar, invDateField, invFail, invId, invPrice, invQty, InvError, resolveItems, keySql, keyVal } from "@/lib/inventoryServer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 const trim = (v: unknown) => String(v ?? "").trim();
 
@@ -61,8 +63,9 @@ export async function POST(req: NextRequest){
     const trDueDate = body.trDueDate ? invDateField(body.trDueDate, "TR Due Date") : traDate;
     const remarks = trim(body.remarks).slice(0,400);
     const confirmNow = body.confirm===true || trim(body.confirm)==='1' || trim(body.confirm)==='Y';
-    const rawLines = Array.isArray(body.lines) ? (body.lines as any[]) : [];
-    if(rawLines.length===0) throw new InvError("Add at least one line.");
+    const allLines = Array.isArray(body.lines) ? (body.lines as any[]) : [];
+        const rawLines = allLines.filter((l:any)=> Number(l?.tranQty ?? l?.TranQty ?? l?.trQty ?? 0) > 0);
+    if(rawLines.length===0) throw new InvError("Add at least one line with Transferred QTY above zero.");
     const result = await prisma.$transaction(async(tx)=>{
       const fromLoc = await findLocation(tx, fromRaw); if(!fromLoc) throw new InvError(`Unknown From ${fromRaw}`,400);
       const toLoc = await findLocation(tx, toRaw); if(!toLoc) throw new InvError(`Unknown To ${toRaw}`,400);
@@ -105,12 +108,22 @@ export async function POST(req: NextRequest){
              ${l.costPrice},${l.trQty},${l.tranQty},${l.itemValue},${invChar(tranNo,15)},"",0)
         `;
       }
-      // mark requisition as taken if confirmed
-      if(confirmNow && tReqRaw){
-        try{ await tx.$executeRaw`UPDATE tbl_transferreqheder SET TakenForTransfer='Y' WHERE ${keySql("TRNO")}=${keyVal(tReqRaw)} AND ${keySql("FromLocCode")}=${keyVal(fromLoc)} AND ${keySql("ToLoc")}=${keyVal(toLoc)}`; }catch{}
+            // the issuing location and TI into the receiving one; IssuedQTY grows on
+      // the requisition, and TakenForTransfer flips to '1' only once the whole
+      // requisition has been issued (see src/lib/transferPosting.ts).
+      let moved = 0;
+      let reqTakenFully = false;
+      if(confirmNow){
+        const posting = await postNoteConfirmation(tx as any, {
+          tranNo, fromLoc, toLoc, tReqNo: tReqRaw,
+          lines: lines.map((l)=>({ itemCode: l.itemCode, qty: l.tranQty })),
+          sysSerialId: sysSerNo, userId: actor.userId,
+        });
+        moved = posting.moved;
+        reqTakenFully = posting.takenFully;
       }
-      return {tranNo, fromLoc, toLoc, netTotal, lines:lines.length, confirmed:confirmNow};
+      return {tranNo, fromLoc, toLoc, netTotal, lines:lines.length, confirmed:confirmNow, moved, reqTakenFully};
     }, {timeout:30000});
-    return NextResponse.json({success:true,data:result, message: result.confirmed ? `Transfer Note ${result.tranNo} confirmed.` : `Transfer Note ${result.tranNo} saved.`});
+    return NextResponse.json({success:true,data:result, message: result.confirmed ? `Transfer Note ${result.tranNo} confirmed — stock moved (${result.moved} line(s)).` : `Transfer Note ${result.tranNo} saved.`});
   }catch(err){ return invFail(err,tag); }
 }

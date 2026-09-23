@@ -3,26 +3,9 @@
 import React, { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
-/* ────────────────────────────────────────────────────────────────────────────
-   LOGIN SCREEN — “look through the window” layout
-   ----------------------------------------------------------------------------
-   The dark-green colour of the old screen is now a PHOTO that covers the whole
-   window. The card's left panel has no picture of its own any more: it is a
-   cut-out that shows the exact same slice of that background, because the
-   background is pinned to the viewport (`background-attachment: fixed`).
-   Result: the photo runs seamlessly behind the card — like looking out of a
-   window.
-
-   ▸ Use your own picture: drop it into `public/` (e.g. public/login-bg.jpg) and
-     change the two lines below to  const BACKGROUND_IMAGE = "url('/login-bg.jpg')";
-   ▸ Both the page and the window panel read the same constant, so they can
-     never drift apart.
-   ──────────────────────────────────────────────────────────────────────────── */
 const BACKGROUND_IMAGE =
   "url('https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?q=80&w=1920&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D')";
 
-/* Same picture, same size, same position, pinned to the window → the panel and
-   the page background line up pixel for pixel. */
 const WINDOW_BG: React.CSSProperties = {
   backgroundImage: BACKGROUND_IMAGE,
   backgroundSize: 'cover',
@@ -162,8 +145,7 @@ export default function LoginPage() {
       {/* Main Card */}
       <div className="relative z-10 w-[880px] max-w-full md:h-[500px] bg-white rounded-[24px] p-4 flex flex-col md:flex-row shadow-2xl">
 
-        {/* Left side — the WINDOW. No picture of its own: the same fixed
-            background shows through it, flush with the page behind the card. */}
+        {}
         <div
           className="relative w-full md:w-[45%] h-[190px] md:h-full rounded-[18px] overflow-hidden p-6 flex flex-col justify-start"
           style={WINDOW_BG}

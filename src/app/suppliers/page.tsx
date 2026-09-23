@@ -4,9 +4,6 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 
-/* ─────────────────────────────────────────
-   TYPES
-───────────────────────────────────────── */
 interface Supplier {
   id: number;
   supID: string;
@@ -39,9 +36,6 @@ function emptySupplier(id: number): Supplier {
   };
 }
 
-/* ─────────────────────────────────────────
-   CSS
-───────────────────────────────────────── */
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -199,9 +193,6 @@ const PAGE_CSS = `
   .hl { background:#fef08a; border-radius:2px; }
 `;
 
-/* ─────────────────────────────────────────
-   ICONS
-───────────────────────────────────────── */
 const IBell    = ({ s=21 }: {s?:number}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
 const ISearch  = ({ s=15 }: {s?:number}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
 const IChevD   = ({ s=13 }: {s?:number}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>;
@@ -222,9 +213,6 @@ const INote    = ({ s=14 }: {s?:number}) => <svg width={s} height={s} viewBox="0
 const ITag     = ({ s=14 }: {s?:number}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>;
 const ICalendar= ({ s=14 }: {s?:number}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>;
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
 function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <div
@@ -301,9 +289,6 @@ function focusNext(current: HTMLElement) {
   }
 }
 
-/* ─────────────────────────────────────────
-   MAIN PAGE
-───────────────────────────────────────── */
 export default function SupplierMasterPage() {
   const router = useRouter();
 
@@ -321,8 +306,7 @@ export default function SupplierMasterPage() {
   const { toast, show: showToast } = useToast();
   const rightPanelRef = useRef<HTMLDivElement>(null);
 
-  /* ── Load ── */
-  const loadSuppliers = useCallback(async (selectSupID?: string) => {
+    const loadSuppliers = useCallback(async (selectSupID?: string) => {
     setLoading(true);
     try {
       const res  = await fetch('/api/suppliers');
@@ -350,8 +334,7 @@ export default function SupplierMasterPage() {
 
   useEffect(() => { loadSuppliers(); }, [loadSuppliers]);
 
-  /* ── Ctrl+S ── */
-  useEffect(() => {
+    useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
@@ -362,8 +345,7 @@ export default function SupplierMasterPage() {
     return () => window.removeEventListener('keydown', handler);
   });
 
-  /* ── Filtered list ── */
-  const filtered = useMemo(() =>
+    const filtered = useMemo(() =>
     suppliers.filter(s => {
       const q = search.toLowerCase();
       return (
@@ -513,7 +495,7 @@ export default function SupplierMasterPage() {
 
         <div style={{ flex:1, display:'flex', flexDirection:'column', minWidth:0, overflow:'hidden' }}>
 
-          {/* ── HEADER ── */}
+          {}
           <header style={{ background: HDR, height:56, flexShrink:0, display:'flex', alignItems:'center', padding:'0 18px', gap:12, borderBottom:'1px solid rgba(0,0,0,0.06)', zIndex:10 }}>
             <div style={{ position:'relative', flexShrink:0 }}>
               <span style={{ position:'absolute', left:11, top:'50%', transform:'translateY(-50%)', display:'flex', alignItems:'center', pointerEvents:'none', opacity:0.4 }}>
@@ -543,7 +525,7 @@ export default function SupplierMasterPage() {
             </div>
           </header>
 
-          {/* ── BODY ── */}
+          {}
           <div style={{ flex:1, overflow:'hidden', padding:'12px 14px', display:'flex', gap:12 }}>
 
             {/* LEFT PANEL */}
@@ -640,7 +622,7 @@ export default function SupplierMasterPage() {
                 ) : (
                   <div className="fade-up" style={{ display:'flex', flexDirection:'column', gap:12 }}>
 
-                    {/* ── SECTION 1: Identification ── */}
+                    {}
                     <SectBox title="Supplier Identification" icon={<ITag s={13} />}>
                       <div className="grid-id">
                         <FieldRow label="Supplier ID *" htmlFor="sup-id">
@@ -690,7 +672,7 @@ export default function SupplierMasterPage() {
                       </FieldRow>
                     </SectBox>
 
-                    {/* ── SECTION 2: Contact ── */}
+                    {}
                     <SectBox title="Contact Information" icon={<IPhone s={13} />}>
                       <div className="grid-3">
                         <FieldRow label="Contact Number" htmlFor="sup-contact">
@@ -751,7 +733,7 @@ export default function SupplierMasterPage() {
                       )}
                     </SectBox>
 
-                    {/* ── SECTION 3: Financial ── */}
+                    {}
                     <SectBox title="Financial" icon={<IDollar s={13} />}>
                       <div style={{ display:'grid', gridTemplateColumns:'200px 1fr', gap:10, alignItems:'end' }}>
                         <FieldRow label="Debt / Outstanding Amount (LKR)" htmlFor="sup-debt">
@@ -794,7 +776,7 @@ export default function SupplierMasterPage() {
                       )}
                     </SectBox>
 
-                    {/* ── SECTION 4: Remarks ── */}
+                    {}
                     <SectBox title="Remarks & Notes" icon={<INote s={13} />}>
                       <textarea
                         className="frm-textarea"
@@ -809,7 +791,7 @@ export default function SupplierMasterPage() {
                       </p>
                     </SectBox>
 
-                    {/* ── SECTION 5: Audit ── */}
+                    {}
                     <SectBox title="Audit Information" icon={<ICalendar s={13} />}>
                       <div className="grid-2">
                         <FieldRow label="Created By" htmlFor="sup-createuser">
@@ -834,7 +816,7 @@ export default function SupplierMasterPage() {
                 )}
               </div>
 
-              {/* ── FOOTER ── */}
+              {}
               <div style={{ background:'#dce8e8', borderTop:'1.5px solid rgba(30,58,64,0.12)', padding:'10px 14px', display:'flex', gap:8, flexShrink:0, flexWrap:'wrap', alignItems:'center' }}>
                 <button className="btn-clear" onClick={handleClear} disabled={busy}>
                   <IRefresh s={13} /> Clear

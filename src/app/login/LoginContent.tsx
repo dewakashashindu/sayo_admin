@@ -37,8 +37,7 @@ export default function LoginContent() {
   const errPassword = tPassword && password.length < 6    ? 'Password must be at least 6 characters.'  : '';
   const canSubmit   = isValidEmail(email) && password.length >= 6;
 
-  /* ══ SUBMIT ══ */
-  const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setTEmail(true);
     setTPassword(true);
@@ -73,8 +72,7 @@ export default function LoginContent() {
     }
   };
 
-  /* ══ FORM ══ */
-  return (
+    return (
     <>
       <style>{globalCss}</style>
       <main style={mainStyle}>

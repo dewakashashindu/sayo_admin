@@ -1,20 +1,6 @@
-// src/app/api/inventory/po/[poNo]/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GET    /api/inventory/po/:poNo?locCode=…   → header + lines (with item names)
-// PUT    /api/inventory/po/:poNo              → replace the whole document
-// DELETE /api/inventory/po/:poNo?locCode=…    → delete a PENDING order
-//
-// A PO number is only unique per location, so every call must say which
-// location it means — that is how the legacy key (LocCode, PONO) works.
-//
-// WHAT MAY BE CHANGED
-//   pending   → yes, everything (lines are replaced, quantities re-added)
-//   confirmed → no  (409). A confirmed order is the supplier's document; the
-//               way to change it is to raise a new one or cancel the goods.
-//   received  → never (409): a GRN is already pointing at it.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { itemCode } from "@/lib/itemCode";
 import { openQty, poLineValue, poNetTotal } from "@/lib/inventoryTotals";
@@ -43,7 +29,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ poNo: string }> };
@@ -72,8 +58,6 @@ async function lockHeader(tx: Prisma.TransactionClient, locCode: string, poNo: s
   }
   return rows[0];
 }
-
-/* ── GET ─────────────────────────────────────────────────────────────────── */
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   try {
@@ -167,8 +151,6 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     return invFail(err, "GET /api/inventory/po/[poNo]");
   }
 }
-
-/* ── PUT — replace a pending document ────────────────────────────────────── */
 
 export async function PUT(req: NextRequest, ctx: Ctx) {
   const tag = "PUT /api/inventory/po/[poNo]";
@@ -272,8 +254,6 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     return invFail(err, tag);
   }
 }
-
-/* ── DELETE — only an untouched pending order ────────────────────────────── */
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const tag = "DELETE /api/inventory/po/[poNo]";

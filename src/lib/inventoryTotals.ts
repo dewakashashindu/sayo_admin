@@ -1,14 +1,3 @@
-// src/lib/inventoryTotals.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Purchase Order / GRN arithmetic, in one pure module.
-//
-// No Prisma, no React, no database — so `scripts/billing-tests.js` can check
-// every rule with plain numbers (same idea as billingTaxes / billingPayments).
-//
-// The screen and the API BOTH use these functions. The API never takes a total
-// from the browser: it re-adds the lines with `poNetTotal` / `grnTotals`, so a
-// tampered payload cannot decide what a purchase order is worth.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** Money is stored in DOUBLE columns that the legacy app rounded to 2. */
 export function round2(value: number): number {
@@ -127,16 +116,6 @@ export function isPoComplete(
   return lines.every((line) => isPoLineComplete(line.poQty, line.grnQty));
 }
 
-/**
- * "Current Stock Requirements" — the quantity to suggest on a new PO line.
- *
- *   StockBalance <= ROL and ROQ is set   → ROQ      (the reorder quantity)
- *   StockBalance <= ROL and no ROQ       → MaxQty − StockBalance
- *   StockBalance <= MinQty (ROL not set) → MaxQty − StockBalance, else MinQty
- *   anything else                        → 0 (not below the reorder level)
- *
- * Always a whole number ≥ 0 — you cannot order 0.4 of a bottle.
- */
 export function suggestedOrderQty(item: {
   stockBalance?: unknown;
   rol?: unknown;

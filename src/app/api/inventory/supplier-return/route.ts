@@ -1,11 +1,6 @@
-// src/app/api/inventory/supplier-return/route.ts
-// GET  /api/inventory/supplier-return?status=confirmed|pending|all&q=&locCode=&limit=300
-// POST /api/inventory/supplier-return  body:{ locCode, grnNo, srnDate, supInvNo, remarks, lines:[{itemCode,unitID,costPrice,grnQty,returnQty}], confirm? }
-// Implements cumulative returns: each SRN reduces tbl_grndetails.RETQTY/RETVAL/RETYN
-// and on Confirmation deducts StockBalance and writes Tbl_TxnMovement — one Txn per SRN.
-// Uses raw SQL so stale Prisma client still works.
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invActor, invFail, invId, InvError, keySql, keyVal, invChar, invDateField } from '@/lib/inventoryServer';
 import { stockAsItIs } from '@/lib/stockAsItIs';
 import { nextSerialTx } from '@/lib/serials';
@@ -15,12 +10,11 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? '').trim();
 
-// ── GET list ────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
@@ -64,7 +58,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// ── POST save (optionally confirm) ───────────────────────────────────────
 export async function POST(req: NextRequest) {
   const tag = 'POST /api/inventory/supplier-return';
   try {
@@ -156,8 +149,7 @@ export async function POST(req: NextRequest) {
           if (!isService) {
             const oldBal = Number(itemRows[0].StockBalance || 0);
             const newBal = oldBal - d.returnQty;
-            // galapena VB StockAsItIs — TxnQty = LastQty = newBal (absolute), PreQty = oldBal
-            await stockAsItIs(tx, { locCode, rowItemCode: d.itemCode, txnNo: srnNo, txnType: 'SR', txnQty: newBal, sysSerialId: sysSer, userId: actor.userId, remarks: `Supplier Return ${srnNo} vs ${grnNoRaw}`.slice(0,200), addDeduct: '-', txnDate: now, txnDateTimeManual: now });
+                        await stockAsItIs(tx, { locCode, rowItemCode: d.itemCode, txnNo: srnNo, txnType: 'SR', txnQty: newBal, sysSerialId: sysSer, userId: actor.userId, remarks: `Supplier Return ${srnNo} vs ${grnNoRaw}`.slice(0,200), addDeduct: '-', txnDate: now, txnDateTimeManual: now });
             try { await tx.$executeRaw`UPDATE tbl_itemdetail SET ItemQty = ItemQty - ${d.returnQty} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(d.itemCode)}`; } catch {}
             // also tbl_stocktxn if used by reports (optional)
             try { await tx.$executeRaw`INSERT INTO tbl_stocktxn (LocCode, ItemCode, TxnType, RefNo, TxnDate, QtyIn, QtyOut, Balance, CostPrice, UserID, Remarks) VALUES (${invChar(locCode, 10)}, ${invChar(d.itemCode, 15)}, ${'SR'}, ${srnNo.slice(0, 20)}, ${now}, 0, ${d.returnQty}, ${newBal}, ${d.costPrice}, ${invChar(actor.userId, 10)}, ${`Return to supplier ${srnNo}`.slice(0, 200)})`; } catch {}

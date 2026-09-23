@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
-const prisma = globalForPrisma.prisma || new PrismaClient();
+const prisma = globalForPrisma.prisma || newRobustPrisma();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
-
 
 type Ctx = { params: Promise<{ supID: string }> };
 
@@ -34,7 +34,6 @@ function mapRow(r: {
   };
 }
 
-/* ── GET single ── */
 export async function GET(_: NextRequest, { params }: Ctx) {
   try {
     const { supID } = await params;
@@ -49,7 +48,6 @@ export async function GET(_: NextRequest, { params }: Ctx) {
   }
 }
 
-/* ── PUT update ── */
 export async function PUT(req: NextRequest, { params }: Ctx) {
   try {
     const { supID } = await params;
@@ -79,7 +77,6 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   }
 }
 
-/* ── DELETE ── */
 export async function DELETE(_: NextRequest, { params }: Ctx) {
   try {
     const { supID } = await params;

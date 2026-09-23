@@ -17,18 +17,12 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-// ── Generate next CusCode (CUS0000001 format) ──────────────────────────────
 // The number comes from the CUS series in Tbl_Serials (src/lib/serials.ts)
 // rather than from the highest existing code in tbl_CustomerMaster.
 async function generateCusCode(): Promise<string> {
   return nextSerialTx(prisma, SERIAL_CODES.customer);
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-
-/* ── how often one caller may sign up ────────────────────────────────────── *
- * A new account sends a welcome SMS, so this endpoint is counted too: per
- * caller and per phone number. */
 const REGISTER_IP_LIMIT = 5;             // per hour
 const REGISTER_PHONE_LIMIT = 2;          // per day, for one phone number
 const REGISTER_WINDOW_MS = 60 * 60 * 1000;
@@ -89,8 +83,7 @@ export async function POST(req: NextRequest) {
 
     const emailLower = email.trim().toLowerCase();
 
-    // ── Duplicate check (Select CusCode only to avoid unnecessary column queries) ─
-    try {
+        try {
       const exists = await prisma.tbl_CustomerMaster.findFirst({
         where: { CusEmail: emailLower },
         select: { CusCode: true },
@@ -106,11 +99,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: 'Registration failed.' }, { status: 500 });
     }
 
-    // ── Hash password ──────────────────────────────────────────────────────
-    const hashedPSW = await bcrypt.hash(password, 12);
+        const hashedPSW = await bcrypt.hash(password, 12);
 
-    // ── Save to Tbl_CustomerMaster ─────────────────────────────────────────
-    try {
+        try {
       const cusCode = await generateCusCode();
 
       const created = await prisma.tbl_CustomerMaster.create({
@@ -126,8 +117,7 @@ export async function POST(req: NextRequest) {
         select: { CusCode: true },
       });
 
-      // ── SMS ───────────────────────────────────────────────────────────────
-      if (phone?.trim()) {
+            if (phone?.trim()) {
         try {
           await sendRegistrationSMS({
             name:  name.trim(),

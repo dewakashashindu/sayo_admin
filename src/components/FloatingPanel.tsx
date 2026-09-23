@@ -1,22 +1,4 @@
 'use client';
-// src/components/FloatingPanel.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// A drop-down that is NEVER clipped.
-//
-// The suggestion lists (bill screen item search, technician recipe search, the
-// technician picker) used to be positioned with `position:absolute` inside their
-// card. Any ancestor with `overflow:hidden` / `overflow:auto` — the recipe card,
-// the table wrapper, the rounded panel — then cut the list off, so the cashier
-// saw one or two rows and the rest was gone.
-//
-// This component renders the list in a portal on <body> with `position:fixed`
-// coordinates taken from the anchor element, so no ancestor can clip it:
-//
-//   · it always sits directly under the input (same width),
-//   · it flips above the input when there is not enough room below,
-//   · it clips its own height to the space actually available and scrolls,
-//   · it follows the input when the page or an inner panel is scrolled.
-// ─────────────────────────────────────────────────────────────────────────────
 import React, {
   useCallback,
   useEffect,
@@ -25,12 +7,10 @@ import React, {
 import { createPortal } from 'react-dom';
 
 interface FloatingPanelProps {
-  /** The element to hang under (usually the wrapper around the input). */
-  anchorRef: React.RefObject<HTMLElement | null>;
+    anchorRef: React.RefObject<HTMLElement | null>;
   open: boolean;
   children: React.ReactNode;
-  /** Styling class (background, border, radius, shadow …). */
-  className?: string;
+    className?: string;
   /** Height the panel would like to have; used to decide flipping. */
   preferredHeight?: number;
   /** Gap between the anchor and the panel. */

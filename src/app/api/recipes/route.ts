@@ -1,9 +1,10 @@
 // E:\sayo_admin\sayo-admin\src\app\api\recipes\route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
-const prisma = globalForPrisma.prisma || new PrismaClient();
+const prisma = globalForPrisma.prisma || newRobustPrisma();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 export async function GET() {
@@ -36,7 +37,7 @@ export async function GET() {
       itemCost:     r.ItemCost,
     }));
 
-    // ✅ Raw items for recipe ingredients = NOT service items
+    // Raw items for recipe ingredients = NOT service items
     // Service items can add semi-finished + raw items as ingredients
     // Semi-finished can add raw items only
     const rawItems = allItems

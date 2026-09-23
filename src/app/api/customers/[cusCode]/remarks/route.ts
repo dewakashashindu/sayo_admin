@@ -1,15 +1,9 @@
-// src/app/api/customers/[cusCode]/remarks/route.ts
-// Technician remarks ABOUT a customer → Tbl_CustomerMaster.Rmks (VarChar 400).
-// New remarks are APPENDED to existing text (" | " separator). If the combined
-// text exceeds 400 chars, the oldest text is trimmed off the front.
-//
-// GET   /api/customers/:cusCode/remarks  → { success, cusCode, cusName, rmks }
-// PATCH /api/customers/:cusCode/remarks  { remark } → { success, rmks, truncated }
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
-const prisma = globalForPrisma.prisma || new PrismaClient();
+const prisma = globalForPrisma.prisma || newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const MAX_LEN = 400;

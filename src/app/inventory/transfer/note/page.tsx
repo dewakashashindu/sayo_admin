@@ -1,23 +1,4 @@
 'use client';
-// src/app/inventory/transfer/note/page.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// TRANSFER NOTE — the legacy TN screen as a web page, styled and behaving
-// exactly like the Purchase Order page (same shell, tabs, grid, buttons,
-// print and e-mail dialogs).
-//
-// A transfer note is issued against ONE confirmed requisition: choosing the
-// Issue Requisition No loads that requisition from the database and its items
-// become the note's lines (TR QTY from the requisition, Transferred QTY
-// starting at the same figure) — the way the PO page's "Add selected to PO"
-// fills its grid. Lines can still be edited afterwards.
-//
-//   Find      search saved notes (Confirmed / Pending / All) and open one
-//   Details   header + item grid + remarks + Net Value + the legacy button row
-//
-// The number (TN…) is issued on Save. A confirmed note is read-only, and a
-// note a Return was already made from cannot be edited or deleted — the same
-// rules the Purchase Order page applies (backend enforces them).
-// ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
@@ -33,8 +14,6 @@ import {
   type PoPrintCopy,
 } from '@/lib/poPrint';
 import { TRANSFER_PRINT_COPY_CHOICES } from '@/lib/transferPrint';
-
-/* ── types ───────────────────────────────────────────────────────────────── */
 
 interface LookupLocation { code: string; des: string; address: string; enable: boolean }
 interface LookupUnit { id: string; des: string; enable: boolean }
@@ -59,8 +38,6 @@ interface ReqOption {
   trNo: string; fromLocCode: string; fromLocDes: string; toLoc: string; toLocDes: string;
 }
 
-/* ── small helpers ───────────────────────────────────────────────────────── */
-
 let lineSeq = 0;
 const newLine = (): TrLine => ({
   key: `N${++lineSeq}`, itemCode: '', name: '', unitID: '', costPrice: '', trQty: '', transQty: '',
@@ -79,8 +56,6 @@ function useToast() {
   }, []);
   return { toast, show };
 }
-
-/* ── page ────────────────────────────────────────────────────────────────── */
 
 export default function TransferNotePage() {
   const router = useRouter();
@@ -135,8 +110,7 @@ export default function TransferNotePage() {
   const [reqOptions, setReqOptions] = useState<ReqOption[]>([]);
   const [reqLoading, setReqLoading] = useState(false);
 
-  /* ── load locations / units (once) ─────────────────────────────────────── */
-  useEffect(() => {
+    useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -165,8 +139,7 @@ export default function TransferNotePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── who is signed in (printed as "User") ──────────────────────────────── */
-  useEffect(() => {
+    useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -181,8 +154,7 @@ export default function TransferNotePage() {
     return () => { active = false; };
   }, []);
 
-  /* ── confirmed requisitions for the Issue Requisition No dropdown ─────── */
-  const loadReqOptions = useCallback(async () => {
+    const loadReqOptions = useCallback(async () => {
     try {
       const res = await fetch('/api/inventory/transfer/requisition?status=confirmed&limit=200', { cache: 'no-store' });
       const json = await res.json() as { success?: boolean; data?: any[]; message?: string };
@@ -201,8 +173,7 @@ export default function TransferNotePage() {
 
   useEffect(() => { void loadReqOptions(); }, [loadReqOptions]);
 
-  /* ── the note list (Find tab) ──────────────────────────────────────────── */
-  const loadList = useCallback(async () => {
+    const loadList = useCallback(async () => {
     setListBusy(true);
     try {
       const params = new URLSearchParams({ status: findStatus });
@@ -231,8 +202,7 @@ export default function TransferNotePage() {
 
   useEffect(() => { if (tab === 'find') void loadList(); }, [tab, loadList]);
 
-  /* ── line editing ──────────────────────────────────────────────────────── */
-  function patchLine(key: string, patch: Partial<TrLine>) {
+    function patchLine(key: string, patch: Partial<TrLine>) {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
     setDirty(true);
   }
@@ -258,8 +228,7 @@ export default function TransferNotePage() {
     setDirty(true);
   }
 
-  /* ── totals (display only — the API calculates the stored value) ───────── */
-  const netValue = useMemo(
+    const netValue = useMemo(
     () => lines.reduce((sum, l) => sum + lineValue(l.costPrice, l.transQty), 0),
     [lines],
   );
@@ -269,8 +238,7 @@ export default function TransferNotePage() {
     [units],
   );
 
-  /* ── choosing an Issue Requisition No loads its items into the grid ─────── */
-  /* Same idea as the PO page's "Add selected to PO": the requisition's items
+    /* Same idea as the PO page's "Add selected to PO": the requisition's items
      become the note's lines and the From/To locations fill themselves in.     */
   async function loadFromRequisition(trNo: string) {
     setIssueReq(trNo);
@@ -299,8 +267,10 @@ export default function TransferNotePage() {
       };
       if (!res.ok || !json?.success || !json.data) throw new Error(json?.message || 'Could not load the requisition');
       const h = json.data.header;
-      setFromLoc(h.fromLocCode);
-      setToLoc(h.toLoc);
+            // transfer note runs the other way (the supply ISSUES the goods), so the
+      // locations flip when the note is filled from the requisition.
+      setFromLoc(h.toLoc);
+      setToLoc(h.fromLocCode);
       setLines(json.data.lines.length
         ? json.data.lines.map((l) => ({
             key: `N${++lineSeq}`,
@@ -321,8 +291,7 @@ export default function TransferNotePage() {
     }
   }
 
-  /* ── open a saved note ─────────────────────────────────────────────────── */
-  async function openNote(row: FindRow) {
+    async function openNote(row: FindRow) {
     try {
       const res = await fetch(
         `/api/inventory/transfer/note/${encodeURIComponent(row.tranNo)}?fromLoc=${encodeURIComponent(row.fromLocCode)}&toLoc=${encodeURIComponent(row.toLoc)}`,
@@ -364,8 +333,7 @@ export default function TransferNotePage() {
     }
   }
 
-  /* ── save ──────────────────────────────────────────────────────────────── */
-  function payload() {
+    function payload() {
     return {
       tReqNo: issueReq,
       fromLocCode: fromLoc,
@@ -422,8 +390,7 @@ export default function TransferNotePage() {
     }
   }
 
-  /* ── confirmation ──────────────────────────────────────────────────────── */
-  async function handleConfirm() {
+    async function handleConfirm() {
     if (confirmed) { showToast('This transfer note is already confirmed'); return; }
     setConfirming(true);
     try {
@@ -499,8 +466,7 @@ export default function TransferNotePage() {
     router.push(path);
   }
 
-  /* ── printing ──────────────────────────────────────────────────────────── */
-  const printableLines = lines.filter((l) => l.itemCode || l.name.trim());
+    const printableLines = lines.filter((l) => l.itemCode || l.name.trim());
 
   function handlePrint() {
     if (printableLines.length === 0) { showToast('Add at least one item before printing', true); return; }
@@ -518,8 +484,7 @@ export default function TransferNotePage() {
     return () => window.clearTimeout(id);
   }, [printJob]);
 
-  /* ── emailing the sheet ────────────────────────────────────────────────── */
-  function openMailDialog() {
+    function openMailDialog() {
     if (printableLines.length === 0) { showToast('Add at least one item before emailing', true); return; }
     if (!transferNo) { showToast('Save the note first (Save), then it can be emailed', true); return; }
     setMailSubject((prev) => prev || `Transfer Note ${transferNo}`);
@@ -598,8 +563,7 @@ export default function TransferNotePage() {
     };
   })();
 
-  /* ── markup ────────────────────────────────────────────────────────────── */
-  return (
+    return (
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
@@ -634,7 +598,7 @@ export default function TransferNotePage() {
             </div>
           )}
 
-          {/* ── FIND ─────────────────────────────────────────────────────── */}
+          {}
           {tab === 'find' && (
             <div className="po-card no-print">
               <div className="po-find">
@@ -688,7 +652,7 @@ export default function TransferNotePage() {
             </div>
           )}
 
-          {/* ── DETAILS ──────────────────────────────────────────────────── */}
+          {}
           {tab === 'details' && (
             <div className="po-card">
               <div className="po-form no-print">
@@ -858,7 +822,7 @@ export default function TransferNotePage() {
         </div>
       </div>
 
-      {/* ── WHICH COPY? (the Print button asks first) ────────────────────── */}
+      {}
       {printAsk && (
         <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Print transfer note">
           <div className="ask-card">
@@ -882,7 +846,7 @@ export default function TransferNotePage() {
         </div>
       )}
 
-      {/* ── EMAIL (the same sheet, as a PDF attachment) ──────────────────── */}
+      {}
       {mailAsk && (
         <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Email transfer note">
           <div className="ask-card mail-card">
@@ -955,7 +919,7 @@ export default function TransferNotePage() {
         </div>
       )}
 
-      {/* ── THE PRINTED SHEET (hidden on screen; only paper sees it) ─────── */}
+      {}
       {printJob && (
         <div aria-hidden="true">
           <TransferPrintSheet
@@ -987,8 +951,6 @@ export default function TransferNotePage() {
     </>
   );
 }
-
-/* ── page CSS (identical to the Purchase Order page) ─────────────────────── */
 
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');

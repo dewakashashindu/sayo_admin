@@ -1,22 +1,4 @@
 'use client';
-// src/app/inventory/recon/page.tsx
-// STOCK RECONCILIATION NOTE — legacy screen (SCR_BILLING_18SEP pages 14-15)
-// Same shell / CSS as PO & GRN — galapenna feel.
-//
-//  Details  Location · Main Cat / Sub cat1-4 · Rec. No (auto) · Load
-//           · Item Details: Code | Name | Unit | System Qty (blue readonly)
-//                           | Phy Qty (editable blue) | Applica [x] (green)
-//                           | Cost Price | Item Value ( (Phy-System)*Cost when Applicable )
-//           · Net Value (sum of applicable differences)
-//           · Buttons: Clear · Confirmation · Print · Save · Cancel
-//  Find     RecNo · LocCode · Recdate · UserName · NetValue
-//           · Confirmed Rec. / Pending Rec.
-//
-// Categories: 4 masters — tbl_itemcategory1 → Main Cat, 2→Sub cat1, 3→Sub cat2,
-//   4→Sub cat3/Sub cat4. Loaded as CatDes (not code) dropdowns, like the
-//   legacy combo that showed the description.
-// Stock move: only on Confirmation. VB6 StockAsItIs() pattern:
-//   INSERT Tbl_TxnMovement(PreQty=System,TxnQty=Phy,LastQty=Phy) + UPDATE tbl_itemmaster StockBalance=Phy
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
@@ -289,8 +271,7 @@ export default function ReconPage() {
   function handleCancel() { if (dirty && !confirm('Discard changes?')) return; handleClear(); showToast('Cleared'); }
   function handleNav(k: string, p: string) { if (dirty && !confirm('Leave without saving?')) return; router.push(p); }
 
-  /* ── printing — internal note: supplier copy na (standard only), PO/GRN wage ── */
-  const printableLines = lines.filter(l=> l.applica);
+    const printableLines = lines.filter(l=> l.applica);
   function handlePrint(){
     if(printableLines.length===0){ showToast('Tick Applica for at least one line before printing',true); return; }
     if(!recNo.trim()){ showToast('Save first, then print',true); return; }
@@ -299,8 +280,7 @@ export default function ReconPage() {
   function startPrint(copy:PoPrintCopy){ setPrintAsk(false); setPrintJob({copy, at:new Date()}); }
   React.useEffect(()=>{ if(!printJob) return; const id=window.setTimeout(()=>window.print(),60); return()=>window.clearTimeout(id); },[printJob as any]);
 
-  /* ── email (PDF like PO) ──────────────────────────── */
-  function openMailDialog(){
+    function openMailDialog(){
     if(printableLines.length===0){ showToast('Tick Applica for at least one line before emailing',true); return; }
     if(!recNo.trim()){ showToast('Save the Recon first, then it can be emailed',true); return; }
     setMailTo(prev=> prev||'');
@@ -381,7 +361,7 @@ export default function ReconPage() {
 
           {tab === 'details' && (
             <div className="po-card">
-              {/* ── print letterhead ── visible only when printing, like GRN ── */}
+              {}
               <div className="po-print-head">
                 <div><b>STOCK RECONCILIATION NOTE</b> {recNo.trim() || ''}</div>
                 <div>{locDes} · {printDate.toLocaleDateString()} · {confirmed ? 'Confirmed' : 'Pending'} · Rec. No {recNo.trim() || '(new)'}</div>
@@ -590,8 +570,7 @@ const PAGE_CSS = `
   .pp-table th{background:#dbe9ff;padding:5px 6px;text-align:left;font-size:10.5px}
   .pp-table td{padding:4px 6px;border-bottom:1px solid #eee}
   
-  /* ── "which copy?" + email dialogs (like PO) ─────────────────────────── */
-  .ask-back{position:fixed;inset:0;background:rgba(16,32,36,0.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px}
+    .ask-back{position:fixed;inset:0;background:rgba(16,32,36,0.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px}
   .ask-card{background:#fff;color:#1f2937;border-radius:14px;padding:20px 22px;width:min(680px,94vw);box-shadow:0 18px 50px rgba(0,0,0,0.32);display:flex;flex-direction:column;gap:12px}
   .ask-card h2{font-size:15px;font-weight:800;color:#16333a;letter-spacing:0.02em}
   .ask-card p{font-size:12.5px;color:#42585e}

@@ -1,11 +1,3 @@
-// src/app/billing/dashboard/page.tsx
-// "Billing Dashboard" — Billing ▸ Billing Dashboard (was "Appointment Dashboard").
-//
-// Lists every booking the technicians have marked DONE and that still has to be
-// billed (tbl_bookingheder.Status = 'DONE' AND BillingTime IS NULL). Selecting a
-// row opens the bill screen for that booking.
-//
-// Route: /billing/dashboard
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

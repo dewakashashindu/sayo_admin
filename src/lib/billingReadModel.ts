@@ -1,11 +1,3 @@
-// src/lib/billingReadModel.ts
-// Read-model helpers for the bill screen.
-//
-// A booking stores ONE ROW PER (guest, service) in tbl_bookingservicedetail, so
-// a family booking of five people all taking the same two services arrives as
-// ten rows. The appointment screens already collapse those rows into a single
-// line with a guest count — the bill has to read the same way, otherwise the
-// cashier sees the same service five times.
 
 /** Raw tbl_bookingservicedetail row (item + technician names already joined). */
 export interface BillServiceRow {
@@ -37,16 +29,6 @@ export interface GroupedBookingService {
 
 const trim = (v: unknown) => String(v ?? "").trim();
 
-/**
- * Collapse the per-guest rows of a booking into one line per service.
- *
- * Rows merge when the service item, the unit price and the main technician all
- * match. The quantity of a merged line is the sum of the quantity of each
- * DISTINCT guest — a duplicated row for a guest that is already counted keeps
- * the larger quantity instead of being added again, so a repeated read of the
- * same row can never inflate the bill. Supporters are passed in per service
- * item and de-duplicated across the merged rows.
- */
 export function groupBookingServices(
   rows: BillServiceRow[],
   supportersByItem: Map<string, string[]> = new Map(),

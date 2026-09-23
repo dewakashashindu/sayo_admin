@@ -1,33 +1,6 @@
-// src/app/api/inventory/stock-requirements/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/inventory/stock-requirements?locCode=…
-//
-// The third tab of the legacy Purchase Order screen — "Current Stock
-// Requirements". Every stock item at this location that has fallen to (or
-// below) its reorder level, with the quantity to order.
-//
-//   { success, data: [ { itemCode, itemName, unitID, stockBalance, rol, roq,
-//                        minQty, maxQty, shortage, suggestedQty, costPrice,
-//                        supID, supName } ] }
-//
-// Supplier-wise on the screen: the rows are returned in one list and the page
-// groups them by supID — this route stays ordered shortage-first, so the worst
-// shortage is at the top of each supplier block.
-//
-// costPrice is the same rule the PO screen uses when an item is picked by hand
-// (src/lib/inventoryServer.ts, resolveItems): OverallCost when the master has
-// one, otherwise RawCost. It lets the ticked items arrive on the order with a
-// cost price already in the box, still editable.
-//
-// The suggested quantity comes from src/lib/inventoryTotals.ts
-// (`suggestedOrderQty`) so the screen and the tests agree on the rule:
-// ROQ when it is set, otherwise MaxQty − StockBalance, never below 1.
-//
-// Services (tbl_itemmaster.ServiceItem = 1) are excluded on purpose — a
-// haircut is never reordered, and it never had stock to begin with.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invFail, invId,
   keySql,
   keyVal,
@@ -39,7 +12,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? "").trim();

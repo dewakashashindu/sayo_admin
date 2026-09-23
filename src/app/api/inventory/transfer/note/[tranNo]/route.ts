@@ -1,21 +1,6 @@
-// src/app/api/inventory/transfer/note/[tranNo]/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GET    /api/inventory/transfer/note/:tranNo?fromLoc=&toLoc=  → header + lines
-// PUT    /api/inventory/transfer/note/:tranNo?fromLoc=&toLoc=  → replace a PENDING note
-// DELETE /api/inventory/transfer/note/:tranNo?fromLoc=&toLoc=  → delete a PENDING note
-//
-// A transfer note's key is (FromLocCode, ToLoc, TranNo) — like the PO key
-// (LocCode, PONO) — so PUT/DELETE must say which pair the number belongs to.
-// GET falls back to the first note carrying the number (the "load lines from a
-// requisition / note" pickers on the screens only know the number).
-//
-// WHAT MAY BE CHANGED — mirroring the purchase-order rules:
-//   pending   → yes, everything except the number and the locations
-//   confirmed → no (409). A confirmed note is a ledger document.
-//   returned  → no (409): a transfer return already points at this note.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import {
   findLocation,
@@ -37,7 +22,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ tranNo: string }> };
@@ -67,7 +52,6 @@ function buildLines(
   });
 }
 
-/* ── GET — one note with its lines ───────────────────────────────────────── */
 export async function GET(req: NextRequest, ctx: Ctx) {
   try {
     const { tranNo: raw } = await ctx.params;
@@ -156,7 +140,6 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   }
 }
 
-/* ── PUT — replace a PENDING note (number and locations stay) ────────────── */
 export async function PUT(req: NextRequest, ctx: Ctx) {
   const tag = "PUT /api/inventory/transfer/note/[tranNo]";
   try {
@@ -176,8 +159,10 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 
     const result = await prisma.$transaction(
       async (tx) => {
-        const rows = await tx.$queryRaw<{ TranNo: string; Confirmed: string; TakenRtn: number }[]>`
-          SELECT RTRIM(h.TranNo) AS TranNo, UPPER(h.Confirmed) AS Confirmed, h.TakenForTransferRtn AS TakenRtn
+        const rows = await tx.$queryRaw<{ TranNo: string; Confirmed: string; TakenRtn: number; RtnQty: number }[]>`
+          SELECT RTRIM(h.TranNo) AS TranNo, UPPER(h.Confirmed) AS Confirmed, h.TakenForTransferRtn AS TakenRtn,
+            (SELECT IFNULL(SUM(d.TranRtnQTY),0) FROM tbl_transfernotedetail d
+              WHERE ${keySql("d.FromLocCode")}=${keySql("h.FromLocCode")} AND ${keySql("d.ToLoc")}=${keySql("h.ToLoc")} AND ${keySql("d.TranNo")}=${keySql("h.TranNo")}) AS RtnQty
           FROM tbl_transfernoteheader h
           WHERE ${keySql("h.FromLocCode")}=${keyVal(fromRaw)} AND ${keySql("h.ToLoc")}=${keyVal(toRaw)} AND ${keySql("h.TranNo")}=${keyVal(tranNo)}
           FOR UPDATE
@@ -186,7 +171,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
         if (trim(rows[0].Confirmed) === "Y") {
           throw new InvError(`Transfer Note ${tranNo} is confirmed — it can no longer be edited.`, 409);
         }
-        if (Number(rows[0].TakenRtn || 0) === 1) {
+        // TakenForTransferRtn=1 means fully returned; a partial return (TranRtnQTY>0) locks it too
+        if (Number(rows[0].TakenRtn || 0) === 1 || Number(rows[0].RtnQty || 0) > 0) {
           throw new InvError(`A transfer return was already made from ${tranNo} — the note can no longer be edited.`, 409);
         }
 
@@ -238,7 +224,6 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   }
 }
 
-/* ── DELETE — only while PENDING (mirrors the purchase order) ────────────── */
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const tag = "DELETE /api/inventory/transfer/note/[tranNo]";
   try {
@@ -251,8 +236,10 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
 
     await prisma.$transaction(
       async (tx) => {
-        const rows = await tx.$queryRaw<{ Confirmed: string; TakenRtn: number }[]>`
-          SELECT UPPER(h.Confirmed) AS Confirmed, h.TakenForTransferRtn AS TakenRtn
+        const rows = await tx.$queryRaw<{ Confirmed: string; TakenRtn: number; RtnQty: number }[]>`
+          SELECT UPPER(h.Confirmed) AS Confirmed, h.TakenForTransferRtn AS TakenRtn,
+            (SELECT IFNULL(SUM(d.TranRtnQTY),0) FROM tbl_transfernotedetail d
+              WHERE ${keySql("d.FromLocCode")}=${keySql("h.FromLocCode")} AND ${keySql("d.ToLoc")}=${keySql("h.ToLoc")} AND ${keySql("d.TranNo")}=${keySql("h.TranNo")}) AS RtnQty
           FROM tbl_transfernoteheader h
           WHERE ${keySql("h.FromLocCode")}=${keyVal(fromRaw)} AND ${keySql("h.ToLoc")}=${keyVal(toRaw)} AND ${keySql("h.TranNo")}=${keyVal(tranNo)}
           FOR UPDATE
@@ -261,7 +248,7 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
         if (trim(rows[0].Confirmed) === "Y") {
           throw new InvError(`Transfer Note ${tranNo} is confirmed — it cannot be deleted.`, 409);
         }
-        if (Number(rows[0].TakenRtn || 0) === 1) {
+        if (Number(rows[0].TakenRtn || 0) === 1 || Number(rows[0].RtnQty || 0) > 0) {
           throw new InvError(`A transfer return was already made from ${tranNo} — the note cannot be deleted.`, 409);
         }
         await tx.$executeRaw`

@@ -1,11 +1,3 @@
-// src/lib/inventoryPdf.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GENERIC INVENTORY PDF — same layout as PO PDF (src/lib/poPdf.ts) but
-// title/columns are parametrised so GRN / SRN / Damage / Recon can reuse the
-// same paper and the same e-mail path as Purchase Orders.
-// Layout is A4 595.28×841.89, Helvetica only, one page, frame.
-// Used by: /api/inventory/grn/[grnNo]/email, damage/email, recon/email, srn/email (upgraded)
-// ─────────────────────────────────────────────────────────────────────────────
 import PDFDocument from 'pdfkit';
 import { poPrintValueColumns, poPrintColumnCount, type PoPrintCopy, type PoPrintRow } from './poPrint';
 

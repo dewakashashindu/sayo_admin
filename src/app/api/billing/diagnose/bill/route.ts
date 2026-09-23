@@ -1,30 +1,6 @@
-// src/app/api/billing/diagnose/bill/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// “Why is my bill not saving?” — one request, one answer.
-//
-// GET /api/billing/diagnose/bill?bookingID=BK0000010        ← read-only checks
-// GET /api/billing/diagnose/bill?bookingID=BK0000010&dryRun=1&netTotal=12163.14
-//                                                          ← writes the whole
-//                                                            bill, then ROLLS IT
-//                                                            BACK
-//
-// The dry run goes through exactly the same code as the real “Complete
-// Payment”, inside a transaction that is deliberately rolled back at the end:
-// the bill number is taken, all four tables are inserted and BillingTime is
-// stamped, then everything is undone. Not one row is kept.
-//
-// The reply lists every check with a pass/fail and, when something fails, the
-// database's own message plus a hint — that is the text to send back.
-//
-// Checks
-//   · the booking exists, its status, whether it is already billed
-//   · Tbl_Serials has an “INV” row, and what number it currently holds
-//   · the four bill tables exist and which columns they really have
-//   · (dryRun) the serial increment + tbl_billheader + tbl_billdetail +
-//     tbl_billpaytxn + tbl_billtaxes + tbl_bookingheder UPDATE
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import {
   BILL_TX_OPTIONS,
   BillWriteError,
@@ -43,7 +19,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? "").trim();
@@ -91,8 +67,7 @@ export async function GET(req: NextRequest) {
     checks.push({ name, ok, detail, hint });
 
   try {
-    /* ── 1. the booking ─────────────────────────────────────────────────── */
-    const headers = await prisma.$queryRaw<
+        const headers = await prisma.$queryRaw<
       {
         LocCode: string;
         CusCode: string;
@@ -131,8 +106,7 @@ export async function GET(req: NextRequest) {
       isBilled ? "This booking is already billed — pick it from the Billing Dashboard list." : undefined,
     );
 
-    /* ── 2. the bill counter ────────────────────────────────────────────── */
-    const serialRows = await prisma.$queryRaw<
+        const serialRows = await prisma.$queryRaw<
       { SeriCode: string; SeriNo: string; SeriDate: Date | null }[]
     >`
       SELECT RTRIM(SeriCode) AS SeriCode, TRIM(SeriNo) AS SeriNo, SeriDate
@@ -148,8 +122,7 @@ export async function GET(req: NextRequest) {
       serial ? undefined : "Run scripts/add-serials-table.sql — it seeds the INV row without touching a counter that already exists.",
     );
 
-    /* ── 3. the four bill tables and their real columns ─────────────────── */
-    const columnRows = await prisma.$queryRaw<
+        const columnRows = await prisma.$queryRaw<
       { TABLE_NAME: string; COLUMN_NAME: string; COLUMN_TYPE: string; IS_NULLABLE: string }[]
     >`
       SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
@@ -174,8 +147,7 @@ export async function GET(req: NextRequest) {
       );
     });
 
-    /* ── 4. the dry run: the real write, rolled back ─────────────────────── */
-    let dryRunResult: Record<string, unknown> | null = null;
+        let dryRunResult: Record<string, unknown> | null = null;
     if (dryRun) {
       /* Lines can be handed over as JSON (?lines=[{…}]) so the dry run can use
          the same numbers the screen has. Without them the run only exercises

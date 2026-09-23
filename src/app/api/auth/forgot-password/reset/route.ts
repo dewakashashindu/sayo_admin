@@ -1,16 +1,3 @@
-// src/app/api/auth/forgot-password/reset/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Takes the 6-digit code and the new password, and changes the password.
-//
-// SECURITY PASS (2026-09-18)
-//   · this file was named `route.tsx`, which is NOT a route — Next.js only
-//     builds `route.ts`, so this endpoint returned 404 and the reset never
-//     happened. Renamed.
-//   · a wrong code is COUNTED: after 5 tries the code is destroyed and a new
-//     one has to be requested, so a 6-digit code cannot be guessed through
-//   · the code is compared in constant time (crypto.timingSafeEqual)
-//   · rate limited per caller, so a script cannot hammer this screen either
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
@@ -28,7 +15,6 @@ import { clientIp, ipForLog } from "@/lib/clientIp";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/* ── how often one caller may try ────────────────────────────────────────── */
 const OTP_RESET_IP_LIMIT = 10;            // per caller, per 30 minutes
 const OTP_RESET_IP_WINDOW_MS = 30 * 60 * 1000;
 
@@ -72,8 +58,7 @@ export async function POST(req: NextRequest) {
     const emailNorm = email.trim().toLowerCase();
     sweepOtps();
 
-    // ── Validate OTP first (and count the wrong guesses) ───────────────────
-    const stored = otpStore.get(emailNorm);
+        const stored = otpStore.get(emailNorm);
     const verdict = evaluateOtp(stored, otp);
 
     if (!verdict.ok) {
@@ -97,11 +82,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: message }, { status: 400 });
     }
 
-    // ── Hash new password ──────────────────────────────────────────────────
-    const hashedPSW = await bcrypt.hash(newPassword, 12);
+        const hashedPSW = await bcrypt.hash(newPassword, 12);
 
-    // ── Update Tbl_CustomerMaster ──────────────────────────────────────────
-    try {
+        try {
       const user = await prisma.tbl_CustomerMaster.findFirst({
         where: { CusEmail: emailNorm },
         select: { CusCode: true },
@@ -123,8 +106,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Password reset failed." }, { status: 500 });
     }
 
-    // ── Success — the code is spent ────────────────────────────────────────
-    otpStore.delete(emailNorm);
+        otpStore.delete(emailNorm);
     console.log(`[reset] password updated for ${emailNorm}`);
 
     return NextResponse.json({ success: true });

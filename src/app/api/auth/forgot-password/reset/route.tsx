@@ -25,8 +25,7 @@ export async function POST(req: NextRequest) {
 
     const emailNorm = email.trim().toLowerCase();
 
-    // ── Validate OTP first ─────────────────────────────────────────────────
-    const stored = otpStore.get(emailNorm);
+        const stored = otpStore.get(emailNorm);
 
     if (!stored)
       return NextResponse.json({ error: 'No reset code found. Please request a new one.' }, { status: 400 });
@@ -37,11 +36,9 @@ export async function POST(req: NextRequest) {
     if (stored.code !== otp)
       return NextResponse.json({ error: 'Incorrect code. Please try again.' }, { status: 400 });
 
-    // ── Hash new password ──────────────────────────────────────────────────
-    const hashedPSW = await bcrypt.hash(newPassword, 12);
+        const hashedPSW = await bcrypt.hash(newPassword, 12);
 
-    // ── Update Tbl_CustomerMaster ──────────────────────────────────────────
-    try {
+        try {
       const user = await prisma.tbl_CustomerMaster.findFirst({
         where:  { CusEmail: emailNorm },
         select: { CusCode: true },
@@ -64,8 +61,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Password reset failed.' }, { status: 500 });
     }
 
-    // ── Success — delete OTP ───────────────────────────────────────────────
-    otpStore.delete(emailNorm);
+        otpStore.delete(emailNorm);
     console.log(`[reset] password updated for ${emailNorm}`);
 
     return NextResponse.json({ success: true });

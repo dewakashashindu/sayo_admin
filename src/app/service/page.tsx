@@ -11,9 +11,6 @@ import React, {
 import { useRouter } from "next/navigation";
 import AdminSidebar, { SIDEBAR_CSS } from "@/components/AdminSidebar";
 
-/* ═══════════════════════════════════════════════════════
-   INTERFACES
-═══════════════════════════════════════════════════════ */
 type MofValue = "M" | "F" | "O";
 
 const MOF_OPTIONS: { value: MofValue; label: string }[] = [
@@ -65,6 +62,7 @@ interface Item {
   packSize: number;
   packPrice: number;
   itemPic: string | null;
+  hasPic?: boolean;
   createDate: string;
   createBy: string;
   updDate: string;
@@ -106,9 +104,6 @@ interface RecipeRow {
   isNew?: boolean;
 }
 
-/* ═══════════════════════════════════════════════════════
-   HELPERS
-═══════════════════════════════════════════════════════ */
 function itemType(it: { serviceItem: boolean; semiFinishedProd: boolean }) {
   if (it.serviceItem) return "service" as const;
   if (it.semiFinishedProd) return "semi" as const;
@@ -178,9 +173,6 @@ function emptyItem(): Item {
   };
 }
 
-/* ═══════════════════════════════════════════════════════
-   CSS
-═══════════════════════════════════════════════════════ */
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -204,6 +196,7 @@ const PAGE_CSS = `
   .frm-input { width:100%; border:1.5px solid #d1d9da; border-radius:8px; padding:0 11px; height:36px; font-family:'Inter',sans-serif; font-size:13px; color:#1f2937; background:#fff; outline:none; transition:border-color 0.15s,box-shadow 0.15s; }
   .frm-input:focus { border-color:#1e3a40; box-shadow:0 0 0 3px rgba(30,58,64,0.08); }
   .frm-input:read-only { background:#f3f6f6; color:#6b7280; cursor:default; }
+  .fld-invalid .frm-input { border-color:#dc2626; }
   .frm-input:disabled { background:#f3f6f6; color:#9ca3af; cursor:not-allowed; }
 
   .frm-select { width:100%; border:1.5px solid #d1d9da; border-radius:8px; padding:0 28px 0 11px; height:36px; font-family:'Inter',sans-serif; font-size:13px; color:#1f2937; background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='11' viewBox='0 0 24 24' fill='none' stroke='%23555' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 8px center; appearance:none; -webkit-appearance:none; outline:none; cursor:pointer; transition:border-color 0.15s,box-shadow 0.15s; }
@@ -217,12 +210,13 @@ const PAGE_CSS = `
 
   .frm-label { font-size:10.5px; font-weight:700; color:#4b5563; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:4px; display:block; }
 
-  .flags-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .flags-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:start; }
+  .flags-col { display:flex; flex-direction:column; gap:10px; }
   .flag-card { position:relative; border-radius:12px; border:1.5px solid #e5eded; background:#fafbfc; overflow:hidden; transition:all 0.2s ease; }
   .flag-card.is-on { border-color:var(--fc,#1e3a40); background:#fff; box-shadow:0 2px 8px rgba(0,0,0,0.07); }
   .flag-card::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--fc,#d1d9da); transition:background 0.2s; }
   .flag-card.is-on::before { background:var(--fc,#1e3a40); }
-  .flag-card-inner { padding:12px 14px 12px 17px; }
+  .flag-card-inner { padding:9px 12px 9px 16px; }
   .flag-toggle-row { display:flex; align-items:center; gap:10px; cursor:pointer; user-select:none; }
   .flag-switch { position:relative; width:36px; height:20px; flex-shrink:0; }
   .flag-switch-track { width:36px; height:20px; border-radius:10px; background:#d1d9da; transition:background 0.2s; }
@@ -235,9 +229,9 @@ const PAGE_CSS = `
   .flag-subtitle { font-size:10.5px; color:#9ca3af; margin-top:1px; font-weight:500; }
   .flag-status-dot { width:8px; height:8px; border-radius:50%; background:#d1d9da; flex-shrink:0; transition:background 0.2s; }
   .flag-status-dot.on { background:var(--fc,#16a34a); }
-  .flag-sub-area { border-top:1px solid #f0f4f4; padding:10px 14px 12px 17px; background:#f8fafa; display:flex; flex-direction:column; gap:8px; }
-  .flag-sub-label { font-size:9.5px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.06em; display:block; margin-bottom:3px; }
-  .flag-sub-input { width:100%; border:1.5px solid #d1d9da; border-radius:7px; padding:0 10px; height:32px; font-size:12.5px; font-family:'Inter',sans-serif; color:#1f2937; background:#fff; outline:none; transition:border-color 0.15s,box-shadow 0.15s; }
+  .flag-sub-area { border-top:1px solid #f0f4f4; padding:8px 12px 10px 16px; background:#f8fafa; display:flex; flex-direction:column; gap:6px; }
+  .flag-sub-label { font-size:9.5px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:0.06em; display:block; margin-bottom:2px; }
+  .flag-sub-input { width:100%; border:1.5px solid #d1d9da; border-radius:7px; padding:0 10px; height:30px; font-size:12.5px; font-family:'Inter',sans-serif; color:#1f2937; background:#fff; outline:none; transition:border-color 0.15s,box-shadow 0.15s; }
   .flag-sub-input:focus { border-color:var(--fc,#1e3a40); box-shadow:0 0 0 2px rgba(30,58,64,0.08); }
   .flag-sub-input:disabled { background:#f3f6f6; color:#9ca3af; cursor:not-allowed; }
 
@@ -336,12 +330,9 @@ const PAGE_CSS = `
   .recent-card{flex-shrink:0;width:210px;border-radius:12px;border:1.5px solid #d8e4e6;background:#fff;padding:12px 14px;cursor:pointer;transition:all 0.15s;display:flex;flex-direction:column;gap:6px;box-shadow:0 1px 4px rgba(30,58,64,0.07);text-align:left;font-family:'Inter',sans-serif;}
   .recent-card:hover{border-color:#1e3a40;box-shadow:0 3px 12px rgba(30,58,64,0.14);transform:translateY(-2px);}
   .recipe-blocked{border-radius:12px;border:2px dashed #d1d9da;padding:40px 24px;text-align:center;color:#9ca3af;background:#fafafa;}
-  @media(max-width:767px){.flags-grid{grid-template-columns:1fr 1fr !important;}}
+  @media(max-width:767px){.flags-grid{grid-template-columns:1fr !important;}}
 `;
 
-/* ═══════════════════════════════════════════════════════
-   ICONS
-═══════════════════════════════════════════════════════ */
 const IBell = ({ s = 21 }: { s?: number }) => (
   <svg
     width={s}
@@ -652,24 +643,31 @@ const IZap = ({ s = 14 }: { s?: number }) => (
   </svg>
 );
 
-/* ═══════════════════════════════════════════════════════
-   SMALL HELPERS
-═══════════════════════════════════════════════════════ */
 function FieldRow({
   label,
   htmlFor,
+  error,
   children,
 }: {
   label: string;
   htmlFor?: string;
+  error?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    <div
+      className={error ? "fld-invalid" : ""}
+      style={{ display: "flex", flexDirection: "column", gap: 4 }}
+    >
       <label className="frm-label" htmlFor={htmlFor}>
         {label}
       </label>
       {children}
+      {error ? (
+        <p style={{ fontSize: 11, fontWeight: 700, color: "#dc2626", marginTop: 1 }}>
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -753,11 +751,6 @@ function Hl({ text, q }: { text: string; q: string }): React.ReactElement {
   );
 }
 
-/* ═══════════════════════════════════════════════════════
-   FLAGS
-   Enable is intentionally not included here. Enable belongs
-   to each Location Details row.
-═══════════════════════════════════════════════════════ */
 interface FlagDef {
   key: keyof Item;
   label: string;
@@ -843,8 +836,10 @@ function FlagsCard({
       icon={<IFlag s={13} />}
       badge={`${activeCount} / ${FLAG_DEFS.length} active`}
     >
-      <div className="flags-grid">
-        {FLAG_DEFS.map((definition) => {
+      {(() => {
+        // Two compact columns: plain toggles on the left, cards that carry
+        // inputs (Wholesale, Packing) on the right.
+        const renderFlag = (definition: FlagDef) => {
           const isOn = Boolean(item[definition.key]);
 
           return (
@@ -911,15 +906,22 @@ function FlagsCard({
               )}
             </div>
           );
-        })}
-      </div>
+        };
+
+        const leftFlags = FLAG_DEFS.filter((d) => !d.subInputs);
+        const rightFlags = FLAG_DEFS.filter((d) => d.subInputs);
+
+        return (
+          <div className="flags-grid">
+            <div className="flags-col">{leftFlags.map(renderFlag)}</div>
+            <div className="flags-col">{rightFlags.map(renderFlag)}</div>
+          </div>
+        );
+      })()}
     </Card>
   );
 }
 
-/* ═══════════════════════════════════════════════════════
-   ITEM CODE INPUT
-═══════════════════════════════════════════════════════ */
 function ItemCodeInput({
   value,
   allItems,
@@ -949,6 +951,9 @@ function ItemCodeInput({
         (item) =>
           item.itemCode.toUpperCase().includes(query) ||
           item.itemDes.toUpperCase().includes(query),
+      )
+      .sort((a, b) =>
+        a.itemDes.localeCompare(b.itemDes, "en", { sensitivity: "base" }),
       )
       .slice(0, 10);
   }, [value, allItems, isNew]);
@@ -1108,9 +1113,6 @@ function ItemCodeInput({
   );
 }
 
-/* ═══════════════════════════════════════════════════════
-   INGREDIENT AUTOCOMPLETE
-═══════════════════════════════════════════════════════ */
 function IngredientAC({
   value,
   items,
@@ -1310,12 +1312,6 @@ function IngredientAC({
   );
 }
 
-/* ═══════════════════════════════════════════════════════
-   LOCATION GRID
-   Enable is location-level. Disabling an enabled location
-   is allowed only when its stock is exactly zero.
-   Retail is AUTO = overallCost * (1 + salesMargin/100)
-═══════════════════════════════════════════════════════ */
 function LocationGrid({
   rows,
   onChange,
@@ -1539,9 +1535,6 @@ function LocationGrid({
   );
 }
 
-/* ═══════════════════════════════════════════════════════
-   RECIPE GRID
-═══════════════════════════════════════════════════════ */
 function RecipeGrid({
   rows,
   allowedItems,
@@ -1850,9 +1843,6 @@ function RecipeGrid({
   );
 }
 
-/* ═══════════════════════════════════════════════════════
-   ITEMS POPUP
-═══════════════════════════════════════════════════════ */
 function ItemsPopup({
   items,
   locations,
@@ -2251,9 +2241,6 @@ const SECTIONS = [
   { id: "sec-image", label: "Image", icon: <IImage s={11} /> },
 ];
 
-/* ═══════════════════════════════════════════════════════
-   MAIN PAGE
-═══════════════════════════════════════════════════════ */
 export default function ItemMasterPage() {
   const router = useRouter();
   const [navKey, setNavKey] = useState("services");
@@ -2282,6 +2269,47 @@ export default function ItemMasterPage() {
   const [subUnits, setSubUnits] = useState<SubUnit[]>([]);
   const [recipeSaving, setRecipeSaving] = useState(false);
   const [recipeLocCodes, setRecipeLocCodes] = useState<string[]>([]);
+
+  // Batch / expiry popup opened from the location card Stock number.
+  const [batchView, setBatchView] = useState<{
+    locCode: string;
+    locName: string;
+    itemCode: string;
+  } | null>(null);
+  const [batchRows, setBatchRows] = useState<{ expiry: string | null; qty: number }[]>([]);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [batchBalance, setBatchBalance] = useState<number | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
+
+  useEffect(() => {
+    if (!batchView) return;
+    let active = true;
+    setBatchBusy(true);
+    fetch(
+      `/api/items/batches?locCode=${encodeURIComponent(batchView.locCode)}&itemCode=${encodeURIComponent(batchView.itemCode)}`,
+      { cache: "no-store" }
+    )
+      .then((r) => r.json())
+      .then((j) => {
+        if (!active) return;
+        const d = j?.data ?? {};
+        setBatchRows(Array.isArray(d.batches) ? d.batches : []);
+        setBatchTotal(Number(d.batchTotal) || 0);
+        setBatchBalance(typeof d.stockBalance === "number" ? d.stockBalance : null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setBatchRows([]);
+        setBatchTotal(0);
+        setBatchBalance(null);
+      })
+      .finally(() => {
+        if (active) setBatchBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [batchView]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
@@ -2338,14 +2366,22 @@ export default function ItemMasterPage() {
 
       if (!json.success) throw new Error("Failed");
 
+      // All list/combo boxes show options sorted by name.
+      const byName = (a: MasterOpt, b: MasterOpt) =>
+        String(a.name ?? a.des ?? a.code ?? "").localeCompare(
+          String(b.name ?? b.des ?? b.code ?? ""),
+          "en",
+          { sensitivity: "base" },
+        );
+
       setItems(json.items);
-      setLocations(json.locations);
-      setUnits(json.units);
-      setSuppliers(json.suppliers);
-      setCategory1(json.category1);
-      setCategory2(json.category2);
-      setCategory3(json.category3);
-      setCategory4(json.category4);
+      setLocations([...json.locations].sort(byName));
+      setUnits([...json.units].sort(byName));
+      setSuppliers([...json.suppliers].sort(byName));
+      setCategory1([...json.category1].sort(byName));
+      setCategory2([...json.category2].sort(byName));
+      setCategory3([...json.category3].sort(byName));
+      setCategory4([...json.category4].sort(byName));
     } catch {
       showToast("Failed to load items", true);
     } finally {
@@ -2440,6 +2476,37 @@ export default function ItemMasterPage() {
     if (current.locCode) setRecipeLocCodes([current.locCode]);
   }, [current.locCode]);
 
+  // The items list carries no pictures; fetch the picture of the opened item
+  // only when it is needed.
+  useEffect(() => {
+    if (isNew || !current.itemCode || !current.locCode) return;
+    if (current.itemPic) return;
+    let active = true;
+    const locCode = current.locCode;
+    const itemCode = current.itemCode;
+    fetch(
+      `/api/services/${encodeURIComponent(locCode)}/${encodeURIComponent(itemCode)}/image`,
+      { cache: "no-store" },
+    )
+      .then((r) => r.json())
+      .then((j) => {
+        if (!active || !j?.image) return;
+        setCurrent((prev) =>
+          prev.itemCode === itemCode &&
+          prev.locCode === locCode &&
+          !prev.itemPic
+            ? { ...prev, itemPic: j.image }
+            : prev,
+        );
+      })
+      .catch(() => {
+        // No picture is only cosmetic — ignore failures.
+      });
+    return () => {
+      active = false;
+    };
+  }, [current.itemCode, current.locCode, current.itemPic, isNew]);
+
   useEffect(() => {
     if (!isNew || locations.length === 0 || current.locationDetails.length > 0)
       return;
@@ -2459,12 +2526,40 @@ export default function ItemMasterPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew, locations]);
 
+  // Inline required-field errors (shown next to the field, in screen order).
+  const [fieldErrors, setFieldErrors] = useState<{ itemCode?: string; itemDes?: string }>({});
+
   function updateItem<K extends keyof Item>(key: K, value: Item[K]) {
+    if (key === "itemCode" || key === "itemDes") {
+      const errKey: "itemCode" | "itemDes" = key;
+      setFieldErrors((previous) =>
+        previous[errKey] ? { ...previous, [errKey]: undefined } : previous,
+      );
+    }
     setCurrent((previous) => ({ ...previous, [key]: value }));
   }
 
   function updateLocationDetails(rows: LocationDetail[]) {
     setCurrent((previous) => ({ ...previous, locationDetails: rows }));
+  }
+
+  // Enter walks through the form; it never walks past an empty required field.
+  function enterNext(e: React.KeyboardEvent<HTMLElement>) {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    const curId = (e.currentTarget as HTMLElement).id;
+
+    if (curId === "itm-des" && !current.itemDes.trim()) {
+      setFieldErrors((p) => ({ ...p, itemDes: "Item Description is required" }));
+      return;
+    }
+
+    const order = ["itm-des", "itm-printdes", "btn-save-item"];
+    const idx = order.indexOf(curId);
+    for (let i = idx + 1; i < order.length; i++) {
+      const el = document.getElementById(order[i]);
+      if (el) { el.focus(); return; }
+    }
   }
 
   function handleNew() {
@@ -2482,6 +2577,13 @@ export default function ItemMasterPage() {
     setCurrent(fresh);
     setIsNew(true);
     setActiveTab("details");
+    setFieldErrors({});
+    // Control lands on the Item Code box when starting a new item.
+    setTimeout(() => {
+      (
+        document.querySelector("#fld-item-code input") as HTMLInputElement | null
+      )?.focus();
+    }, 60);
     document
       .getElementById("sec-ident")
       ?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2499,13 +2601,14 @@ export default function ItemMasterPage() {
   }
 
   const handleSave = useCallback(async () => {
-    if (!current.itemDes.trim()) {
-      showToast("Item Description is required", true);
-      return;
-    }
-
-    if (!current.itemCode.trim()) {
-      showToast("Item Code is required", true);
+    // Validate in the screen field order: Item Code, then Item Description.
+    const errors: { itemCode?: string; itemDes?: string } = {};
+    if (!current.itemCode.trim()) errors.itemCode = "Item Code is required";
+    if (!current.itemDes.trim()) errors.itemDes = "Item Description is required";
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      const target = errors.itemCode ? "#fld-item-code input" : "#itm-des";
+      (document.querySelector(target) as HTMLElement | null)?.focus();
       return;
     }
 
@@ -2798,6 +2901,207 @@ export default function ItemMasterPage() {
           onSelect={handleSelect}
           onClose={() => setShowPopup(false)}
         />
+      )}
+
+      {batchView && (
+        <div
+          className="items-modal-overlay"
+          onClick={() => setBatchView(null)}
+        >
+          <div
+            className="items-modal"
+            style={{ maxWidth: 460 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="items-modal-hdr">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.55)",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Batch-wise / Expiry-wise Stock
+                </p>
+                <p
+                  style={{
+                    color: "#fff",
+                    fontSize: 14,
+                    fontWeight: 800,
+                    marginTop: 2,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {batchView.itemCode} · {current.itemDes}
+                </p>
+                <p
+                  style={{
+                    color: "rgba(255,255,255,0.65)",
+                    fontSize: 11.5,
+                    marginTop: 2,
+                  }}
+                >
+                  {batchView.locCode} — {batchView.locName}
+                </p>
+              </div>
+              <button
+                onClick={() => setBatchView(null)}
+                style={{
+                  background: "rgba(255,255,255,0.14)",
+                  border: "none",
+                  color: "#fff",
+                  borderRadius: 8,
+                  width: 30,
+                  height: 30,
+                  cursor: "pointer",
+                  fontSize: 16,
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div className="items-modal-list">
+              {batchBusy ? (
+                <p
+                  style={{
+                    textAlign: "center",
+                    color: "#9ca3af",
+                    fontSize: 12,
+                    padding: "18px 0",
+                  }}
+                >
+                  Loading batches…
+                </p>
+              ) : batchRows.length === 0 ? (
+                <p
+                  style={{
+                    textAlign: "center",
+                    color: "#9ca3af",
+                    fontSize: 12,
+                    padding: "18px 0",
+                  }}
+                >
+                  No batch rows recorded for this item at this location yet.
+                </p>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {["#", "Expiry Date", "Qty (batches)"].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            textAlign: h === "Qty (batches)" ? "right" : "left",
+                            fontSize: 10.5,
+                            fontWeight: 800,
+                            color: "#4b5563",
+                            letterSpacing: "0.05em",
+                            textTransform: "uppercase",
+                            padding: "6px 10px",
+                            borderBottom: "1.5px solid #e5e7eb",
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchRows.map((b, i) => (
+                      <tr key={`${b.expiry ?? "none"}-${i}`}>
+                        <td
+                          style={{
+                            padding: "7px 10px",
+                            fontSize: 12,
+                            color: "#6b7280",
+                            borderBottom: "1px solid #f1f5f9",
+                          }}
+                        >
+                          {i + 1}
+                        </td>
+                        <td
+                          style={{
+                            padding: "7px 10px",
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: "#1f2937",
+                            borderBottom: "1px solid #f1f5f9",
+                          }}
+                        >
+                          {b.expiry ?? "no expiry date"}
+                        </td>
+                        <td
+                          style={{
+                            padding: "7px 10px",
+                            fontSize: 12,
+                            fontWeight: 800,
+                            color: b.qty < 0 ? "#dc2626" : "#15803d",
+                            borderBottom: "1px solid #f1f5f9",
+                            textAlign: "right",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {b.qty.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td
+                        colSpan={2}
+                        style={{
+                          padding: "8px 10px",
+                          fontSize: 12,
+                          fontWeight: 800,
+                          color: "#1e3a40",
+                        }}
+                      >
+                        Batch total
+                      </td>
+                      <td
+                        style={{
+                          padding: "8px 10px",
+                          fontSize: 12,
+                          fontWeight: 800,
+                          color: "#1e3a40",
+                          textAlign: "right",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        {batchTotal.toFixed(2)}
+                      </td>
+                    </tr>
+                    {batchBalance !== null && (
+                      <tr>
+                        <td
+                          colSpan={3}
+                          style={{
+                            padding: "0 10px 8px",
+                            fontSize: 10.5,
+                            color:
+                              Math.abs(batchBalance - batchTotal) < 0.005
+                                ? "#15803d"
+                                : "#b45309",
+                          }}
+                        >
+                          Item master balance: {batchBalance.toFixed(2)}
+                          {Math.abs(batchBalance - batchTotal) >= 0.005
+                            ? " — differs from the batch total (stock moved outside GRN before batch tracking)"
+                            : " — matches the batch total"}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       <div
@@ -3406,16 +3710,18 @@ export default function ItemMasterPage() {
                           marginBottom: 12,
                         }}
                       >
-                        <FieldRow label="Item Code *">
-                          <ItemCodeInput
-                            value={current.itemCode}
-                            allItems={items}
-                            isNew={isNew}
-                            onSelect={handleItemCodeSelect}
-                            onChange={(value) => updateItem("itemCode", value)}
-                          />
-                        </FieldRow>
-                        <FieldRow label="Item Description *" htmlFor="itm-des">
+                        <div id="fld-item-code">
+                          <FieldRow label="Item Code *" error={fieldErrors.itemCode}>
+                            <ItemCodeInput
+                              value={current.itemCode}
+                              allItems={items}
+                              isNew={isNew}
+                              onSelect={handleItemCodeSelect}
+                              onChange={(value) => updateItem("itemCode", value)}
+                            />
+                          </FieldRow>
+                        </div>
+                        <FieldRow label="Item Description *" htmlFor="itm-des" error={fieldErrors.itemDes}>
                           <input
                             id="itm-des"
                             className="frm-input"
@@ -3423,6 +3729,7 @@ export default function ItemMasterPage() {
                             onChange={(event) =>
                               updateItem("itemDes", event.target.value)
                             }
+                            onKeyDown={enterNext}
                             placeholder="e.g. Shampoo & Conditioner"
                             maxLength={50}
                           />
@@ -3446,6 +3753,7 @@ export default function ItemMasterPage() {
                             onChange={(event) =>
                               updateItem("itemPrintDes", event.target.value)
                             }
+                            onKeyDown={enterNext}
                             maxLength={50}
                           />
                         </FieldRow>
@@ -3965,15 +4273,41 @@ export default function ItemMasterPage() {
                                   >
                                     {summary.label}
                                   </span>
-                                  <span
-                                    style={{
-                                      fontSize: 11,
-                                      fontWeight: 600,
-                                      color: "#1f2937",
-                                    }}
-                                  >
-                                    {summary.value}
-                                  </span>
+                                  {summary.label === "Stock" ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setBatchView({
+                                          locCode: location.locCode,
+                                          locName: location.locName,
+                                          itemCode: current.itemCode,
+                                        })
+                                      }
+                                      title="Show batch-wise / expiry-wise stock"
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: 700,
+                                        color: "#0369a1",
+                                        background: "none",
+                                        border: "none",
+                                        cursor: "pointer",
+                                        padding: 0,
+                                        borderBottom: "1px dotted #0369a1",
+                                      }}
+                                    >
+                                      {summary.value} ▸ batches
+                                    </button>
+                                  ) : (
+                                    <span
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        color: "#1f2937",
+                                      }}
+                                    >
+                                      {summary.value}
+                                    </span>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -4141,6 +4475,7 @@ export default function ItemMasterPage() {
                 {activeTab === "details" && (
                   <button
                     type="button"
+                    id="btn-save-item"
                     className="btn-save"
                     onClick={handleSave}
                     disabled={busy}

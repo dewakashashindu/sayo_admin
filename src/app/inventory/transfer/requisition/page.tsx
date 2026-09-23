@@ -1,20 +1,4 @@
 'use client';
-// src/app/inventory/transfer/requisition/page.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// TRANSFER REQUISITION NOTE — the legacy TC screen as a web page, styled and
-// behaving exactly like the Purchase Order page (same shell, same tabs, same
-// grid, same button row, same print/e-mail dialogs).
-//
-//   Find      search saved requisitions (Confirmed IRN / Pending IRN / All,
-//             like the legacy screen) and open one into Details
-//   Details   From/To Location, TR Date, TR Due Date, the item grid, remarks,
-//             Net Value, and the legacy button row
-//             Clear · Confirmation · Print · Email · Delete · Save · Cancel
-//
-// The number (TC…) is issued on Save — before that the chip says
-// "not saved yet". A confirmed requisition is read-only, same rule as a
-// confirmed purchase order.
-// ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
@@ -31,9 +15,7 @@ import {
 } from '@/lib/poPrint';
 import { TRANSFER_PRINT_COPY_CHOICES } from '@/lib/transferPrint';
 
-/* ── types ───────────────────────────────────────────────────────────────── */
-
-interface LookupLocation { code: string; des: string; address: string; enable: boolean }
+interface LookupLocation { code: string; des: string; address: string; enable: boolean; mainLoc?: boolean; subLoc?: boolean; mainLocCode?: string }
 interface LookupUnit { id: string; des: string; enable: boolean }
 interface LookupCompany { name: string; address: string; phone: string }
 
@@ -50,8 +32,6 @@ interface FindRow {
   trNo: string; fromLocCode: string; fromLocDes: string; toLoc: string; toLocDes: string;
   trDate: string; netTotal: number; confirmed: boolean;
 }
-
-/* ── small helpers ───────────────────────────────────────────────────────── */
 
 let lineSeq = 0;
 const newLine = (): TrLine => ({
@@ -71,8 +51,6 @@ function useToast() {
   }, []);
   return { toast, show };
 }
-
-/* ── page ────────────────────────────────────────────────────────────────── */
 
 export default function TransferRequisitionPage() {
   const router = useRouter();
@@ -123,8 +101,7 @@ export default function TransferRequisitionPage() {
   const [list, setList] = useState<FindRow[]>([]);
   const [listBusy, setListBusy] = useState(false);
 
-  /* ── load locations / units (once) ─────────────────────────────────────── */
-  useEffect(() => {
+    useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -141,7 +118,13 @@ export default function TransferRequisitionPage() {
         if (json.company?.name) setCompany(json.company);
         setLookupErrors(json.errors ?? {});
         setLookupNote(`${locs.length} location(s) · ${(json.units ?? []).length} unit(s) loaded from the database`);
-        setFromLoc((prev) => prev || locs[0]?.code || '');
+        // default to the first SUB location — its MAIN fills To automatically
+        setFromLoc((prev) => {
+          if (prev) return prev;
+          const firstSub = locs.find((l) => l.subLoc);
+          if (firstSub) setToLoc(firstSub.mainLocCode || '');
+          return firstSub?.code || locs[0]?.code || '';
+        });
       } catch (err) {
         if (!active) return;
         setLookupNote('');
@@ -153,8 +136,7 @@ export default function TransferRequisitionPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── who is signed in (printed as "User") ──────────────────────────────── */
-  useEffect(() => {
+    useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -169,8 +151,7 @@ export default function TransferRequisitionPage() {
     return () => { active = false; };
   }, []);
 
-  /* ── the requisition list (Find tab) ───────────────────────────────────── */
-  const loadList = useCallback(async () => {
+    const loadList = useCallback(async () => {
     setListBusy(true);
     try {
       const params = new URLSearchParams({ status: findStatus });
@@ -198,8 +179,7 @@ export default function TransferRequisitionPage() {
 
   useEffect(() => { if (tab === 'find') void loadList(); }, [tab, loadList]);
 
-  /* ── line editing ──────────────────────────────────────────────────────── */
-  function patchLine(key: string, patch: Partial<TrLine>) {
+    function patchLine(key: string, patch: Partial<TrLine>) {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
     setDirty(true);
   }
@@ -224,8 +204,7 @@ export default function TransferRequisitionPage() {
     setDirty(true);
   }
 
-  /* ── totals (display only — the API calculates the stored value) ───────── */
-  const netValue = useMemo(
+    const netValue = useMemo(
     () => lines.reduce((sum, l) => sum + lineValue(l.costPrice, l.trQty), 0),
     [lines],
   );
@@ -235,8 +214,7 @@ export default function TransferRequisitionPage() {
     [units],
   );
 
-  /* ── open a requisition ────────────────────────────────────────────────── */
-  async function openReq(row: FindRow) {
+    async function openReq(row: FindRow) {
     try {
       const res = await fetch(
         `/api/inventory/transfer/requisition/${encodeURIComponent(row.trNo)}?fromLoc=${encodeURIComponent(row.fromLocCode)}&toLoc=${encodeURIComponent(row.toLoc)}`,
@@ -277,8 +255,7 @@ export default function TransferRequisitionPage() {
     }
   }
 
-  /* ── save ──────────────────────────────────────────────────────────────── */
-  function payload() {
+    function payload() {
     return {
       fromLocCode: fromLoc,
       toLoc,
@@ -297,8 +274,19 @@ export default function TransferRequisitionPage() {
   }
 
   async function handleSave(): Promise<boolean> {
-    if (!fromLoc || !toLoc) { showToast('Choose From and To locations first', true); return false; }
+    if (!fromLoc || !toLoc) { showToast('Choose a From (sub) location first', true); return false; }
     if (fromLoc === toLoc) { showToast('From and To locations must be different', true); return false; }
+    // a NEW requisition always comes FROM a sub location and goes TO its main
+    if (!reqNo) {
+      const fromSub = locations.find((l) => l.code === fromLoc);
+      if (fromSub && !fromSub.subLoc) { showToast('From must be a sub location', true); return false; }
+      if (fromSub?.subLoc && fromSub.mainLocCode && toLoc !== fromSub.mainLocCode) {
+        showToast('To must be the sub location’s main location', true); return false;
+      }
+      if (fromSub?.subLoc && !fromSub.mainLocCode) {
+        showToast('This sub location has no main location — set one in Location Master first', true); return false;
+      }
+    }
     const body = payload();
     if (body.lines.length === 0) { showToast('Add at least one item line', true); return false; }
     if (body.lines.some((l) => !(Number(l.trQty) > 0))) { showToast('Enter TR QTY for each line', true); return false; }
@@ -331,8 +319,7 @@ export default function TransferRequisitionPage() {
     }
   }
 
-  /* ── confirmation ──────────────────────────────────────────────────────── */
-  async function handleConfirm() {
+    async function handleConfirm() {
     if (confirmed) { showToast('This requisition is already confirmed'); return; }
     setConfirming(true);
     try {
@@ -407,8 +394,7 @@ export default function TransferRequisitionPage() {
     router.push(path);
   }
 
-  /* ── printing ──────────────────────────────────────────────────────────── */
-  const printableLines = lines.filter((l) => l.itemCode || l.name.trim());
+    const printableLines = lines.filter((l) => l.itemCode || l.name.trim());
 
   function handlePrint() {
     if (printableLines.length === 0) { showToast('Add at least one item before printing', true); return; }
@@ -426,8 +412,7 @@ export default function TransferRequisitionPage() {
     return () => window.clearTimeout(id);
   }, [printJob]);
 
-  /* ── emailing the sheet ────────────────────────────────────────────────── */
-  function openMailDialog() {
+    function openMailDialog() {
     if (printableLines.length === 0) { showToast('Add at least one item before emailing', true); return; }
     if (!reqNo) { showToast('Save the requisition first (Save), then it can be emailed', true); return; }
     setMailTo((prev) => prev);
@@ -507,8 +492,7 @@ export default function TransferRequisitionPage() {
     };
   })();
 
-  /* ── markup ────────────────────────────────────────────────────────────── */
-  return (
+    return (
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
@@ -543,7 +527,7 @@ export default function TransferRequisitionPage() {
             </div>
           )}
 
-          {/* ── FIND ─────────────────────────────────────────────────────── */}
+          {}
           {tab === 'find' && (
             <div className="po-card no-print">
               <div className="po-find">
@@ -596,38 +580,49 @@ export default function TransferRequisitionPage() {
             </div>
           )}
 
-          {/* ── DETAILS ──────────────────────────────────────────────────── */}
+          {}
           {tab === 'details' && (
             <div className="po-card">
               <div className="po-form no-print">
-                <label>From Location</label>
+                {/* From = SUB locations only; To = the sub's MAIN, filled automatically */}
+                <label>From Location (Sub)</label>
                 <select
                   value={fromLoc}
                   disabled={locked || !!reqNo}
                   title={reqNo ? 'Locations are part of the requisition’s key — Clear to start a new one' : undefined}
-                  onChange={(e) => { setFromLoc(e.target.value); setDirty(true); }}
+                  onChange={(e) => {
+                    const c = e.target.value;
+                    setFromLoc(c);
+                    setToLoc(locations.find((l) => l.code === c)?.mainLocCode || '');
+                    setDirty(true);
+                  }}
                 >
-                  <option value="">— choose —</option>
-                  {locations.map((l) => (
+                  <option value="">— choose a sub location —</option>
+                  {locations.filter((l) => l.subLoc).map((l) => (
                     <option key={l.code} value={l.code}>
                       {l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}
                     </option>
                   ))}
+                  {/* a requisition saved before the Main/Sub structure still shows correctly */}
+                  {fromLoc && !locations.some((l) => l.code === fromLoc && l.subLoc) && (
+                    <option key={fromLoc} value={fromLoc}>
+                      {fromLoc} — {locations.find((l) => l.code === fromLoc)?.des || 'saved location'}
+                    </option>
+                  )}
                 </select>
 
-                <label>To Location</label>
+                <label>To Location (Sub’s Main)</label>
                 <select
                   value={toLoc}
-                  disabled={locked || !!reqNo}
-                  title={reqNo ? 'Locations are part of the requisition’s key — Clear to start a new one' : undefined}
-                  onChange={(e) => { setToLoc(e.target.value); setDirty(true); }}
+                  disabled
+                  title="Filled automatically from the sub location’s main location"
                 >
-                  <option value="">— choose —</option>
-                  {locations.map((l) => (
-                    <option key={l.code} value={l.code}>
-                      {l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}
+                  <option value="">— the sub location’s main comes here —</option>
+                  {toLoc && (
+                    <option key={toLoc} value={toLoc}>
+                      {toLoc} — {locations.find((l) => l.code === toLoc)?.des || ''}
                     </option>
-                  ))}
+                  )}
                 </select>
 
                 <label>TR Date</label>
@@ -659,7 +654,7 @@ export default function TransferRequisitionPage() {
                         <td className="num">{i + 1}</td>
                         <td>
                           <ItemSuggestInput
-                            locCode={fromLoc}
+                            locCode={toLoc || fromLoc}
                             value={line.name}
                             disabled={locked}
                             onText={(text) => patchLine(line.key, { name: text, itemCode: '' })}
@@ -742,7 +737,7 @@ export default function TransferRequisitionPage() {
         </div>
       </div>
 
-      {/* ── WHICH COPY? (the Print button asks first) ────────────────────── */}
+      {}
       {printAsk && (
         <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Print transfer requisition">
           <div className="ask-card">
@@ -766,7 +761,7 @@ export default function TransferRequisitionPage() {
         </div>
       )}
 
-      {/* ── EMAIL (the same sheet, as a PDF attachment) ──────────────────── */}
+      {}
       {mailAsk && (
         <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Email transfer requisition">
           <div className="ask-card mail-card">
@@ -839,7 +834,7 @@ export default function TransferRequisitionPage() {
         </div>
       )}
 
-      {/* ── THE PRINTED SHEET (hidden on screen; only paper sees it) ─────── */}
+      {}
       {printJob && (
         <div aria-hidden="true">
           <TransferPrintSheet
@@ -871,8 +866,6 @@ export default function TransferRequisitionPage() {
     </>
   );
 }
-
-/* ── page CSS (identical to the Purchase Order page) ─────────────────────── */
 
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');

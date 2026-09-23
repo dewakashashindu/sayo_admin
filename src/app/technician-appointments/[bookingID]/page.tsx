@@ -1,16 +1,3 @@
-// src/app/technician-appointments/[bookingID]/page.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// "Technician's Appointments" — DETAIL screen.
-// Opened by tapping a CHECKED-IN (ongoing) appointment from the list screen.
-//
-// Tabs:
-//   1. Details        — client info + service + date/time + DONE button
-//   2. Recipe         — ingredients (tbl_recipes) for each service in the booking
-//   3. Add Technician — view assigned technicians + add helpers (sample UI)
-//   4. Remarks        — booking notes + add a remark (sample UI)
-//
-// Route: /technician-appointments/[bookingID]?locCode=XX&date=YYYY-MM-DD
-// ─────────────────────────────────────────────────────────────────────────────
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -727,8 +714,7 @@ export default function TechnicianAppointmentDetailPage() {
     if (canEditExtras) void persistAddTech(next);
   }
 
-  // ── Recipe editing ──────────────────────────────────────────────
-  function startEditRecipe(svc: ServiceRecipe) {
+    function startEditRecipe(svc: ServiceRecipe) {
     setEditingRecipe(svc.itemCode);
     setEditRows(svc.rows.map((r) => ({ ...r })));
     setItemQuery("");
@@ -882,8 +868,7 @@ export default function TechnicianAppointmentDetailPage() {
     }
   }
 
-  // ── Customer remarks (appended to Tbl_CustomerMaster.Rmks) ─────────────
-  async function handleSaveRemark() {
+    async function handleSaveRemark() {
     const text = newRemark.trim();
     if (!text) {
       showToast("Write a remark first", "error");
@@ -1118,7 +1103,7 @@ export default function TechnicianAppointmentDetailPage() {
                   </div>
 
                   <div style={{ padding: "16px 16px 20px", background: "#fff" }}>
-                    {/* ── TAB 1: DETAILS ─────────────────────────────── */}
+                    {}
                     {tab === "details" && (
                       <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                         <div className="info-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -1207,7 +1192,7 @@ export default function TechnicianAppointmentDetailPage() {
                       </div>
                     )}
 
-                    {/* ── TAB 2: RECIPE ──────────────────────────────── */}
+                    {}
                     {tab === "recipe" && (
                       <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                         {!canEditExtras && (
@@ -1473,7 +1458,7 @@ export default function TechnicianAppointmentDetailPage() {
                       </div>
                     )}
 
-                    {/* ── TAB 3: ADD TECHNICIAN ──────────────────────── */}
+                    {}
                     {tab === "technician" && (
                       <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                         {!canEditExtras && (
@@ -1620,7 +1605,7 @@ export default function TechnicianAppointmentDetailPage() {
                       </div>
                     )}
 
-                    {/* ── TAB 4: REMARKS ─────────────────────────────── */}
+                    {}
                     {tab === "remarks" && (
                       <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                         <div>

@@ -2,9 +2,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
 function ok(data: unknown, status = 200) {
   return NextResponse.json({ success: true, data }, { status });
 }
@@ -38,20 +35,6 @@ async function nextSubUnitID(): Promise<string> {
   return `S${String(next).padStart(2, '0')}`;
 }
 
-/* ══════════════════════════════════════════════════════════
-   GET
-   /api/admin/units?type=master
-   /api/admin/units?type=master&masterUnitID=UNT01
-   /api/admin/units?type=master&search=kg
-
-   /api/admin/units?type=sub
-   /api/admin/units?type=sub&subUnitID=S01
-   /api/admin/units?type=sub&search=gram
-
-   /api/admin/units?type=conversion
-   /api/admin/units?type=conversion&masterUnitID=UNT01&subUnitID=S01
-   /api/admin/units?type=conversion&search=kg
-══════════════════════════════════════════════════════════ */
 export async function GET(req: NextRequest) {
   const type = getType(req);
   if (!type) return err('Query param "type" must be one of: master, sub, conversion');
@@ -60,8 +43,7 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get('search')?.trim();
 
   try {
-    /* ───────── MASTER UNIT ───────── */
-    if (type === 'master') {
+        if (type === 'master') {
       const masterUnitID = searchParams.get('masterUnitID');
 
       if (masterUnitID) {
@@ -81,8 +63,7 @@ export async function GET(req: NextRequest) {
       return ok(list);
     }
 
-    /* ───────── SUB UNIT ───────── */
-    if (type === 'sub') {
+        if (type === 'sub') {
       const subUnitID = searchParams.get('subUnitID');
 
       if (subUnitID) {
@@ -102,8 +83,7 @@ export async function GET(req: NextRequest) {
       return ok(list);
     }
 
-    /* ───────── UNIT CONVERSION ───────── */
-    if (type === 'conversion') {
+        if (type === 'conversion') {
       const masterUnitID = searchParams.get('masterUnitID');
       const subUnitID = searchParams.get('subUnitID');
 
@@ -145,12 +125,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/* ══════════════════════════════════════════════════════════
-   POST
-   /api/admin/units?type=master   Body: { unitDes, enable? }
-   /api/admin/units?type=sub      Body: { subUnitDes, enable? }
-   /api/admin/units?type=conversion  Body: { masterUnitID, subUnitID, noOfUnits, enable? }
-══════════════════════════════════════════════════════════ */
 export async function POST(req: NextRequest) {
   const type = getType(req);
   if (!type) return err('Query param "type" must be one of: master, sub, conversion');
@@ -158,8 +132,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
 
-    /* ───────── MASTER UNIT ───────── */
-    if (type === 'master') {
+        if (type === 'master') {
       const unitDes: string | undefined = body.unitDes?.trim();
       if (!unitDes) return err('unitDes (Unit Description) is required');
       if (unitDes.length > 50) return err('unitDes must be 50 characters or less');
@@ -178,8 +151,7 @@ export async function POST(req: NextRequest) {
       return ok(created, 201);
     }
 
-    /* ───────── SUB UNIT ───────── */
-    if (type === 'sub') {
+        if (type === 'sub') {
       const subUnitDes: string | undefined = body.subUnitDes?.trim();
       if (!subUnitDes) return err('subUnitDes (Sub Unit Description) is required');
       if (subUnitDes.length > 50) return err('subUnitDes must be 50 characters or less');
@@ -198,8 +170,7 @@ export async function POST(req: NextRequest) {
       return ok(created, 201);
     }
 
-    /* ───────── UNIT CONVERSION ───────── */
-    if (type === 'conversion') {
+        if (type === 'conversion') {
       const masterUnitID: string | undefined = body.masterUnitID;
       const subUnitID: string | undefined = body.subUnitID;
       const noOfUnits: number = Number(body.noOfUnits);
@@ -233,12 +204,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/* ══════════════════════════════════════════════════════════
-   PUT
-   /api/admin/units?type=master      Body: { masterUnitID, unitDes, enable? }
-   /api/admin/units?type=sub         Body: { subUnitID, subUnitDes, enable? }
-   /api/admin/units?type=conversion  Body: { currentMasterUnitID, currentSubUnitID, masterUnitID, subUnitID, noOfUnits, enable? }
-══════════════════════════════════════════════════════════ */
 export async function PUT(req: NextRequest) {
   const type = getType(req);
   if (!type) return err('Query param "type" must be one of: master, sub, conversion');
@@ -246,8 +211,7 @@ export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
 
-    /* ───────── MASTER UNIT ───────── */
-    if (type === 'master') {
+        if (type === 'master') {
       const masterUnitID: string | undefined = body.masterUnitID;
       const unitDes: string | undefined = body.unitDes?.trim();
 
@@ -271,8 +235,7 @@ export async function PUT(req: NextRequest) {
       return ok(updated);
     }
 
-    /* ───────── SUB UNIT ───────── */
-    if (type === 'sub') {
+        if (type === 'sub') {
       const subUnitID: string | undefined = body.subUnitID;
       const subUnitDes: string | undefined = body.subUnitDes?.trim();
 
@@ -296,8 +259,7 @@ export async function PUT(req: NextRequest) {
       return ok(updated);
     }
 
-    /* ───────── UNIT CONVERSION ───────── */
-    if (type === 'conversion') {
+        if (type === 'conversion') {
       const currentMasterUnitID: string | undefined = body.currentMasterUnitID;
       const currentSubUnitID: string | undefined = body.currentSubUnitID;
       const masterUnitID: string | undefined = body.masterUnitID;
@@ -360,12 +322,6 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-/* ══════════════════════════════════════════════════════════
-   DELETE
-   /api/admin/units?type=master&masterUnitID=UNT01
-   /api/admin/units?type=sub&subUnitID=S01
-   /api/admin/units?type=conversion&masterUnitID=UNT01&subUnitID=S01
-══════════════════════════════════════════════════════════ */
 export async function DELETE(req: NextRequest) {
   const type = getType(req);
   if (!type) return err('Query param "type" must be one of: master, sub, conversion');
@@ -373,8 +329,7 @@ export async function DELETE(req: NextRequest) {
   const { searchParams } = req.nextUrl;
 
   try {
-    /* ───────── MASTER UNIT ───────── */
-    if (type === 'master') {
+        if (type === 'master') {
       const masterUnitID = searchParams.get('masterUnitID');
       if (!masterUnitID) return err('masterUnitID query param is required');
 
@@ -401,8 +356,7 @@ export async function DELETE(req: NextRequest) {
       return ok({ deleted: existing });
     }
 
-    /* ───────── SUB UNIT ───────── */
-    if (type === 'sub') {
+        if (type === 'sub') {
       const subUnitID = searchParams.get('subUnitID');
       if (!subUnitID) return err('subUnitID query param is required');
 
@@ -426,8 +380,7 @@ export async function DELETE(req: NextRequest) {
       return ok({ deleted: existing });
     }
 
-    /* ───────── UNIT CONVERSION ───────── */
-    if (type === 'conversion') {
+        if (type === 'conversion') {
       const masterUnitID = searchParams.get('masterUnitID');
       const subUnitID = searchParams.get('subUnitID');
       if (!masterUnitID || !subUnitID) {

@@ -1,24 +1,3 @@
-// src/lib/poPrint.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// The Purchase Order PRINTED COPY — the two copies the legacy screen offered,
-// and the small amount of formatting that makes a printed sheet readable.
-//
-//   Standard Copy   item code · item name · unit · qty · cost price ·
-//                   item value · Total          (what the salon keeps)
-//   Supplier Copy   item code · item name · unit · qty only — no cost price,
-//                   no item value, no total     (what the supplier gets)
-//
-// The supplier copy exists so the prices the salon pays are not handed to
-// everyone who receives a sheet: the supplier is told WHAT to send and HOW
-// MUCH, and the money stays on the salon's own copy.
-//
-// Dates and times are printed the way the legacy sheet printed them
-// (`10-Aug-2026`, `10:07:22 pm`), which is also how the rest of this project
-// talks about a stored date: never through the machine's locale.
-//
-// Nothing here touches React or the database — it is pure, so the tests in
-// scripts/billing-tests.js can check the exact strings that come out.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type PoPrintCopy = "standard" | "supplier";
 

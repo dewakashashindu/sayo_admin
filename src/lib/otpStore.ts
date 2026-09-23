@@ -1,20 +1,3 @@
-// src/lib/otpStore.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// The password-reset codes, and the rules that make them safe to hand out.
-//
-// WHAT CHANGED (2026-09-18 security pass)
-//   · the code is now generated with crypto.randomInt, not Math.random —
-//     Math.random is predictable and must never make a secret
-//   · a wrong guess is COUNTED. After OTP_MAX_ATTEMPTS the code dies and a new
-//     one has to be requested, so a 6-digit code cannot be walked through
-//   · the code is never written to the server log any more
-//   · comparing the code is constant-time, so the answer does not leak how
-//     many digits were right
-//   · expired records are swept away instead of living in memory for ever
-//
-// The pure parts (generation, comparison, the decision) are exported so
-// `bash scripts/run-billing-tests.sh` can check them without a server.
-// ─────────────────────────────────────────────────────────────────────────────
 import crypto from "node:crypto";
 
 export interface OtpRecord {

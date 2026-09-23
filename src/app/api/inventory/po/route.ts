@@ -1,25 +1,6 @@
-// src/app/api/inventory/po/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GET  /api/inventory/po        ?locCode=…&status=confirmed|pending&q=…
-// POST /api/inventory/po        body: {
-//          locCode, supID, poDate, dueDate, deliAdd, remarks, confirm,
-//          lines: [{ itemCode, unitID, costPrice, poQty }] }
-//
-// READING      the list is a raw query that RTRIMs every CHAR column (a padded
-//              literal never matches a NO PAD collation) and joins the supplier
-//              name so the screen shows who the order is for.
-// WRITING      one transaction: resolve the location, the supplier and every
-//              item against the real tables, take the next PO number from
-//              Tbl_Serials, then write header + lines.
-//
-// MONEY        ItemValue and NetTotal are calculated HERE with the pure
-//              functions in src/lib/inventoryTotals.ts — the browser's totals
-//              are never stored. The cost price itself is an entered value (a
-//              PO records what the supplier quoted), but an empty cost falls
-//              back to tbl_itemmaster so a line can never be worth 0 by accident.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { itemCode } from "@/lib/itemCode";
 import { nextSerialTx, SERIAL_CODES } from "@/lib/serials";
@@ -47,7 +28,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? "").trim();
@@ -58,8 +39,6 @@ interface RawPoLine {
   costPrice?: unknown;
   poQty?: unknown;
 }
-
-/* ── GET — list ──────────────────────────────────────────────────────────── */
 
 export async function GET(req: NextRequest) {
   try {
@@ -140,8 +119,6 @@ export async function GET(req: NextRequest) {
     return invFail(err, "GET /api/inventory/po");
   }
 }
-
-/* ── POST — create ───────────────────────────────────────────────────────── */
 
 export async function POST(req: NextRequest) {
   const tag = "POST /api/inventory/po";

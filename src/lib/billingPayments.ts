@@ -1,10 +1,3 @@
-// src/lib/billingPayments.ts
-// Split-payment model for the bill screen.
-//
-// One bill can be settled with any number of methods — e.g. a LKR 2,500 bill
-// paid as Card/Visa 1,500 + Cash 500 + Online 250 + Voucher 250. Every line can
-// carry its own remark (reference number, last 4 digits, voucher code …).
-// Card and Voucher also carry a sub-type (Visa / Master …).
 
 export type PayMethod = "cash" | "card" | "online" | "voucher";
 
@@ -113,20 +106,6 @@ export function summarisePayments(
   };
 }
 
-/**
- * How much a single payment line may still take.
- *
- * A card / online / voucher line can never be more than what the bill still
- * owes after the OTHER lines — paying a LKR 2,500 bill is card 1,500 +
- * online 500 + card 500, and that last card line is capped at 500, so a card
- * can never quietly overpay a bill.
- *
- * Cash is exempt: handing over more than the bill is normal at a counter, and
- * the difference is returned as change (the receipt prints it as Balance).
- *
- * @param netTotal     the bill total
- * @param othersTotal  everything already on the other payment lines
- */
 export function lineAmountCap(
   method: PayMethod,
   netTotal: number,

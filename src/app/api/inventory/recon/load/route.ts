@@ -2,10 +2,10 @@
 // GET /api/inventory/recon/load?locCode=LOC0000001&mainCat=&sub1=&sub2=&sub3=&sub4=
 // Loads items that match the 4 category filters, for the STOCK RECONCILIATION NOTE.
 // One row per tbl_itemmaster where Enable=1, filtered by Category1-4 exactly like
-// the legacy screen (─ all ─ = no filter). Returns SystemQty = StockBalance and
 // CostPrice = RawCost (falls back to OverallCost) — the same costing GRN uses.
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invFail, keySql, keyVal, invId } from '@/lib/inventoryServer';
 
 export const runtime = 'nodejs';
@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? '').trim();
@@ -36,8 +36,7 @@ export async function GET(req: NextRequest) {
     const where: Prisma.Sql[] = [];
     where.push(Prisma.sql`${keySql('m.LocCode')} = ${keyVal(locCode)}`);
     where.push(Prisma.sql`COALESCE(CAST(m.Enable AS UNSIGNED),1)=1`);
-    // ── category mapping ──
-    // New layout (Main Cat removed): Sub cat1→Category1, Sub cat2→Category2, Sub cat3→Category3, Sub cat4→Category4
+        // New layout (Main Cat removed): Sub cat1→Category1, Sub cat2→Category2, Sub cat3→Category3, Sub cat4→Category4
     // Legacy layout still works: Main Cat→Category1, Sub1→Category2, Sub2→Category3, Sub3→Category4
     const hasMainCat = sp.has('mainCat');
     if (hasMainCat) {

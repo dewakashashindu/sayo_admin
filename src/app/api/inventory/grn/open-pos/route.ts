@@ -1,18 +1,6 @@
-// src/app/api/inventory/grn/open-pos/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/inventory/grn/open-pos?locCode=…&supID=…
-//
-// The PO dropdown on the GRN screen: CONFIRMED purchase orders at this location
-// that still have something to receive.
-//
-//   { success, data: [ { poNo, supID, supName, poDate, openLines, openValue } ] }
-//
-// Only confirmed orders appear (a pending order must be confirmed first — that
-// is the whole point of the Confirmation button), and only those with at least
-// one line whose POQty is still above what has been received.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invFail, invId,
   keySql,
   keyVal,
@@ -23,7 +11,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? "").trim();

@@ -1,20 +1,6 @@
-// src/app/api/billing/booking/[bookingID]/route.ts
-// Everything the bill screen needs to build itself from the database instead
-// of from URL parameters:
-//
-//   GET /api/billing/booking/:bookingID
-//     → { success, booking: { bookingID, locCode, client…, date, timeSlot,
-//                             status, mode, notes, billed, total,
-//                             services: [ { guessID, itemCode, name, qty,
-//                                           price, mainTech, supporters[] } ] } }
-//
-// The services list is read from tbl_bookingservicedetail (+ item master for
-// the printed name, + user details for the technician) and is therefore
-// read-only for the cashier: only the technician/materials flow may change it.
-//
-// Raw SQL + RTRIM() comparisons, same conventions as the other booking APIs.
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { timeLabelFromValue } from "@/lib/legacyTime";
 import { dedupeBookingDetailRows } from "@/lib/bookingReadModel";
 import { createItemCodeIndex, legacyItemCode } from "@/lib/itemCode";
@@ -28,7 +14,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ bookingID: string }> };

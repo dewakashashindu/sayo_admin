@@ -1,24 +1,3 @@
-// src/lib/grnPoEntry.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// "Against a purchase order" — one line at a time.
-//
-// The receipt note used to fill the whole grid the moment a purchase order was
-// chosen: every open line of the PO appeared at once. On a real delivery the
-// store keeper works down the supplier's invoice instead, line by line, so the
-// screen now shows ONE line — the next one still to be added — and the finished
-// line moves into the grid (see src/app/inventory/grn/page.tsx).
-//
-// Everything on this page is arithmetic and list shuffling, so it lives here,
-// away from React, and section 13 of scripts/billing-tests.js checks it:
-//
-//   • poEntryFields()    — what the entry row starts with (quantity = what is
-//                          still open on the PO, prices from the PO line)
-//   • poEntryProgress()  — the "2 of 5 added · 3 left" strip
-//   • queueAccept()      — Add: the line leaves the queue and joins the grid
-//   • queueSkipFirst()   — Skip: the first line goes to the back of the queue
-//   • queueRequeue()     — removing a line from the grid puts it back in front
-//                          of the queue, so it can be added again
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** One line of a purchase order, as `GET /api/inventory/po/:poNo` returns it. */
 export interface PoOpenForGrn {
@@ -56,14 +35,6 @@ const asText = (value: number | string | null | undefined): string => {
   return String(value);
 };
 
-/**
- * The entry row for one open PO line.
- *
- * The quantity starts as what is still open on the PO — usually the whole
- * delivery — and the store keeper changes it when fewer arrived. The batch
- * number is always empty: it is on the packet in the store keeper's hand, never
- * on the purchase order.
- */
 export function poEntryFields(line: PoOpenForGrn): GrnEntryFields {
   const open = Number(line.openQty) || 0;
   return {
@@ -99,8 +70,6 @@ export function poEntryProgress(
         : `${added} of ${all} line(s) added · ${remaining} left to add`;
   return { added, left: remaining, done: remaining === 0, text };
 }
-
-/* ── the queue of lines still to be added ───────────────────────────────── */
 
 /**
  * Add — the entry line joins the grid and leaves the queue.

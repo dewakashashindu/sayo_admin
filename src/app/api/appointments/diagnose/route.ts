@@ -1,25 +1,6 @@
-// src/app/api/appointments/diagnose/route.ts
-// TEMPORARY diagnostic — answers “why does this booking show a different time
-// on the technician screen than inside the booking?” without database access.
-//
-// GET /api/appointments/diagnose?bookingID=BK0000002
-// GET /api/appointments/diagnose?date=2026-09-16        (the whole day)
-//
-// Returns, for each booking:
-//   • the stored BookingDate AS TEXT (DATE_FORMAT) and AS the driver hands it
-//     over (a JS Date) — so the difference between “what the database holds”
-//     and “what JavaScript makes of it” is visible,
-//   • the Remarks time token and the schedule minutes,
-//   • the time label every screen prints (technician list, booking detail,
-//     bill screen),
-//   • the server timezone (process.env.TZ, the runtime timezone, its UTC
-//     offset) and the database session timezone.
-//
-// Read-only. Admin session required (the middleware protects /api/*) and it can
-// be switched off completely with ENABLE_DIAGNOSTICS=false in .env — the route
-// then answers 404, exactly like the billing diagnostics.
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import {
   clockLabel,
   minutesFromRemarks,
@@ -36,7 +17,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const trim = (value: unknown) => String(value ?? "").trim();

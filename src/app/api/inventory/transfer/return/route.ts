@@ -3,12 +3,14 @@
 // POST /api/inventory/transfer/return  body: {tnNo,fromLocCode,toLoc,trRtnDate,tnDate,remarks,lines:[{itemCode,unitID,costPrice,tnQty,tranRtnQty}], confirm?}
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { nextSerialTx, SERIAL_CODES } from "@/lib/serials";
+import { postReturnConfirmation } from "@/lib/transferPosting";
 import { findLocation, invActor, invChar, invDateField, invFail, invId, invPrice, invQty, InvError, resolveItems, keySql, keyVal } from "@/lib/inventoryServer";
 
 export const runtime="nodejs"; export const dynamic="force-dynamic"; export const revalidate=0;
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if(process.env.NODE_ENV!=="production") globalForPrisma.prisma=prisma;
 const trim=(v:unknown)=>String(v??"").trim();
 
@@ -57,8 +59,9 @@ export async function POST(req:NextRequest){
     const trRtnDate=invDateField(body.trRtnDate ?? body.TRtnDate ?? new Date().toISOString().slice(0,10),"Return Date");
     const remarks=trim(body.remarks).slice(0,1000);
     const confirmNow=body.confirm===true || trim(body.confirm)==='1' || trim(body.confirm)==='Y';
-    const rawLines=Array.isArray(body.lines) ? (body.lines as any[]) : [];
-    if(rawLines.length===0) throw new InvError("Add at least one line.");
+        const retOf=(l:any)=> Number(l?.rtnQty ?? l?.RtnQty ?? l?.retQty ?? l?.tranRtnQty ?? l?.TranRtnQty ?? 0);
+    const rawLines=(Array.isArray(body.lines) ? (body.lines as any[]) : []).filter((l:any)=> retOf(l) > 0);
+    if(rawLines.length===0) throw new InvError("Add at least one line with Returned QTY above zero.");
     const result=await prisma.$transaction(async(tx)=>{
       const fromLoc=await findLocation(tx,fromRaw); if(!fromLoc) throw new InvError(`Unknown From ${fromRaw}`,400);
       const toLoc=await findLocation(tx,toRaw); if(!toLoc) throw new InvError(`Unknown To ${toRaw}`,400);
@@ -71,7 +74,7 @@ export async function POST(req:NextRequest){
         const it=items.get(code);
         if(!it) throw new InvError(`Item ${code} not in ${fromLoc}`,400);
         const tnQty=invQty(l.tnQty ?? l.TNQty, `TN QTY of ${it.des}`);
-        const rtnQty=invQty(l.tranRtnQty ?? l.TranRtnQty ?? 0, `Returned QTY of ${it.des}`, {allowZero:true});
+        const rtnQty=invQty(l.tranRtnQty ?? l.TranRtnQty ?? l.rtnQty ?? l.retQty ?? 0, `Returned QTY of ${it.des}`, {allowZero:true});
         const cost=trim(l.costPrice)==="" ? it.costPrice : invPrice(l.costPrice, `Cost ${it.des}`);
         return {itemCode: it.code, unitID: invId(l.unitID||it.unitID,"Unit",10), costPrice: cost, tnQty, rtnQty, itemValue: cost*rtnQty};
       });
@@ -99,8 +102,22 @@ export async function POST(req:NextRequest){
              ${l.costPrice},${l.tnQty},${l.rtnQty},${l.itemValue},${invChar(trtnNo,10)})
         `;
       }
-      return {trtnNo, fromLoc, toLoc, netTotal, lines:lines.length, confirmed:confirmNow};
+            // the returning location and TRTI back into the receiving one; TranRtnQTY
+      // grows on the transfer note; TakenForTransferRtn flips to 1 only once the
+      // whole note has been returned (see src/lib/transferPosting.ts).
+      let moved=0;
+      let noteTakenFully=false;
+      if(confirmNow){
+        const posting=await postReturnConfirmation(tx as any, {
+          trtnNo, fromLoc, toLoc, tnNo: tnRaw,
+          lines: lines.map((l:any)=>({ itemCode: l.itemCode, qty: l.rtnQty })),
+          sysSerialId: Number(trtnNo.replace(/\D/g,""))||0, userId: actor.userId,
+        });
+        moved=posting.moved;
+        noteTakenFully=posting.takenFully;
+      }
+      return {trtnNo, fromLoc, toLoc, netTotal, lines:lines.length, confirmed:confirmNow, moved, noteTakenFully};
     },{timeout:30000});
-    return NextResponse.json({success:true,data:result, message: result.confirmed? `Transfer Return ${result.trtnNo} confirmed.`:`Transfer Return ${result.trtnNo} saved.`});
+    return NextResponse.json({success:true,data:result, message: result.confirmed? `Transfer Return ${result.trtnNo} confirmed — stock moved (${result.moved} line(s)).`:`Transfer Return ${result.trtnNo} saved.`});
   }catch(err){ return invFail(err,tag); }
 }

@@ -1,19 +1,3 @@
-// app/billing/page.tsx
-//
-// The bill screen. It is opened from the Billing Dashboard
-// (Billing ▸ Billing Dashboard ▸ Create Bill) and can also still be reached
-// with query parameters from the appointment screen.
-//
-// Layout of the bill body:
-//   • SERVICES — read-only lines that come from the booking itself. The cashier
-//     cannot add or remove them; only the appointment / technician screens may
-//     change what was booked (the service technicians stay what they are).
-//   • ITEMS    — free lines (materials the technician recorded land here
-//     automatically). Items can be added and removed. "Sales by" is the
-//     technician who sold / performed the item.
-//   • PAYMENT SUMMARY — Gross ▸ Discount ▸ taxes ▸ Net Total. Every tax line
-//     (name + percentage) comes from the tbl_taxes table via /api/taxes and is
-//     calculated with the salon's own worksheet — see src/lib/billingTaxes.ts.
 'use client';
 
 import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
@@ -41,9 +25,6 @@ import {
   type TaxRow,
 } from '@/lib/billingTaxes';
 
-/* ─────────────────────────────────────────
-   TYPES
-───────────────────────────────────────── */
 interface ApptInfo {
   id: string;
   bookingID: string;
@@ -137,9 +118,6 @@ interface ItemOption {
   serviceItem: boolean;
 }
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
 function todayISO() { return new Date().toISOString().split('T')[0]; }
 function fmtDateLong(iso: string) {
   if (!iso) return '—';
@@ -168,11 +146,6 @@ function statusLabel(status: string) {
    supporters picker list exactly the staff stored in tbl_userdetails, read from
    /api/appointments?meta=filters (Enable = 1). */
 
-/* ─────────────────────────────────────────
-   BUILD APPOINTMENT INFO FROM QUERY PARAMS
-   (used for the header while the DB read is in flight, and as the offline
-    fallback when the booking cannot be read from the API at all)
-───────────────────────────────────────── */
 /** Names typed into a supporters cell, split on commas. */
 function parseSupporters(value: string): string[] {
   return String(value || '')
@@ -181,9 +154,6 @@ function parseSupporters(value: string): string[] {
     .filter(Boolean);
 }
 
-/* ─────────────────────────────────────────
-   SUPPORTERS PICKER — chips + a dropdown of staff (tbl_userdetails)
-───────────────────────────────────────── */
 function SupporterPicker({
   value,
   options,
@@ -272,9 +242,6 @@ function getApptFromParams(searchParams: ReturnType<typeof useSearchParams>): Ap
   };
 }
 
-/* ─────────────────────────────────────────
-   GLOBAL CSS
-───────────────────────────────────────── */
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -519,9 +486,6 @@ const CSS = `
   .chip-sel:focus { border-color:#1e3a40; }
 `;
 
-/* ─────────────────────────────────────────
-   ICONS
-───────────────────────────────────────── */
 function IBell()    { return <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>; }
 function ISearch()  { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>; }
 function IChevD({s=13}:{s?:number}) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>; }
@@ -539,10 +503,6 @@ function ILoc()     { return <svg width="12" height="12" viewBox="0 0 24 24" fil
 function IUserSm()  { return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>; }
 function IPhone()   { return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>; }
 
-
-/* ─────────────────────────────────────────
-   BILLING CONTENT (useSearchParams inside)
-───────────────────────────────────────── */
 function BillingContent() {
   const router       = useRouter();
   const searchParams = useSearchParams();
@@ -550,8 +510,7 @@ function BillingContent() {
   const appt      = useMemo(() => getApptFromParams(searchParams), [searchParams]);
   const bookingID = appt.bookingID;
 
-  /* ── booking + services: the database is the source of truth ─────── */
-  const [booking,         setBooking]         = useState<BookingPayload | null>(null);
+    const [booking,         setBooking]         = useState<BookingPayload | null>(null);
   const [services,        setServices]        = useState<ServiceLine[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
 
@@ -587,8 +546,7 @@ function BillingContent() {
     return () => { active = false; };
   }, [bookingID]);
 
-  /* ── items: what the technician recorded lands here automatically ── */
-  const [items, setItems] = useState<BillItem[]>([]);
+    const [items, setItems] = useState<BillItem[]>([]);
 
   useEffect(() => {
     if (!bookingID) return;
@@ -621,11 +579,7 @@ function BillingContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookingID]);
 
-  /* ── staff directory (tbl_userdetails) for "Sales by" + supporters ──
-     Only people that exist in the user details table are offered — there is no
-     hard-coded list any more. The value already on a line stays visible even if
-     that person was disabled later, so nothing silently changes on screen. */
-  const [providers, setProviders] = useState<string[]>([]);
+    const [providers, setProviders] = useState<string[]>([]);
   const [providersLoading, setProvidersLoading] = useState(true);
   useEffect(() => {
     let active = true;
@@ -652,8 +606,7 @@ function BillingContent() {
      Tbl_Serials (series “INV”) inside the complete-payment transaction, so it
      appears for the first time on the receipt. */
 
-  /* ── bill header values (DB first, query params as fallback) ─────── */
-  const view = useMemo(() => ({
+    const view = useMemo(() => ({
     clientName:  booking?.clientName  || appt.clientName,
     clientPhone: booking?.clientPhone || appt.clientPhone,
     date:        booking?.date        || appt.date,
@@ -691,8 +644,7 @@ function BillingContent() {
           guessIDs:   [],
         }];
 
-  /* ── item form: name suggestions straight from tbl_itemmaster ────── */
-  /* Anchor for the suggestion panel (it is portalled, so a card with
+    /* Anchor for the suggestion panel (it is portalled, so a card with
      overflow:hidden can no longer cut the list off). */
   const itemAnchorRef = useRef<HTMLDivElement | null>(null);
   const [newName,       setNewName]       = useState('');
@@ -748,12 +700,7 @@ function BillingContent() {
   const [discountAmt,  setDiscountAmt]  = useState<number|''>('');
   const [discountSource, setDiscountSource] = useState<'pct'|'amt'|''>('pct');
 
-  /* ── taxes: straight from tbl_taxes (Enable = 1 only) ─────────────
-     The cashier never types a percentage here. Whatever the salon has
-     enabled in the database — Service Charge, VAT, NBT, SSCL, Other VAT,
-     Tax, … — is listed with its own rate and calculated in the worksheet
-     order laid out in src/lib/billingTaxes.ts. */
-  const [taxRows,      setTaxRows]      = useState<TaxRow[]>([]);
+    const [taxRows,      setTaxRows]      = useState<TaxRow[]>([]);
   const [taxesLoading, setTaxesLoading] = useState(true);
   const [taxError,     setTaxError]     = useState('');
   useEffect(() => {
@@ -784,10 +731,7 @@ function BillingContent() {
     return () => { active = false; };
   }, []);
 
-  /* ── payment modes: Vw_PaymentModes = Tbl_PaymentModes LEFT JOIN Tbl_PaymentGroup ──
-     Quick buttons + dropdowns source from the DB so the cashier sees exactly what
-     the salon enabled (Enable=1, DoNotShowInSales=0). Falls back to PAY_METHODS. */
-  type VwMode = { PayCode: string; PayDes: string; PayGroup: string | null; PayGroupID: string | null };
+    type VwMode = { PayCode: string; PayDes: string; PayGroup: string | null; PayGroupID: string | null };
   const [vwModes, setVwModes] = useState<VwMode[]>([]);
   const [vwGroups, setVwGroups] = useState<Record<string, VwMode[]>>({});
   const [payModesLoading, setPayModesLoading] = useState(true);
@@ -825,18 +769,11 @@ function BillingContent() {
     return () => { active = false; };
   }, []);
 
-
-  /* ── split payments: any number of methods against one bill ──────── */
-  const [payments, setPayments] = useState<PaymentLine[]>([]);
+    const [payments, setPayments] = useState<PaymentLine[]>([]);
   const [billNotes, setBillNotes] = useState(appt.notes || '');
   const [paid,      setPaid]      = useState(false);
   const [paidAt,    setPaidAt]    = useState('');
-  /* ── REVERT ──────────────────────────────────────────────────────────────
-     Puts the booking ONE status step back (Done → Ongoing, Ongoing → Confirmed)
-     so a technician who marked the work done by mistake can correct it: the
-     booking returns to the technician list, and it is billed after it is marked
-     done again. Refused once the bill is written. */
-  const [revertBusy,  setRevertBusy]  = useState(false);
+    const [revertBusy,  setRevertBusy]  = useState(false);
   const [revertNote,  setRevertNote]  = useState('');
   const [revertError, setRevertError] = useState('');
   const [saveWarning, setSaveWarning] = useState('');
@@ -881,15 +818,7 @@ function BillingContent() {
     }
   }, [gross]); // keep %↔value synced when services/items change
 
-  /* The whole worksheet in one call:
-       (C) = gross - discount
-       (D) = service charge  → enabled tbl_taxes rows with ServiceCharge = 1
-       (E) = VAT on (C + D)          (rows whose description says VAT)
-       (F) = NBT on (C + D + E)
-       (G) = SSCL on (C + D)
-       (H) = C + D + E + F + G + any other enabled tax
-     Packing, delivery and the old TOL row are gone. */
-  const tax = useMemo(
+    const tax = useMemo(
     () => computeTaxes(taxRows, gross, discAmt),
     [taxRows, gross, discAmt],
   );
@@ -903,8 +832,7 @@ function BillingContent() {
   const balance       = paymentInfo.balance;
   const remaining     = paymentInfo.remaining;
 
-  /* ── item handlers ──────────────────────────────────────────────── */
-  function updateQty(id:number, delta:number) {
+    function updateQty(id:number, delta:number) {
     setItems(prev=>prev.map(i=>i.id===id?{...i,qty:Math.max(1,i.qty+delta)}:i));
   }
   function updateItemField(id:number, field:'salesBy'|'supporters'|'name', val:string) {
@@ -937,8 +865,7 @@ function BillingContent() {
     setItemOptions([]); setShowSuggest(false);
   }
 
-  /* ── helpers: Vw_PaymentModes → PayMethod + icons ─────────────── */
-  function vwGroupToMethod(group: string): PayMethod {
+    function vwGroupToMethod(group: string): PayMethod {
     const g = (group || '').toLowerCase();
     if (g.includes('cash')) return 'cash';
     if (g.includes('voucher') || g.includes('gift') || g.includes('complement')) return 'voucher';
@@ -974,8 +901,7 @@ function BillingContent() {
     ]);
   }
 
-  /* ── split payment handlers ─────────────────────────────────────── */
-  /** Add a method line, pre-filled with whatever is still owed. */
+    /** Add a method line, pre-filled with whatever is still owed. */
   function addPayment(method: PayMethod) {
     /* Pre-fill with what the bill still owes, so the last line is one tap.
        Card / online / voucher lines can never take more than that; a cash line
@@ -1017,14 +943,7 @@ function BillingContent() {
       .filter(p => p.id !== id)
       .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
-  /**
-   * Type an amount on one line. A card / online / voucher line is capped at
-   * what the bill still owes after the other lines (LKR 2,500 = card 1,500 +
-   * online 500 + card 500 — the last card line can never be more than 500).
-   * Cash is deliberately uncapped: paying more than the bill is normal, and the
-   * extra comes back as change.
-   */
-  function setLineAmount(id: number, raw: string) {
+    function setLineAmount(id: number, raw: string) {
     const line = payments.find(p => p.id === id);
     if (!line) return;
     if (raw === '') {
@@ -1078,8 +997,7 @@ function BillingContent() {
     return Number.isFinite(cap) ? cap : null;
   };
 
-  /* ── payment ────────────────────────────────────────────────────── */
-  /* Everything that has to be written to the four bill tables:
+    /* Everything that has to be written to the four bill tables:
      the item lines (services + items), the tax breakdown, the split payments
      and the “Gross ▸ Discount” headline numbers. */
   const billLines = () => [
@@ -1195,8 +1113,7 @@ function BillingContent() {
       setSaving(false);
     }
   }
-  /* ── REVERT — one status step back, then the work can be corrected ────── */
-  async function revertStatus() {
+    async function revertStatus() {
     if (!bookingID || revertBusy) return;
 
     const current    = (view.status || '').toLowerCase();
@@ -1291,7 +1208,7 @@ function BillingContent() {
               <div className="bill-layout fade-up" style={{display:'flex',gap:16,alignItems:'flex-start',maxWidth:1320,margin:'0 auto'}}>
                 <div style={{flex:2,minWidth:0,display:'flex',flexDirection:'column',gap:14}}>
 
-                  {/* ── INVOICE ─────────────────────────────────────── */}
+                  {}
                   <div className="bill-card">
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',flexWrap:'wrap',gap:10}}>
                       <div>
@@ -1361,7 +1278,7 @@ function BillingContent() {
                     </div>
                   </div>
 
-                  {/* ── SERVICES (read-only) ────────────────────────── */}
+                  {}
                   <div className="bill-card">
                     <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:12}}>
                       <p className="bill-sec-title" style={{marginBottom:0}}>Services</p>
@@ -1409,7 +1326,7 @@ function BillingContent() {
                     </div>
                   </div>
 
-                  {/* ── ITEMS (add / remove allowed) ────────────────── */}
+                  {}
                   <div className="bill-card">
                     <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:12}}>
                       <p className="bill-sec-title" style={{marginBottom:0}}>Items</p>
@@ -1563,14 +1480,14 @@ function BillingContent() {
                     )}
                   </div>
 
-                  {/* ── NOTES ───────────────────────────────────────── */}
+                  {}
                   <div className="bill-card">
                     <p className="bill-sec-title">Notes (optional)</p>
                     <textarea className="inp" style={{width:'100%',resize:'none',lineHeight:1.5}} rows={3} placeholder="Any remarks for this bill..." value={billNotes} onChange={e=>setBillNotes(e.target.value)}/>
                   </div>
                 </div>
 
-                {/* ── PAYMENT SUMMARY ───────────────────────────────── */}
+                {}
                 <div className="bill-right" style={{width:300,flexShrink:0,position:'sticky',top:0}}>
                   <div className="bill-card" style={{display:'flex',flexDirection:'column',gap:0}}>
                     <p className="bill-sec-title">Payment Summary</p>
@@ -1606,7 +1523,7 @@ function BillingContent() {
                       {discAmt>0&&<div style={{display:'flex',justifyContent:'flex-end',width:'100%'}}><span style={{fontSize:11.5,color:'#b91c1c',fontWeight:600}}>– {fmtMoney(discAmt)}</span></div>}
                     </div>
                     <div className="sum-row divider bold-row"><span>Gross After Dis.</span><span>{fmtMoney(grossAfterDis)}</span></div>
-                    {/* ── TAXES — read from tbl_taxes, Enable = 1 only ── */}
+                    {}
                     {taxesLoading ? (
                       <div className="sum-row" style={{color:'#9ca3af',fontSize:11.5}}><span>Loading taxes…</span><span>tbl_taxes</span></div>
                     ) : taxError ? (
@@ -1637,7 +1554,7 @@ function BillingContent() {
                     <div className="sum-row total-row"><span>Net Total</span><span>{fmtMoney(netTotal)}</span></div>
                     <div style={{height:1,background:'rgba(30,58,64,0.1)',margin:'14px 0 12px'}}/>
 
-                    {/* ── SPLIT PAYMENTS ─────────────────────────────── */}
+                    {}
                     <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
                       <p className="bill-sec-title" style={{marginBottom:0}}>Payments</p>
                       <span className="badge b-ong">{payments.length} method{payments.length===1?'':'s'}</span>
@@ -1958,9 +1875,6 @@ function BillingContent() {
   );
 }
 
-/* ─────────────────────────────────────────
-   DEFAULT EXPORT — Suspense wrapper
-───────────────────────────────────────── */
 export default function BillingPage() {
   return (
     <Suspense fallback={

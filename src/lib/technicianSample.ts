@@ -1,15 +1,3 @@
-// src/lib/technicianSample.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared types + sample data for the "Technician's Appointments" screens.
-//
-// • SAMPLE_TECHNICIAN_NAME = the demo technician (Amali Fernando). The screens
-//   no longer guess who is signed in from it: they resolve the technician from
-//   ?technician= → the staff session (/api/auth/admin-me) → the name saved on
-//   this device → and fall back to the WHOLE day of bookings, never to an
-//   empty screen. getLoggedInTechnicianName() stays as the last-resort label.
-// • buildSampleAppointments() is a FALLBACK shown only when the real API
-//   (/api/appointments) is unreachable or returns nothing for the technician.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export const SAMPLE_TECHNICIAN_NAME = "Amali Fernando";
 
@@ -179,9 +167,7 @@ export function isTechnicianAppointment(
   return false;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // SAMPLE DATA (fallback / demo for Amali Fernando)
-// ─────────────────────────────────────────────────────────────────────────────
 
 export function buildSampleAppointments(): TechAppointment[] {
   const today = todayISO();

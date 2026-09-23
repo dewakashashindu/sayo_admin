@@ -1,30 +1,6 @@
-// src/app/api/inventory/grn/[grnNo]/notify/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GET  /api/inventory/grn/:grnNo/notify?locCode=…
-//        who can be told, and the message that would go out
-// POST /api/inventory/grn/:grnNo/notify
-//        body: { locCode, userId?, to?, message? }
-//        sends the SMS through Text.lk and writes the activity log row
-//
-// WHY THIS EXISTS
-//   Saving a GRN does not move stock — the receipt waits for **Confirmation**.
-//   The store keeper saves it at the counter; the admin who confirms it may be
-//   across the shop. So the screen offers to text them: "GRN GRN0000007 is
-//   saved and waiting for Confirmation", and they come and confirm it.
-//
-// WHO CAN BE TOLD
-//   The staff in tbl_userdetails who carry a Sri Lankan mobile number, admins
-//   of tbl_usergroups first (see src/lib/grnNotify.ts). A number typed by hand
-//   is accepted too — the person may not be a login at all.
-//
-// WHAT IT REFUSES
-//   · a GRN that does not exist, or is already confirmed (nothing left to do)
-//   · an empty or unusable phone number
-//   · sending while TEXTLK_API_TOKEN / TEXTLK_SENDER_ID are empty — the reply
-//     names the missing keys (HTTP 503) instead of pretending to have sent it.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { sendSms, smsConfigured, smsMissingEnv, smsSetupMessage } from "@/lib/sms";
 import {
@@ -49,7 +25,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? "").trim();
@@ -121,8 +97,6 @@ async function contacts() {
   return notifyContacts(staff, groups);
 }
 
-/* ── GET: the popup's data ───────────────────────────────────────────────── */
-
 export async function GET(req: NextRequest, ctx: { params: Promise<{ grnNo: string }> }) {
   try {
     await invActor(req); // signed-in admins only
@@ -161,8 +135,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ grnNo: stri
     return invFail(err, tag);
   }
 }
-
-/* ── POST: send it ───────────────────────────────────────────────────────── */
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ grnNo: string }> }) {
   try {

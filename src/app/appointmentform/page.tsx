@@ -264,14 +264,6 @@ function genGuessID(idx: number): string {
   return `G${String(idx).padStart(3, "0")}`;
 }
 
-/**
- * Convert a Sri Lankan mobile number to one canonical format.
- * Supported input examples:
- *   0771234567
- *   94771234567
- *   +94771234567
- *   0094771234567
- */
 function normalizeSriLankanPhone(value: string): string {
   const raw = value.trim();
   let digits = raw.replace(/\D/g, "");
@@ -342,19 +334,6 @@ function getBranchTechnicianIds(
   ];
 }
 
-/**
- * Which technicians of this appointment are busy at the given slot minutes?
- * Returns:
- *   • []                          → appointment does not occupy the slot
- *   • ["TECH_ID", ...]            → those technicians are busy at the slot
- *   • ["__UNASSIGNED__"]          → unassigned service rows occupy the slot
- *     (counts as one technician of the appointment's categories)
- *
- * Uses the server's real per-technician windows (techWindows) when present:
- * each technician is busy only inside their own [start, start+duration]
- * window, so parallel technicians (e.g. Hair + Nail by two people) do not
- * over-block each other's slots anymore.
- */
 function busyTechIdsAt(
   appointment: ExistingAppointment,
   slotMinutes: number,
@@ -394,8 +373,7 @@ function busyTechIdsAt(
     return busy;
   }
 
-  // ── Legacy fallback (old records without techWindows) ──────────────────
-  const duration =
+    const duration =
     Number(appointment.duration) > 0 ? Number(appointment.duration) : 30;
   const endMinutes = startMinutes + duration;
   if (!(slotMinutes < endMinutes && candidateEnd > startMinutes)) return [];
@@ -881,13 +859,6 @@ function qualificationWords(value: string): Set<string> {
   );
 }
 
-/**
- * A technician's speciality rows pre-date the item-category tables, so some
- * databases store a category code while others store the speciality label.
- * Accept the exact code/label first, then a meaningful label-word match. The
- * same rule is also enforced by the admin POST route; this is not a UI-only
- * filter.
- */
 function technicianQualifiesForCategory(
   technician: Technician,
   categoryCode: string,

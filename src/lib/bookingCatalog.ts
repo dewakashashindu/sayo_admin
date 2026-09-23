@@ -1,10 +1,3 @@
-// src/lib/bookingCatalog.ts
-// Shared types + transform helpers for the DB-driven booking catalog.
-//
-// The public booking page used to be driven by hard-coded mock data. It now
-// consumes /api/booking-catalog and maps the result into this Catalog shape,
-// which mirrors the page's existing ServiceItem / Provider structures so the
-// rest of the UI needs almost no changes.
 
 export interface CatalogService {
   name: string;

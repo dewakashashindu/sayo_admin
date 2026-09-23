@@ -4,9 +4,6 @@ import React from 'react';
 import type { SlotResult } from '../lib/slotEvaluator';
 import { t, svc as svcName, type Lang } from '@/i18n/translations';
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   RE-EXPORTED LEGACY TYPES  (kept for callers that still pass the old shape)
-───────────────────────────────────────────────────────────────────────────── */
 export interface ProviderAvailability {
   providerName: string;
   serviceName:  string;
@@ -32,9 +29,6 @@ interface Props {
   lang?:            Lang;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   DESIGN TOKENS
-───────────────────────────────────────────────────────────────────────────── */
 const C = {
   gold:         '#B8860B',
   goldBorder:   'rgba(184,134,11,0.4)',
@@ -90,9 +84,6 @@ const css = `
   }
 `;
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   COMPONENT
-───────────────────────────────────────────────────────────────────────────── */
 export default function ConflictModal({
   data,
   onBookBackToBack,
@@ -112,8 +103,7 @@ export default function ConflictModal({
 
   const sr = slotResult;
 
-  /* ── Legacy split helpers ── */
-  const freeProviders = providers.filter(p =>  p.isFree);
+    const freeProviders = providers.filter(p =>  p.isFree);
   const busyProviders = providers.filter(p => !p.isFree);
   const splitNextSlot = busyProviders.reduce<string | null>((acc, p) => {
     if (!p.nextFreeSlot) return acc;
@@ -123,54 +113,34 @@ export default function ConflictModal({
   const canSplit = freeProviders.length > 0 && splitNextSlot !== null;
   const canBtB   = !!backToBackSlot;
 
-  /* ── New-mode flags ── */
-  const hasSwap            = sr?.isSequenceSwapped && !!sr.swappedDetails;
+    const hasSwap            = sr?.isSequenceSwapped && !!sr.swappedDetails;
   const hasRecommendedTime = !!sr?.recommendedOriginalTime;
   const useNewMode         = !!sr;
 
-  /* ── Rule 4: gap-only (no swap, waiting time in original order) ── */
-  const gapOnly = sr?.gapOnlyDetails;
+    const gapOnly = sr?.gapOnlyDetails;
   const hasGapOnly = !!gapOnly && !hasSwap;
 
-  /* ── Swap gap values ── */
-  const swapGapMinutes: number = sr?.swappedDetails?.gapMinutes ?? 0;
+    const swapGapMinutes: number = sr?.swappedDetails?.gapMinutes ?? 0;
   const swapNextFree: string   = sr?.swappedDetails?.nextFreeTime ?? '';
   const hasSwapGap             = swapGapMinutes > 0;
 
-  /* ── Option-1 colours (swap card) ── */
-  const opt1Color  = hasSwapGap ? C.gapColor    : C.purple;
+    const opt1Color  = hasSwapGap ? C.gapColor    : C.purple;
   const opt1Bg     = hasSwapGap ? C.gapBg       : C.purpleBg;
   const opt1Border = hasSwapGap ? C.gapBorder   : C.purpleBorder;
 
-  /* ── Service order labels ── */
-  const originalOrder = serviceNames;
+    const originalOrder = serviceNames;
   const swappedOrder: string[] =
     sr?.swappedDetails?.orderedServices ??
     (serviceNames.length === 2 ? [serviceNames[1], serviceNames[0]] : serviceNames);
   const swapArrowLabel = swappedOrder.map(n => svcName(lang, n)).join(' → ');
 
-  /* ── Option-1 header labels ── */
-  const opt1HeaderLabel = t(lang, hasSwapGap ? 'cm.seqSwapWait' : 'cm.seqSwapZero', { mins: swapGapMinutes });
+    const opt1HeaderLabel = t(lang, hasSwapGap ? 'cm.seqSwapWait' : 'cm.seqSwapZero', { mins: swapGapMinutes });
   const opt1BadgeLabel  = t(lang, hasSwapGap ? 'cm.newOrderGap' : 'cm.newOrderSeamless');
 
-  /* ── Header i18n ── */
-  const notFreeA = t(lang, 'cm.notFullyFreeA');
+    const notFreeA = t(lang, 'cm.notFullyFreeA');
   const notFreeB = t(lang, 'cm.notFullyFreeB');
 
-  /* ───────────────────────────────────────────────────────────────────────────
-     "WHY?" SENTENCE BUILDER
-     Rule 2 (seamless swap):
-       "Your original order isn't possible, but you can do [X] first, then [Y]
-        seamlessly. Alternatively, you can start at [T] to keep your original order."
-     Rule 3 (swap + gap):
-       "Your original order isn't possible. You can do [X] first, then [Y], but
-        you will have a N-minute waiting gap because [Provider] is busy until [T].
-        Alternatively, you can start at [T2] to keep your original order."
-     Rule 4 (gap only, no swap):
-       "You can book this time, but you will have a N-minute waiting gap because
-        [Provider] is busy until [T]."
-  ─────────────────────────────────────────────────────────────────────────── */
-  const whySentence = ((): string => {
+    const whySentence = ((): string => {
     if (sr?.swappedDetails) {
       const svc1     = swappedOrder[0] ? svcName(lang, swappedOrder[0]) : t(lang, 'cm.yourFirstService');
       const svc2     = swappedOrder[1] ? svcName(lang, swappedOrder[1]) : t(lang, 'cm.yourSecondService');
@@ -218,11 +188,7 @@ export default function ConflictModal({
     return '';
   })();
 
-  /* ─────────────────────────────────────────────────────────────────────────
-     R5 – Occupied slot pills rendered in the modal header so the customer
-     can see exactly which grid cells will be consumed.
-  ───────────────────────────────────────────────────────────────────────── */
-  const occupiedSlots: string[] = sr?.occupiedSlots ?? [];
+    const occupiedSlots: string[] = sr?.occupiedSlots ?? [];
 
   return (
     <>
@@ -269,7 +235,7 @@ export default function ConflictModal({
             aria-label={t(lang, 'cm.closeAria')}
           >✕</button>
 
-          {/* ── Header ── */}
+          {}
           <div style={{ marginBottom: '1.1rem', paddingRight: '2.5rem' }}>
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
@@ -293,9 +259,7 @@ export default function ConflictModal({
               </p>
             )}
 
-            {/* R5 – Booked slots indicator
-                "Me deka thama oya book kale kiyala pennanna"
-                These are the exact time slots your booking will occupy. */}
+            {}
             {occupiedSlots.length > 0 && (
               <div style={{ marginTop: '0.6rem' }}>
                 <span style={{
@@ -315,14 +279,11 @@ export default function ConflictModal({
 
           <div style={{ height: '1px', background: 'rgba(255,255,255,0.08)', marginBottom: '1rem' }} />
 
-          {/* ════════════════════════════════════════════════════════════════
-              NEW MODE — Option 1a: Sequence Swap, NO gap (Rule R2)
-              NEW MODE — Option 1b: Sequence Swap, WITH gap (Rule R3)
-          ════════════════════════════════════════════════════════════════ */}
+          {}
           {useNewMode && hasSwap && sr!.swappedDetails && (
             <div className="cm-option" style={{ border: `1.5px solid ${opt1Border}`, background: opt1Bg }}>
 
-              {/* ── Option header row ── */}
+              {}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.6rem' }}>
                 <Circle color={opt1Color} label="1" />
                 <span style={{ fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.1em', color: opt1Color }}>
@@ -330,12 +291,12 @@ export default function ConflictModal({
                 </span>
               </div>
 
-              {/* ── Subtitle ── */}
+              {}
               <p style={{ color: C.white, fontWeight: 600, fontSize: '0.91rem', marginBottom: '0.32rem' }}>
                 {t(lang, 'cm.reorderA', { slot: selectedSlot })}
               </p>
 
-              {/* ── Service order comparison ── */}
+              {}
               <div style={{ marginBottom: '0.75rem' }}>
                 {/* Original order (dimmed/strikethrough) */}
                 <div style={{ marginBottom: '0.4rem' }}>
@@ -389,7 +350,7 @@ export default function ConflictModal({
                 </div>
               </div>
 
-              {/* ── Why? box ── */}
+              {}
               <p style={{
                 fontSize: '0.74rem', color: C.whiteDim, lineHeight: 1.6,
                 background: hasSwapGap ? 'rgba(249,115,22,0.07)' : 'rgba(168,85,247,0.07)',
@@ -400,7 +361,7 @@ export default function ConflictModal({
                 {whySentence}
               </p>
 
-              {/* ── CTA ── */}
+              {}
               <button onClick={() => onBookSwapped(selectedSlot)} style={solidBtn(opt1Color)}>
                 {hasSwapGap
                   ? t(lang, 'cm.bookWithGap', { slot: selectedSlot })
@@ -410,10 +371,7 @@ export default function ConflictModal({
             </div>
           )}
 
-          {/* ════════════════════════════════════════════════════════════════
-              NEW MODE — Rule R4: Gap-only (no swap, original order with gap)
-              Only shown when there IS a gap but no permutation improvement.
-          ════════════════════════════════════════════════════════════════ */}
+          {}
           {useNewMode && hasGapOnly && gapOnly && (
             <div className="cm-option" style={{ border: `1.5px solid ${C.gapBorder}`, background: C.gapBg }}>
 
@@ -486,9 +444,7 @@ export default function ConflictModal({
             </div>
           )}
 
-          {/* ════════════════════════════════════════════════════════════════
-              NEW MODE — Option 2: Recommended Original Time
-          ════════════════════════════════════════════════════════════════ */}
+          {}
           {useNewMode && hasRecommendedTime && (
             <div className="cm-option" style={{ border: `1.5px solid ${C.greenBorder}`, background: C.greenBg }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.6rem' }}>
@@ -532,9 +488,7 @@ export default function ConflictModal({
             </div>
           )}
 
-          {/* ════════════════════════════════════════════════════════════════
-              LEGACY MODE — single-provider / old flow fallback
-          ════════════════════════════════════════════════════════════════ */}
+          {}
           {!useNewMode && (
             <>
               {/* Option A: Split */}
@@ -614,7 +568,7 @@ export default function ConflictModal({
             </>
           )}
 
-          {/* ── Footer ── */}
+          {}
           <div style={{ height: '1px', background: 'rgba(255,255,255,0.07)', margin: '1rem 0 0.85rem' }} />
           <button
             onClick={onClose}
@@ -633,10 +587,6 @@ export default function ConflictModal({
     </>
   );
 }
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   LOCAL HELPERS
-───────────────────────────────────────────────────────────────────────────── */
 
 function toMin(timeStr: string): number {
   const m = timeStr.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)$/i);

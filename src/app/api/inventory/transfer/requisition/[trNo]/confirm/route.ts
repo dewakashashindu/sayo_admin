@@ -1,14 +1,6 @@
-// src/app/api/inventory/transfer/requisition/[trNo]/confirm/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/inventory/transfer/requisition/:trNo/confirm   body: { fromLocCode, toLoc }
-//
-// "Confirmation" on the requisition: the draft becomes a document a Transfer
-// Note can be raised against. Same rules as the purchase order — confirmed is
-// final: no edit, no delete. The header is locked FOR UPDATE so two clicks can
-// never confirm twice.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { invActor, invChar, invFail, invId, InvError, keySql, keyVal } from "@/lib/inventoryServer";
 
@@ -17,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ trNo: string }> };

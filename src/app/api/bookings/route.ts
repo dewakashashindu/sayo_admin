@@ -32,9 +32,6 @@ import {
 import { rateLimit, rateMessage } from "@/lib/rateLimit";
 import { clientIp, ipForLog } from "@/lib/clientIp";
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   TYPES
-─────────────────────────────────────────────────────────────────────────────── */
 interface BookingService {
   name:          string;
   price:         string;
@@ -70,9 +67,6 @@ interface BookingRequestBody {
   serviceSchedule?: BookingScheduleEntry[];
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   SMS — TEXT.LK
-─────────────────────────────────────────────────────────────────────────────── */
 const TEXTLK_ENDPOINT = 'https://app.text.lk/api/v3/sms/send';
 
 function maskEmail(email: string): string {
@@ -241,9 +235,6 @@ async function sendRegistrationSMS({ name, email, phone }: RegistrationSMSProps)
   return sendTextLkSMS(formattedPhone, smsMessage);
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   NODEMAILER TRANSPORTER
-─────────────────────────────────────────────────────────────────────────────── */
 const transporter = nodemailer.createTransport({
   host:   process.env.SMTP_HOST || 'smtp.gmail.com',
   port:   Number(process.env.SMTP_PORT || 587),
@@ -259,9 +250,6 @@ const transporter = nodemailer.createTransport({
   rateLimit:      5,
 });
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   HELPERS
-─────────────────────────────────────────────────────────────────────────────── */
 function formatDate(iso: string) {
   return new Date(iso + 'T00:00').toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -741,7 +729,7 @@ async function resolveLegacyServices(
     }
     usedCodes.add(serviceItemID);
 
-    // ── Server-authoritative pricing ─────────────────────────────────────
+ // Server-authoritative pricing
     // Never trust the price sent by the browser. It is recomputed from
     // tbl_itemmaster.Retailprice (× qty for clients that send a quantity), so
     // a tampered payload (devtools) cannot book a LKR 5,000 service at LKR 500
@@ -1659,7 +1647,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── 1. Validate ───────────────────────────────────────────────────────────
+ // 1. Validate
     const validationError = validateBookingBody(body);
     if (validationError) {
       return NextResponse.json(
@@ -1695,7 +1683,7 @@ export async function POST(req: NextRequest) {
     const confirmationType = isWithoutConfirmation ? 'wo' : 'wc';
     const legacyStatus = isWithoutConfirmation ? 'CONFIRMED' : 'PENDING';
 
-    // ── 2. Resolve public display values to legacy master values ──────────────
+ // 2. Resolve public display values to legacy master values
     const branch = await resolveLegacyBranch(location);
     if (!branch) {
       return NextResponse.json(
@@ -1762,7 +1750,7 @@ export async function POST(req: NextRequest) {
       startMin,
     );
 
-    // ── 3. Customer resolution ───────────────────────────────────────────────
+ // 3. Customer resolution
     // Done INSIDE the write transaction below: a `SELECT … FOR UPDATE` on the
     // email serialises concurrent public submissions, so two simultaneous
     // bookings for the same e-mail can never create duplicate customer rows.
@@ -1780,7 +1768,7 @@ export async function POST(req: NextRequest) {
     let bookingID = '';
     let detailRowCount = 0;
 
-    // ── 4. Atomic write to header + service detail + transaction detail ───────
+ // 4. Atomic write to header + service detail + transaction detail
     // The views are read-only projections. All three base-table rows are
     // committed or rolled back together so the public flow and admin calendar
     // always see the same booking.
@@ -1938,7 +1926,7 @@ export async function POST(req: NextRequest) {
       { timeout: 15000 },
     );
 
-    // ── 5. Preserve the existing notification behaviour ───────────────────────
+ // 5. Preserve the existing notification behaviour
     const emailPayload = {
       name,
       email: email.trim().toLowerCase(),

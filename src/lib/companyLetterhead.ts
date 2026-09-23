@@ -1,19 +1,3 @@
-// src/lib/companyLetterhead.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// THE SALON'S OWN NAME AND ADDRESS — the letterhead of a printed purchase order
-// and of the PDF that is emailed to a supplier.
-//
-// It is read from the tables the public site already fills in:
-//
-//   navconfig.logo_text          the name shown at the top of the web site
-//   footerconfig.brand_name      the name in the footer (used when nav has none)
-//   footerconfig.contact_address / contact_phone
-//
-// Kept deliberately best-effort: an older database may not have those tables at
-// all, and a purchase order still has to be printable. Nothing is reported as an
-// error when they are missing — the caller falls back to the branch, then to a
-// plain "SAYO".
-// ─────────────────────────────────────────────────────────────────────────────
 import type { PrismaClient } from "@prisma/client";
 
 export interface CompanyLetterhead {

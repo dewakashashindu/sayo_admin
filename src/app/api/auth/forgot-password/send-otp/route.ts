@@ -1,19 +1,3 @@
-// src/app/api/auth/forgot-password/send-otp/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// E-mails a 6-digit password-reset code.
-//
-// SECURITY PASS (2026-09-18)
-//   · this file was named `route.tsx`, which is NOT a route — Next.js only
-//     builds `route.ts`, so the endpoint returned 404 and the whole
-//     forgot-password screen could never work. Renamed.
-//   · the code comes from crypto.randomInt, never Math.random
-//   · the code is NEVER written to the server log any more
-//   · rate limited per caller AND per e-mail address, so this inbox cannot be
-//     flooded and the SMS/SMTP account cannot be run up from outside
-//   · the customer's name is escaped before it goes into the HTML mail
-//   · the same “success” answer is given whether the address exists or not
-//     (no e-mail enumeration)
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { otpStore, generateOtpCode, OTP_TTL_MS, sweepOtps } from "@/lib/otpStore";
@@ -23,7 +7,6 @@ import { clientIp, ipForLog } from "@/lib/clientIp";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/* ── how often a code may be requested ───────────────────────────────────── */
 const OTP_SEND_IP_LIMIT = 5;              // per caller, per 30 minutes
 const OTP_SEND_EMAIL_LIMIT = 3;           // per address, per 15 minutes
 const OTP_SEND_IP_WINDOW_MS = 30 * 60 * 1000;
@@ -82,7 +65,7 @@ export async function POST(req: NextRequest) {
 
     sweepOtps();   // expired codes are dropped instead of living in memory
 
-    // ── Find user in Tbl_CustomerMaster ───────────────────────────────────
+ // Find user in Tbl_CustomerMaster
     let user: { CusCode: string; CusName: string } | null = null;
     try {
       user = await prisma.tbl_CustomerMaster.findFirst({
@@ -98,7 +81,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // ── Generate OTP ───────────────────────────────────────────────────────
+ // Generate OTP
     const code = generateOtpCode();                 // crypto.randomInt — never Math.random
     const expiresAt = Date.now() + OTP_TTL_MS;
     otpStore.set(emailNorm, { code, expiresAt, attempts: 0 });

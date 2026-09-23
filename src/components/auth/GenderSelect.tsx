@@ -3,7 +3,6 @@
 import { CSSProperties, useState } from 'react';
 import { tokens } from '@/components/auth/shared';
 
-/* ── gender options ── */
 export const GENDER_OPTIONS = [
   { value: 'male',              label: 'Male'               },
   { value: 'female',            label: 'Female'             },
@@ -20,7 +19,6 @@ interface GenderSelectProps {
   error?:   string;
 }
 
-/* ── icons ── */
 function GenderIcon() {
   return (
     <svg

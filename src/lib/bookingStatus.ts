@@ -1,22 +1,3 @@
-// src/lib/bookingStatus.ts
-// The booking status ladder, in one place.
-//
-//   PENDING → CONFIRMED → ONGOING → DONE
-//
-// The bill screen’s REVERT button walks this ladder ONE STEP BACKWARDS:
-//
-//   DONE    → ONGOING     the technician marked the work done by mistake; the
-//                         booking leaves the Billing Dashboard, returns to the
-//                         technician list and can be corrected, then marked done
-//                         again and billed.
-//   ONGOING → CONFIRMED   the check-in itself was wrong (the technician
-//                         additions lock again).
-//
-// CONFIRMED and PENDING have nothing to revert to: going further back would
-// undo the customer’s confirmation, which is a cancellation, not a correction.
-//
-// Pure module (no Prisma, no React) so both the API route and the regression
-// suite can use it.
 
 /** Status → the status it reverts to. Nothing below CONFIRMED. */
 export const PREVIOUS_BOOKING_STATUS: Readonly<Record<string, string>> = {

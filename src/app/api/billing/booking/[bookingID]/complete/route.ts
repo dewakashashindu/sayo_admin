@@ -1,41 +1,6 @@
-// src/app/api/billing/booking/[bookingID]/complete/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// “Complete Payment” — the one place a bill is written.
-//
-// POST /api/billing/booking/:bookingID/complete
-//   body: {
-//     lines?:    [ { itemId, name, qty, price, costPrice } ],   // services + items
-//     taxes?:    [ { code, label, percentage, stage, base, amount } ],
-//     payments?: [ { method: 'cash'|'card'|'online'|'voucher',
-//                    type?: 'Visa' | 'Gift Voucher' | …,
-//                    amount: number, remark?: string } ],
-//     gross?: number, discountPercent?: number, discountValue?: number,
-//     netTotal?: number,           // what the screen shows — checked, not trusted
-//     paidAmount?: number, payMethod?: string, remark?: string
-//   }
-//
-// Writes, in ONE transaction:
-//   • tbl_billheader  — the bill itself (Gross, DisPre, DisVal, ServiceCharge,
-//     TotalTaxAmount, AdvAmount, NetTotal, CusID, CashierID, Rmks …)
-//   • tbl_billdetail  — one row per item code (Qty, SalesPrice, TotalItmPrice,
-//     CostPrice); lines that share an item code are merged, because
-//     (LocCode, BillNo, ItemID) is the primary key
-//   • tbl_billpaytxn  — one row per payment line with its own pay code
-//     (TenderedAmt = money handed over, ActAmt = money applied to the bill, so
-//     the difference is the change given back)
-//   • tbl_billtaxes   — one row per tax that carries money, TaxCode straight
-//     from tbl_taxes
-// and stamps tbl_bookingheder.BillingTime, which is what makes the booking
-// disappear from the Billing Dashboard.
-//
-// The bill number comes from Tbl_Serials exactly like the booking number does:
-// the counter row with SeriCode = "INV" is incremented and the padded value
-// becomes the bill no. — INV0000001, INV0000002, …
-//
-// Only allowed when the work is DONE and the booking is not billed yet.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { normalisePaymentEntries } from "@/lib/billingPayments";
 import { normaliseTaxLines } from "@/lib/billingTaxes";
 import { verifyAdminToken, ADMIN_COOKIE } from "@/lib/adminSession";
@@ -61,7 +26,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ bookingID: string }> };
@@ -92,14 +57,12 @@ export async function POST(req: NextRequest, { params }: Ctx) {
 
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
-    /* ── who is billing (CashierID) — from the signed session, never the body ── */
-    const session = await verifyAdminToken(
+        const session = await verifyAdminToken(
       req.cookies.get(ADMIN_COOKIE)?.value,
     );
     const cashierId = shortCode(session?.uid ?? "");
 
-    /* ── the booking must exist, be DONE and not be billed yet ───────────── */
-    const headerRows = await prisma.$queryRaw<HeaderRow[]>`
+        const headerRows = await prisma.$queryRaw<HeaderRow[]>`
       SELECT
         RTRIM(LocCode)             AS LocCode,
         RTRIM(CusCode)             AS CusCode,
@@ -142,8 +105,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       );
     }
 
-    /* ── lines: services + items, cleaned and matched to the item master ─── */
-    const preparedLines = await resolveLineCodes(
+        const preparedLines = await resolveLineCodes(
       prisma,
       locCode,
       normaliseBillLines(body.lines),
@@ -157,11 +119,9 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     }));
     await applyItemMasterCosts(prisma, locCode, mappedLines);
 
-    /* ── taxes: the breakdown the screen calculated from tbl_taxes ───────── */
-    const taxLines = normaliseTaxLines(body.taxes);
+        const taxLines = normaliseTaxLines(body.taxes);
 
-    /* ── the header numbers, derived from the tax rows ───────────────────── */
-    const bill = buildBillSummary(
+        const bill = buildBillSummary(
       taxLines,
       num(body.gross, 0),
       num(body.discountPercent, 0),
@@ -176,8 +136,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       );
     }
 
-    /* ── payments: one row each, right down to the change given back ─────── */
-    const payments = normalisePaymentEntries(body.payments);
+        const payments = normalisePaymentEntries(body.payments);
     if (payments.length === 0) {
       return NextResponse.json(
         {
@@ -191,8 +150,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
 
     const remark = trim(body.remark).substring(0, 200);
 
-    /* ── write the bill: BillNo + the four tables + BillingTime ──────────── */
-    let written;
+        let written;
     try {
       written = await prisma.$transaction(
         (tx) =>

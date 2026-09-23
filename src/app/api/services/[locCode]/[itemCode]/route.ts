@@ -1,7 +1,9 @@
 // src/app/api/services/[locCode]/[itemCode]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { itemCode, legacyItemCode } from "@/lib/itemCode";
+import { readJsonWithLimit, isPayloadTooLarge } from "@/lib/bodyLimit";
 
 export const runtime = "nodejs";
 
@@ -9,7 +11,7 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
@@ -108,7 +110,18 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     const itemCode = decodeURIComponent(resolvedParams.itemCode)
       .trim()
       .toUpperCase();
-    const body = await req.json();
+    const body = (await readJsonWithLimit(req, 4 * 1024 * 1024)) as Record<string, any>;
+
+    // Picture size is rejected before the transaction starts.
+    if (typeof body.itemPic === "string" && body.itemPic.startsWith("data:image")) {
+      const b64 = body.itemPic.split(",")[1] ?? "";
+      if (Math.floor((b64.length * 3) / 4) > 1_500_000) {
+        return NextResponse.json(
+          { success: false, message: "Item picture is too large (max 1.5 MB). Choose a smaller image." },
+          { status: 413 },
+        );
+      }
+    }
 
     if (!pathLocCode || !itemCode || !body.itemDes?.trim()) {
       return NextResponse.json(
@@ -315,6 +328,9 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       },
     });
   } catch (err: any) {
+    if (isPayloadTooLarge(err)) {
+      return NextResponse.json({ success: false, message: err.message }, { status: 413 });
+    }
     console.error("PUT /api/services/[locCode]/[itemCode] error:", err);
 
     if (err instanceof StockBalanceError) {
@@ -348,15 +364,6 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   }
 }
 
-/**
- * Where an item code can still be referenced once the item row is gone.
- *
- * A hard delete leaves every one of these pointing at a code nothing can name
- * any more: booking, recipe and bill lines keep the raw code instead of the
- * item description. The check below turns that silent data loss into a clear
- * answer and offers “deactivate” (Enable = 0) instead — the item leaves every
- * picker while the history stays readable.
- */
 const USAGE_QUERIES: {
   key: string;
   label: string;
@@ -451,11 +458,7 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
 
     const mode = (req.nextUrl.searchParams.get("mode") ?? "").trim().toLowerCase();
 
-    /* ── Deactivate (soft delete) — leaves the row in place, so every booking,
-          recipe and bill that points at this code still resolves a name.
-          RTRIM matching: the column is CHAR(15) and a padded literal never
-          matches on a NO PAD collation. ───────────────────────────────────── */
-    if (mode === "deactivate") {
+        if (mode === "deactivate") {
       const disabled = await prisma.$executeRaw`
         UPDATE tbl_itemmaster
         SET Enable = 0, UpdDate = NOW(), UpdBy = ${"ADMIN"}

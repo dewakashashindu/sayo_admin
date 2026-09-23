@@ -15,8 +15,7 @@ export async function POST(req: NextRequest) {
 
     const emailNorm = email.trim().toLowerCase();
 
-    // ── Find user in Tbl_CustomerMaster ───────────────────────────────────
-    let user: { CusCode: string; CusName: string } | null = null;
+        let user: { CusCode: string; CusName: string } | null = null;
     try {
       user = await prisma.tbl_CustomerMaster.findFirst({
         where:  { CusEmail: emailNorm },
@@ -31,8 +30,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // ── Generate OTP ───────────────────────────────────────────────────────
-    const code      = String(Math.floor(100000 + Math.random() * 900000));
+        const code      = String(Math.floor(100000 + Math.random() * 900000));
     const expiresAt = Date.now() + 10 * 60 * 1000;
     otpStore.set(emailNorm, { code, expiresAt });
 

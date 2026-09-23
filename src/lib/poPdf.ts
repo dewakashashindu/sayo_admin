@@ -1,23 +1,3 @@
-// src/lib/poPdf.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// THE PURCHASE ORDER AS A PDF — the sheet that is emailed to the supplier.
-//
-// It is drawn from the SAME data the printed sheet uses (the copy's columns, the
-// rows, the total) and the same formatting helpers (src/lib/poPrint.ts), so the
-// sheet that comes out of the printer and the PDF that goes out by e-mail can
-// never drift apart:
-//
-//   Standard Copy   ItemCode · RowItmDes · Unit · Qty · Cost Price · ItemValue
-//                   + the blue Total band
-//   Supplier Copy   ItemCode · RowItmDes · Unit · Qty   (no money anywhere)
-//
-// Layout is A4 portrait in points (595.28 × 841.89). Only the standard PDF
-// fonts are used (Helvetica), so nothing has to be embedded and the file stays
-// small enough to attach anywhere.
-//
-// This module runs on the server only — it is imported by the email route, never
-// by a screen (the browser checks it with the print stylesheet instead).
-// ─────────────────────────────────────────────────────────────────────────────
 import PDFDocument from "pdfkit";
 import { poPrintValueColumns, poPrintColumnCount, type PoPrintCopy, type PoPrintRow } from "./poPrint";
 
@@ -69,8 +49,6 @@ function fitToWidth(doc: PDFKit.PDFDocument, text: string, width: number): strin
   return `${cut.trimEnd()}…`;
 }
 
-/* ── the page ────────────────────────────────────────────────────────────── */
-
 const PAGE_W = 595.28;
 const PAGE_H = 841.89;
 const MARGIN = 40;
@@ -110,12 +88,10 @@ export async function buildPoPdf(data: PoPdfData): Promise<Buffer> {
     doc.on("error", reject);
   });
 
-  /* ── the frame ─────────────────────────────────────────────────────────── */
-  doc.lineWidth(0.8).strokeColor(RULE);
+    doc.lineWidth(0.8).strokeColor(RULE);
   doc.rect(MARGIN, FRAME_TOP, INNER_W, FRAME_H).stroke();
 
-  /* ── letterhead ────────────────────────────────────────────────────────── */
-  let y = FRAME_TOP + 22;
+    let y = FRAME_TOP + 22;
 
   /* "Purchase Order" is centred on the page, like the legacy sheet. The salon's
      name is given exactly the room that is left of it, so a long branch name
@@ -168,8 +144,7 @@ export async function buildPoPdf(data: PoPdfData): Promise<Buffer> {
     metaY += label ? 11.5 : 8;
   }
 
-  /* ── supplier panel ────────────────────────────────────────────────────── */
-  const panelW = INNER_W * 0.56;
+    const panelW = INNER_W * 0.56;
   const panelX = MARGIN + 16;
   const panelY = y + 60;
   const panelH = 66;
@@ -185,8 +160,7 @@ export async function buildPoPdf(data: PoPdfData): Promise<Buffer> {
   const supAddr = data.supplierAddress || "";
   if (supAddr) doc.text(fitToWidth(doc, supAddr, panelW - 28), panelX + 14, panelY + 42, oneLine(panelW - 28));
 
-  /* ── the items table ───────────────────────────────────────────────────── */
-  /* column x positions — the widths the printed sheet uses, scaled to A4 */
+    /* column x positions — the widths the printed sheet uses, scaled to A4 */
   /* the legacy sheet gives RowItmDes the space that is left over and keeps the
      numeric columns narrow. The widths below are measured, not guessed: the
      item code is CHAR(15) — "ITM000000001190" — so its column must hold fifteen
@@ -264,8 +238,7 @@ export async function buildPoPdf(data: PoPdfData): Promise<Buffer> {
     tableY += rowH + 2;
   }
 
-  /* ── foot of the sheet ─────────────────────────────────────────────────── */
-  doc.font("Helvetica").fontSize(8.5).fillColor(RULE);
+    doc.font("Helvetica").fontSize(8.5).fillColor(RULE);
   const footY = tableY + 16;
   doc.text("Deli. Add", colX.code, footY, oneLine(60));
   doc.text(fitToWidth(doc, data.deliAdd || "", INNER_W - 66), colX.code + 60, footY, oneLine(INNER_W - 66));

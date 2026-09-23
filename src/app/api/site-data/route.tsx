@@ -1,19 +1,9 @@
-// app/api/site-data/route.ts  ← sayo-admin (FULL ADMIN ACCESS)
-// ─────────────────────────────────────────────────────────
-// GET    → all sections + full feedback list (unpublished included)
-// POST   → upsert nav/home/footer/about/services/contact/gallery
-// PATCH  → feedback publish/unpublish
-// DELETE → feedback delete
-// ─────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 export const dynamic   = 'force-dynamic';
 export const revalidate = 0;
 
-/* ─────────────────────────────────────────
-   DEFAULTS
-───────────────────────────────────────── */
 const NAV_DEFAULTS = {
   logo_text: 'SAYO',
   contact_btn_text: 'CONTACT US',
@@ -171,9 +161,6 @@ const GALLERY_DEFAULTS = {
   ],
 };
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
 function getErrorMessage(err: unknown): string {
   if (!err) return 'Unknown error';
   if (err instanceof Error) {
@@ -183,16 +170,12 @@ function getErrorMessage(err: unknown): string {
   try { return JSON.stringify(err); } catch { return String(err); }
 }
 
-/* ─────────────────────────────────────────
-   GET  — full admin view (all feedback, all sections)
-───────────────────────────────────────── */
 export async function GET(req: NextRequest) {
   const section = req.nextUrl.searchParams.get('section');
 
   try {
 
-    /* ── nav ── */
-    if (section === 'nav') {
+        if (section === 'nav') {
       const data = await prisma.navconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(NAV_DEFAULTS);
       return NextResponse.json({
@@ -201,14 +184,12 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    /* ── home ── */
-    if (section === 'home') {
+        if (section === 'home') {
       const data = await prisma.homeconfig.findUnique({ where: { id: 1 } });
       return NextResponse.json(data ?? HOME_DEFAULTS);
     }
 
-    /* ── footer ── */
-    if (section === 'footer') {
+        if (section === 'footer') {
       const data = await prisma.footerconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(FOOTER_DEFAULTS);
       return NextResponse.json({
@@ -218,8 +199,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    /* ── about ── */
-    if (section === 'about') {
+        if (section === 'about') {
       const data = await prisma.aboutconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(ABOUT_DEFAULTS);
 
@@ -245,8 +225,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    /* ── services ── */
-    if (section === 'services') {
+        if (section === 'services') {
       const data = await prisma.servicesconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(SERVICES_DEFAULTS);
 
@@ -273,8 +252,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    /* ── contact ── */
-    if (section === 'contact') {
+        if (section === 'contact') {
       const data = await prisma.contactconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(CONTACT_DEFAULTS);
       return NextResponse.json({
@@ -284,8 +262,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    /* ── gallery ── */
-    if (section === 'gallery') {
+        if (section === 'gallery') {
       const data = await prisma.galleryconfig.findUnique({ where: { id: 1 } });
       if (!data) return NextResponse.json(GALLERY_DEFAULTS);
       return NextResponse.json({
@@ -301,8 +278,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    /* ── feedback — full list for admin (published + unpublished) ── */
-    if (section === 'feedback') {
+        if (section === 'feedback') {
       const location         = req.nextUrl.searchParams.get('location');
       const rating           = req.nextUrl.searchParams.get('rating');
       const isPublishedParam = req.nextUrl.searchParams.get('isPublished');
@@ -342,8 +318,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    /* ── all sections fallback ── */
-    const [nav, home, footer, about, services, contact, gallery] = await Promise.all([
+        const [nav, home, footer, about, services, contact, gallery] = await Promise.all([
       prisma.navconfig.findUnique({      where: { id: 1 } }),
       prisma.homeconfig.findUnique({     where: { id: 1 } }),
       prisma.footerconfig.findUnique({   where: { id: 1 } }),
@@ -426,17 +401,13 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/* ─────────────────────────────────────────
-   POST — admin upserts (nav/home/footer/about/services/contact/gallery)
-───────────────────────────────────────── */
 export async function POST(req: NextRequest) {
   const section = req.nextUrl.searchParams.get('section');
 
   try {
     const body = await req.json();
 
-    /* ── nav ── */
-    if (section === 'nav') {
+        if (section === 'nav') {
       const result = await prisma.navconfig.upsert({
         where:  { id: 1 },
         update: {
@@ -459,8 +430,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result ?? { success: true });
     }
 
-    /* ── home ── */
-    if (section === 'home') {
+        if (section === 'home') {
       const result = await prisma.homeconfig.upsert({
         where:  { id: 1 },
         update: {
@@ -485,8 +455,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result ?? { success: true });
     }
 
-    /* ── footer ── */
-    if (section === 'footer') {
+        if (section === 'footer') {
       const result = await prisma.footerconfig.upsert({
         where:  { id: 1 },
         update: {
@@ -523,8 +492,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result ?? { success: true });
     }
 
-    /* ── about ── */
-    if (section === 'about') {
+        if (section === 'about') {
       const result = await prisma.aboutconfig.upsert({
         where:  { id: 1 },
         update: {
@@ -559,8 +527,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result ?? { success: true });
     }
 
-    /* ── services ── */
-    if (section === 'services') {
+        if (section === 'services') {
       const result = await prisma.servicesconfig.upsert({
         where:  { id: 1 },
         update: {
@@ -583,8 +550,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result ?? { success: true });
     }
 
-    /* ── contact ── */
-    if (section === 'contact') {
+        if (section === 'contact') {
       const result = await prisma.contactconfig.upsert({
         where:  { id: 1 },
         update: {
@@ -629,8 +595,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result ?? { success: true });
     }
 
-    /* ── gallery ── */
-    if (section === 'gallery') {
+        if (section === 'gallery') {
       const result = await prisma.galleryconfig.upsert({
         where:  { id: 1 },
         update: {
@@ -664,9 +629,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/* ─────────────────────────────────────────
-   PATCH  — feedback publish / unpublish
-───────────────────────────────────────── */
 export async function PATCH(req: NextRequest) {
   const section = req.nextUrl.searchParams.get('section');
   const idParam = req.nextUrl.searchParams.get('id');
@@ -700,9 +662,6 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-/* ─────────────────────────────────────────
-   DELETE  — feedback delete
-───────────────────────────────────────── */
 export async function DELETE(req: NextRequest) {
   const section = req.nextUrl.searchParams.get('section');
   const idParam = req.nextUrl.searchParams.get('id');

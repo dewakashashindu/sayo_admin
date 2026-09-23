@@ -1,13 +1,5 @@
-// src/lib/dbHealth.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// “Is the database reachable?” — one small helper used by /api/health and by
-// the API routes when they want to explain a Prisma P1001 to the user.
-//
-// The password is never returned; the host, port and database name are, because
-// those are exactly what has to be checked against the hosting panel when the
-// connection stops working.
-// ─────────────────────────────────────────────────────────────────────────────
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 
 export interface DbTarget {
   /** host:port */
@@ -109,7 +101,7 @@ export async function checkDatabase(
     };
   }
 
-  const prisma = new PrismaClient({
+  const prisma = newRobustPrisma({
     datasources: { db: { url: process.env.DATABASE_URL } },
   });
 

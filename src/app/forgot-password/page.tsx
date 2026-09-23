@@ -66,8 +66,7 @@ export default function ForgotPasswordPage() {
   const errConfirm = tConfirm && confirmPassword !== newPassword  ? 'Passwords do not match.'                 : '';
   const canReset   = newPassword.length >= 6 && confirmPassword === newPassword;
 
-  /* ── STEP 1 — send OTP ── */
-  const handleSendCode = async (e: React.FormEvent) => {
+    const handleSendCode = async (e: React.FormEvent) => {
     e.preventDefault();
     setTEmail(true);
     setApiError('');
@@ -100,8 +99,7 @@ export default function ForgotPasswordPage() {
     }
   };
 
-  /* ── STEP 2 — OTP inputs ── */
-  const handleOtpChange = (i: number, v: string) => {
+    const handleOtpChange = (i: number, v: string) => {
     if (!/^\d?$/.test(v)) return;
     const next = [...otp]; next[i] = v;
     setOtp(next); setOtpError('');
@@ -121,8 +119,7 @@ export default function ForgotPasswordPage() {
     otpRefs.current[Math.min(pasted.length, 5)]?.focus();
   };
 
-  /* ── STEP 2 — verify OTP ── */
-  const handleVerifyOtp = (e: React.FormEvent) => {
+    const handleVerifyOtp = (e: React.FormEvent) => {
     e.preventDefault();
     setApiError('');
     if (!canVerify) { setOtpError('Please enter all 6 digits.'); return; }
@@ -148,8 +145,7 @@ export default function ForgotPasswordPage() {
     } catch { /* silently ignore — UI already shows new timer */ }
   };
 
-  /* ── STEP 3 — reset password ── */
-  const handleResetPassword = async (e: React.FormEvent) => {
+    const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setTNew(true); setTConfirm(true);
     setApiError('');
@@ -185,8 +181,7 @@ export default function ForgotPasswordPage() {
     }
   };
 
-  /* ══ SUCCESS ══ */
-  if (success) {
+    if (success) {
     return (
       <>
         <style>{globalCss}</style>
@@ -251,8 +246,7 @@ export default function ForgotPasswordPage() {
     </div>
   ) : null;
 
-  /* ══ FORM ══ */
-  return (
+    return (
     <>
       <style>{globalCss}</style>
       <main style={mainStyle}>
@@ -298,7 +292,7 @@ export default function ForgotPasswordPage() {
           <div className="reveal-up-d1" style={{ maxWidth: '480px', margin: '0 auto', width: '100%' }}>
             <Card>
 
-              {/* ── STEP 1 — EMAIL ── */}
+              {}
               {step === 1 && (
                 <form onSubmit={handleSendCode}>
                   <Label text="Find Your Account" />
@@ -349,7 +343,7 @@ export default function ForgotPasswordPage() {
                 </form>
               )}
 
-              {/* ── STEP 2 — OTP ── */}
+              {}
               {step === 2 && (
                 <form onSubmit={handleVerifyOtp}>
                   <Label text="Enter Verification Code" />
@@ -424,7 +418,7 @@ export default function ForgotPasswordPage() {
                 </form>
               )}
 
-              {/* ── STEP 3 — NEW PASSWORD ── */}
+              {}
               {step === 3 && (
                 <form onSubmit={handleResetPassword}>
                   <Label text="Create New Password" />

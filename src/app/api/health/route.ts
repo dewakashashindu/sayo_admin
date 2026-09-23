@@ -1,25 +1,3 @@
-// src/app/api/health/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// “Is the database reachable?” — one URL, no sign-in needed, because signing in
-// itself needs the database.
-//
-//   http://192.168.1.100:3000/api/health
-//
-// WHAT THE PUBLIC SEES (anyone who opens the URL)
-//   { reachable: true,  latencyMs: 82 }
-//   { reachable: false, latencyMs: null, hint: "The application could not
-//     reach its database. The shop's technical contact has the details." }
-//
-// WHAT A SIGNED-IN ADMIN SEES (the browser already holds a valid session)
-//   …plus host / database / user / serverVersion / the database error code.
-//
-// WHY THE SPLIT: the host, the database name, the user name and the server
-// version are a map for anyone scanning the network — that was a real leak on a
-// public endpoint. They are still exactly what the shop needs while fixing a
-// database problem, so they stayed, but only behind a session. The session
-// cookie is signed with AUTH_SECRET and checked locally, so this works even
-// while the database is down.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { checkDatabase } from "@/lib/dbHealth";
 import { verifyAdminToken, ADMIN_COOKIE } from "@/lib/adminSession";

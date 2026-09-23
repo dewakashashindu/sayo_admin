@@ -1,27 +1,3 @@
-// src/components/PoPrintSheet.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// THE PRINTED PURCHASE ORDER — one component, two copies.
-//
-//   Standard Copy   ItemCode · RowItmDes · Unit · Qty · Cost Price · ItemValue
-//                   + the Total row
-//   Supplier Copy   ItemCode · RowItmDes · Unit · Qty   (no money anywhere)
-//
-// This is the legacy sheet (SCR_BILLING.pdf pages 3–5) on paper: the salon's
-// name and address top-left, "Purchase Order" centred, the PO number / dates /
-// print date / print time / user box top-right, the supplier block in its pale
-// green panel, the cream table heading with the PO number as its first row,
-// the blue Total band, the Deli. Add line, and the footer with the page number
-// and which copy this is.
-//
-// HOW IT GETS ONTO PAPER
-//   The sheet is rendered on screen but hidden (`.print-sheet { display:none }`)
-//   and the print stylesheet reveals it and hides the screen — so the page the
-//   operator was looking at never has to be squeezed into a print layout, and
-//   what comes out of the printer is this component and nothing else.
-//
-// The CSS lives here, next to the markup it styles, and is exported as
-// PO_PRINT_CSS so the page can drop it in as-is.
-// ─────────────────────────────────────────────────────────────────────────────
 import React from 'react';
 import type { PoPrintRow } from '@/lib/poPrint';
 
@@ -62,7 +38,7 @@ export default function PoPrintSheet(props: PoPrintSheetProps) {
   return (
     <div className={`print-sheet copy-${copy}`}>
       <div className="ps-frame">
-        {/* ── letterhead ─────────────────────────────────────────────────── */}
+        {}
         <div className="ps-head">
           <div className="ps-head-left">
             <div className="ps-company">{companyName}</div>
@@ -81,7 +57,7 @@ export default function PoPrintSheet(props: PoPrintSheetProps) {
           </div>
         </div>
 
-        {/* ── supplier panel ─────────────────────────────────────────────── */}
+        {}
         <div className="ps-supplier">
           <div className="ps-sup-label">Supplier</div>
           <div className="ps-sup-line">
@@ -91,7 +67,7 @@ export default function PoPrintSheet(props: PoPrintSheetProps) {
           <div className="ps-sup-addr">{supplierAddress || '\u00a0'}</div>
         </div>
 
-        {/* ── the items ──────────────────────────────────────────────────── */}
+        {}
         <table className="ps-table">
           <thead>
             <tr>
@@ -129,7 +105,7 @@ export default function PoPrintSheet(props: PoPrintSheetProps) {
           </tbody>
         </table>
 
-        {/* ── foot of the sheet ──────────────────────────────────────────── */}
+        {}
         <div className="ps-deli">
           <span className="ps-deli-k">Deli. Add</span>
           <span className="ps-deli-v">{deliAdd || '\u00a0'}</span>
@@ -155,8 +131,6 @@ export default function PoPrintSheet(props: PoPrintSheetProps) {
     </div>
   );
 }
-
-/* ── the sheet's stylesheet ──────────────────────────────────────────────── */
 
 export const PO_PRINT_CSS = `
   /* On screen the sheet stays hidden — paper is the only place it appears. */

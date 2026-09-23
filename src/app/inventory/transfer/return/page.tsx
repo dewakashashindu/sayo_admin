@@ -1,22 +1,4 @@
 'use client';
-// src/app/inventory/transfer/return/page.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// TRANSFER RETURN NOTE — the legacy TR screen as a web page, styled and
-// behaving exactly like the Purchase Order page (same shell, tabs, grid,
-// buttons, print and e-mail dialogs).
-//
-// A return is written against ONE confirmed transfer note: choosing the
-// Transfer Note No loads that note from the database — its date, its items
-// and the transferred quantities become the return's lines (TN QTY shows what
-// the note moved; Returned QTY is what comes back). The direction fills in
-// reversed — goods come back from where the note sent them to where they left.
-//
-//   Find      search saved returns (Confirmed / Pending / All) and open one
-//   Details   header + item grid + remarks + Net Value + the legacy button row
-//
-// The number (TR…) is issued on Save. A confirmed return is read-only — the
-// same rule the Purchase Order page applies (backend enforces it).
-// ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
@@ -32,8 +14,6 @@ import {
   type PoPrintCopy,
 } from '@/lib/poPrint';
 import { TRANSFER_PRINT_COPY_CHOICES } from '@/lib/transferPrint';
-
-/* ── types ───────────────────────────────────────────────────────────────── */
 
 interface LookupLocation { code: string; des: string; address: string; enable: boolean }
 interface LookupUnit { id: string; des: string; enable: boolean }
@@ -59,8 +39,6 @@ interface TNOption {
   traDate: string;
 }
 
-/* ── small helpers ───────────────────────────────────────────────────────── */
-
 let lineSeq = 0;
 const newLine = (): TrLine => ({
   key: `T${++lineSeq}`, itemCode: '', name: '', unitID: '', costPrice: '', tnQty: '', retQty: '',
@@ -79,8 +57,6 @@ function useToast() {
   }, []);
   return { toast, show };
 }
-
-/* ── page ────────────────────────────────────────────────────────────────── */
 
 export default function TransferReturnPage() {
   const router = useRouter();
@@ -136,8 +112,7 @@ export default function TransferReturnPage() {
   const [tnOptions, setTnOptions] = useState<TNOption[]>([]);
   const [tnLoading, setTnLoading] = useState(false);
 
-  /* ── load locations / units (once) ─────────────────────────────────────── */
-  useEffect(() => {
+    useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -166,8 +141,7 @@ export default function TransferReturnPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── who is signed in (printed as "User") ──────────────────────────────── */
-  useEffect(() => {
+    useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -182,8 +156,7 @@ export default function TransferReturnPage() {
     return () => { active = false; };
   }, []);
 
-  /* ── confirmed transfer notes for the Transfer Note No dropdown ────────── */
-  useEffect(() => {
+    useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -205,8 +178,7 @@ export default function TransferReturnPage() {
     return () => { active = false; };
   }, []);
 
-  /* ── the return list (Find tab) ────────────────────────────────────────── */
-  const loadList = useCallback(async () => {
+    const loadList = useCallback(async () => {
     setListBusy(true);
     try {
       const params = new URLSearchParams({ status: findStatus });
@@ -235,8 +207,7 @@ export default function TransferReturnPage() {
 
   useEffect(() => { if (tab === 'find') void loadList(); }, [tab, loadList]);
 
-  /* ── line editing ──────────────────────────────────────────────────────── */
-  function patchLine(key: string, patch: Partial<TrLine>) {
+    function patchLine(key: string, patch: Partial<TrLine>) {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
     setDirty(true);
   }
@@ -260,8 +231,7 @@ export default function TransferReturnPage() {
     setDirty(true);
   }
 
-  /* ── totals (display only — the API calculates the stored value) ───────── */
-  const netValue = useMemo(
+    const netValue = useMemo(
     () => lines.reduce((sum, l) => sum + lineValue(l.costPrice, l.retQty), 0),
     [lines],
   );
@@ -271,8 +241,7 @@ export default function TransferReturnPage() {
     [units],
   );
 
-  /* ── choosing a Transfer Note No loads its items into the grid ──────────── */
-  async function loadFromNote(no: string) {
+    async function loadFromNote(no: string) {
     setTnNo(no);
     if (!no) { setTnDate(''); return; }
     if (confirmed) {
@@ -323,8 +292,7 @@ export default function TransferReturnPage() {
     }
   }
 
-  /* ── open a saved return ───────────────────────────────────────────────── */
-  async function openReturn(row: FindRow) {
+    async function openReturn(row: FindRow) {
     try {
       const res = await fetch(
         `/api/inventory/transfer/return/${encodeURIComponent(row.trtnNo)}?fromLoc=${encodeURIComponent(row.fromLocCode)}&toLoc=${encodeURIComponent(row.toLoc)}`,
@@ -367,8 +335,7 @@ export default function TransferReturnPage() {
     }
   }
 
-  /* ── save ──────────────────────────────────────────────────────────────── */
-  function payload() {
+    function payload() {
     return {
       tnNo,
       fromLocCode: fromLoc,
@@ -425,8 +392,7 @@ export default function TransferReturnPage() {
     }
   }
 
-  /* ── confirmation ──────────────────────────────────────────────────────── */
-  async function handleConfirm() {
+    async function handleConfirm() {
     if (confirmed) { showToast('This transfer return is already confirmed'); return; }
     setConfirming(true);
     try {
@@ -503,8 +469,7 @@ export default function TransferReturnPage() {
     router.push(path);
   }
 
-  /* ── printing ──────────────────────────────────────────────────────────── */
-  const printableLines = lines.filter((l) => l.itemCode || l.name.trim());
+    const printableLines = lines.filter((l) => l.itemCode || l.name.trim());
 
   function handlePrint() {
     if (printableLines.length === 0) { showToast('Add at least one item before printing', true); return; }
@@ -522,8 +487,7 @@ export default function TransferReturnPage() {
     return () => window.clearTimeout(id);
   }, [printJob]);
 
-  /* ── emailing the sheet ────────────────────────────────────────────────── */
-  function openMailDialog() {
+    function openMailDialog() {
     if (printableLines.length === 0) { showToast('Add at least one item before emailing', true); return; }
     if (!retNo) { showToast('Save the return first (Save), then it can be emailed', true); return; }
     setMailSubject((prev) => prev || `Transfer Return Note ${retNo}`);
@@ -602,8 +566,7 @@ export default function TransferReturnPage() {
     };
   })();
 
-  /* ── markup ────────────────────────────────────────────────────────────── */
-  return (
+    return (
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
@@ -638,7 +601,7 @@ export default function TransferReturnPage() {
             </div>
           )}
 
-          {/* ── FIND ─────────────────────────────────────────────────────── */}
+          {}
           {tab === 'find' && (
             <div className="po-card no-print">
               <div className="po-find">
@@ -692,7 +655,7 @@ export default function TransferReturnPage() {
             </div>
           )}
 
-          {/* ── DETAILS ──────────────────────────────────────────────────── */}
+          {}
           {tab === 'details' && (
             <div className="po-card">
               <div className="po-form no-print">
@@ -775,7 +738,7 @@ export default function TransferReturnPage() {
                         <td className="num">{i + 1}</td>
                         <td>
                           <ItemSuggestInput
-                            locCode={fromLoc}
+                            locCode={toLoc || fromLoc}
                             value={line.name}
                             disabled={locked}
                             onText={(text) => patchLine(line.key, { name: text, itemCode: '' })}
@@ -868,7 +831,7 @@ export default function TransferReturnPage() {
         </div>
       </div>
 
-      {/* ── WHICH COPY? (the Print button asks first) ────────────────────── */}
+      {}
       {printAsk && (
         <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Print transfer return">
           <div className="ask-card">
@@ -892,7 +855,7 @@ export default function TransferReturnPage() {
         </div>
       )}
 
-      {/* ── EMAIL (the same sheet, as a PDF attachment) ──────────────────── */}
+      {}
       {mailAsk && (
         <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Email transfer return">
           <div className="ask-card mail-card">
@@ -965,7 +928,7 @@ export default function TransferReturnPage() {
         </div>
       )}
 
-      {/* ── THE PRINTED SHEET (hidden on screen; only paper sees it) ─────── */}
+      {}
       {printJob && (
         <div aria-hidden="true">
           <TransferPrintSheet
@@ -997,8 +960,6 @@ export default function TransferReturnPage() {
     </>
   );
 }
-
-/* ── page CSS (identical to the Purchase Order page) ─────────────────────── */
 
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');

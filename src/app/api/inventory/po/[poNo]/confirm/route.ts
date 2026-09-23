@@ -1,17 +1,6 @@
-// src/app/api/inventory/po/[poNo]/confirm/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/inventory/po/:poNo/confirm        body: { locCode }
-//
-// “Confirmation” on the legacy screen: the order stops being a draft. From this
-// moment it can be received (the GRN screen only offers confirmed orders), it
-// can no longer be edited or deleted, and the number is final.
-//
-// The header row is locked FOR UPDATE so two people pressing Confirmation at
-// the same moment cannot confirm twice — the second one gets 409 and nothing is
-// written twice.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { invActor, invChar, invFail, invId, InvError,
   confirmPoHeader,
@@ -24,7 +13,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ poNo: string }> };

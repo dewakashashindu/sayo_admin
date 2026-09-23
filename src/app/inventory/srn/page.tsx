@@ -175,8 +175,7 @@ export default function SupplierReturnPage(){
   function handleCancel(){ if(dirty && !confirm('Discard unsaved changes?')) return; handleClear(); showToast('Cleared'); }
   function handleNav(k:string,p:string){ if(dirty && !confirm('Leave without saving?')) return; router.push(p); }
 
-  /* ── printing (like PO) ──────────────────────────────── */
-  function handlePrint(){
+    function handlePrint(){
     if(printRows.length===0){ showToast('Add at least one return qty before printing',true); return; }
     if(!srnNo.trim()){ showToast('Save first, then print',true); return; }
     setPrintAsk(true);
@@ -185,8 +184,7 @@ export default function SupplierReturnPage(){
   // auto print after sheet mounts (like PO)
   React.useEffect(()=>{ if(!printJob) return; const id=window.setTimeout(()=>window.print(),60); return()=>window.clearTimeout(id); },[printJob]);
 
-  /* ── email helpers (like PO) ──────────────────────────── */
-  function openMailFull(){
+    function openMailFull(){
     if(printRows.length===0){ showToast('Add at least one return before emailing',true); return; }
     if(!srnNo.trim()){ showToast('Save the SRN first, then it can be emailed',true); return; }
     const supMail = (sup as any)?.emails || (sup as any)?.email || supplierEmail;

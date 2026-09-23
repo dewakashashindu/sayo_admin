@@ -1,6 +1,3 @@
-/* ═══════════════════════════════════════════════════════════════════════════
-   slotEvaluator.ts  —  Booking slot logic engine
-═══════════════════════════════════════════════════════════════════════════ */
 
 export interface ServiceItem {
   name:     string;
@@ -54,9 +51,6 @@ export interface SlotResult {
   };
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   CONSTANTS
-───────────────────────────────────────────────────────────────────────────── */
 export const TIME_SLOTS = [
   '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM',
   '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM',
@@ -68,9 +62,6 @@ export const TIME_SLOTS = [
 const SLOT_INCREMENT = 30;
 const LAST_SLOT_MINS = slotToMinutes('06:00 PM');
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   TIME HELPERS
-───────────────────────────────────────────────────────────────────────────── */
 export function slotToMinutes(slot: string): number {
   const m = slot.match(/^(\d{1,2}):(\d{2})\s?(AM|PM)$/i);
   if (!m) return 0;
@@ -105,20 +96,10 @@ export function parseDurationMins(duration: string): number {
   return Math.max(parseInt(duration, 10) || 0, 0);
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   CHUNK HELPERS
-───────────────────────────────────────────────────────────────────────────── */
 function occupiedChunks(startMinutes: number, durationMins: number): string[] {
   if (durationMins <= 0) return [];
 
-  /*
-   * A service may end at (or start at) a non-30-minute boundary. Iterating
-   * from startMinutes and converting each value to a label drops values such
-   * as 09:15 because minutesToSlot(09:15) is intentionally null. Instead,
-   * walk the fixed 30-minute grid and include every cell whose interval
-   * intersects the real [start, end) service window.
-   */
-  const chunks: string[] = [];
+    const chunks: string[] = [];
   const endMinutes = startMinutes + durationMins;
   const firstGridStart = Math.floor(startMinutes / SLOT_INCREMENT) * SLOT_INCREMENT;
 
@@ -165,14 +146,6 @@ function scheduleFromSegments(segments: SequenceSegment[]): ServiceScheduleEntry
   }));
 }
 
-/**
- * Build the normal sequential schedule used when the customer books the
- * original order (or chooses a recommended later slot).
- *
- * A single provider can move directly from one service into the next. When
- * services use different providers, each next service must begin on a real
- * 30-minute slot; a 09:15 boundary is therefore carried forward to 09:30.
- */
 export function buildSequentialServiceSchedule(
   startSlot: string,
   providers: Provider[],
@@ -236,9 +209,6 @@ export function buildSplitServiceSchedule(
   });
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   PROVIDER AVAILABILITY
-───────────────────────────────────────────────────────────────────────────── */
 function isProviderFreeFor(
   providerName:  string,
   startMinutes:  number,
@@ -267,9 +237,6 @@ function findNextFreeStart(
   return null;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   SEQUENCE CHECKER
-───────────────────────────────────────────────────────────────────────────── */
 type SeqOk   = { ok: true };
 type SeqFail = {
   ok:           false;
@@ -305,9 +272,6 @@ function checkSequence(
   return { ok: true };
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   GAP CALCULATOR
-───────────────────────────────────────────────────────────────────────────── */
 interface GapResult {
   gapMinutes:   number;
   nextFreeTime: string;
@@ -374,9 +338,6 @@ function calculateSequenceGap(
   };
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   RECOMMENDED TIME
-───────────────────────────────────────────────────────────────────────────── */
 function findRecommendedOriginalTime(
   fromSlot:      string,
   providers:     Provider[],
@@ -386,7 +347,7 @@ function findRecommendedOriginalTime(
   const fromIdx = TIME_SLOTS.indexOf(fromSlot as typeof TIME_SLOTS[number]);
   if (fromIdx === -1) return undefined;
 
-  // ✅ FIX: Only scan FUTURE slots (fromIdx + 1 onwards)
+  // Only scan FUTURE slots (fromIdx + 1 onwards)
   for (let i = fromIdx + 1; i < TIME_SLOTS.length; i++) {
     const candidateSlot = TIME_SLOTS[i];
     const result = checkSequence(
@@ -421,9 +382,6 @@ function findRecommendedSingleProviderTime(
   return undefined;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   PERMUTATION HELPERS
-───────────────────────────────────────────────────────────────────────────── */
 function getPermutations(n: number): number[][] {
   if (n === 0) return [];
   if (n === 1) return [[0]];
@@ -439,9 +397,6 @@ function getPermutations(n: number): number[][] {
   return permute(Array.from({ length: n }, (_, i) => i));
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   WORKING PERMUTATION FINDER  ← MAIN BUG FIX HERE
-───────────────────────────────────────────────────────────────────────────── */
 function findWorkingPermutation(
   baseMinutes:          number,
   providers:            Provider[],
@@ -470,7 +425,7 @@ function findWorkingPermutation(
     const permProviders = perm.map(i => providers[i]);
     const permServices  = perm.map(i => services[i]);
 
-    // ✅ FIX #1: First provider in swapped order MUST be free at baseMinutes
+    // #1: First provider in swapped order MUST be free at baseMinutes
     // Without this check, we accept swaps where the first service is also blocked,
     // which causes the modal to show wrong time slots (e.g., 09:00 AM for an 11:30 AM booking)
     const firstDuration = parseDurationMins(permServices[0].duration);
@@ -482,7 +437,7 @@ function findWorkingPermutation(
     );
     if (!firstProviderFree) continue;
 
-    // ✅ FIX #2: Also verify the swapped sequence actually improves on original
+    // #2: Also verify the swapped sequence actually improves on original
     // The first service must start exactly at baseMinutes with no gap
     const seqResult = checkSequence(
       baseMinutes,
@@ -550,9 +505,6 @@ function findWorkingPermutation(
   };
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   MAIN EXPORT
-───────────────────────────────────────────────────────────────────────────── */
 export function evaluateSlot(
   slot:          string,
   providers:     Provider[],
@@ -574,13 +526,7 @@ export function evaluateSlot(
 
   const baseMins = slotToMinutes(slot);
 
-  /* ══════════════════════════════════════════════════════════════════════════
-     ONE PROVIDER / MULTIPLE SERVICES
-     All services in one category are performed sequentially by the selected
-     provider. Do not reduce the service list to providers.length: that made a
-     second service disappear whenever one provider was selected.
-  ══════════════════════════════════════════════════════════════════════════ */
-  if (providers.length === 1) {
+    if (providers.length === 1) {
     if (!providers[0]?.name) {
       return { status: 'booked', isSequenceSwapped: false, occupiedSlots: [] };
     }
@@ -631,10 +577,7 @@ export function evaluateSlot(
   const pairedProviders = providers.slice(0, pairCount);
   const pairedServices  = services.slice(0, pairCount);
 
-  /* ══════════════════════════════════════════════════════════════════════════
-     MULTI-SERVICE
-  ══════════════════════════════════════════════════════════════════════════ */
-
+  
   /* Step 1: Try original order */
   const originalCheck = checkSequence(baseMins, pairedProviders, pairedServices, providerSlots);
 
@@ -669,7 +612,7 @@ export function evaluateSlot(
   /* Step 3: Check gap-only path (R4) */
   let gapOnlyDetails: SlotResult['gapOnlyDetails'] | undefined;
 
-  // ✅ FIX #3: Only compute gapOnly when there's no valid swap,
+  // #3: Only compute gapOnly when there's no valid swap,
   // OR when the swap also has a gap (to show both options in modal)
   const shouldCheckGapOnly = !swappedDetails || swappedDetails.gapMinutes > 0;
 
@@ -697,7 +640,7 @@ export function evaluateSlot(
   }
 
   /* Step 4: Recommended original time */
-  // ✅ FIX #4: Only find recommended time when there's actually a conflict
+  // #4: Only find recommended time when there's actually a conflict
   // This prevents showing "start at 09:00 AM" for an 11:30 AM booking
   const recommendedOriginalTime = (swappedDetails !== null || gapOnlyDetails !== undefined)
     ? findRecommendedOriginalTime(slot, pairedProviders, pairedServices, providerSlots)

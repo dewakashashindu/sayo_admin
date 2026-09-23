@@ -85,8 +85,7 @@ export async function GET(req: NextRequest) {
     const fromDate = isRange ? (from as string) : date;
     const toDate = isRange ? (to as string) : date;
 
-    /* ── All service rows for the window (joins mirror the write path) ── */
-    const rows = await prisma.$queryRaw<RawRow[]>`
+        const rows = await prisma.$queryRaw<RawRow[]>`
       SELECT
         RTRIM(h.BookingID)        AS BookingID,
         RTRIM(h.LocCode)          AS LocCode,
@@ -112,8 +111,7 @@ export async function GET(req: NextRequest) {
       ORDER BY h.BookingDate ASC
     `;
 
-    /* ── Lookups: customers / branches / technicians ── */
-    const cusCodes = [...new Set(rows.map(r => (r.CusCode || '').trim()).filter(Boolean))];
+        const cusCodes = [...new Set(rows.map(r => (r.CusCode || '').trim()).filter(Boolean))];
     const locCodes = [...new Set(rows.map(r => (r.LocCode || '').trim()).filter(Boolean))];
 
     const [customers, locations] = await Promise.all([
@@ -128,8 +126,7 @@ export async function GET(req: NextRequest) {
     const cusMap = new Map(customers.map(c => [c.CusCode.trim(), c]));
     const locMap = new Map(locations.map(l => [l.LocCode.trim(), l.LocDes.trim()]));
 
-    /* ── Group service rows into bookings ── */
-    type B = {
+        type B = {
       BookingId: string; Location: string; ClientName: string; Gender: string;
       BookingDate: string; TimeSlot: string; Status: string; BookingMode: string;
       Categories: string; SpecialNotes: string | null; CreatedAt: string;
@@ -212,8 +209,7 @@ export async function GET(req: NextRequest) {
       .filter(b => b.BookingDate === date)
       .sort((a, b) => a.startMin - b.startMin || a.CreatedAt.localeCompare(b.CreatedAt));
 
-    /* ── Range mode: per-day / per-provider counts for the week grid ── */
-    if (isRange) {
+        if (isRange) {
       const counts: Record<string, Record<string, number>> = {};
       const providerSet = new Set<string>();
       for (const b of all) {
@@ -234,8 +230,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    /* ── Day stats ── */
-    const active = dayBookings.filter(b => b.Status !== 'cancelled');
+        const active = dayBookings.filter(b => b.Status !== 'cancelled');
     const stats = {
       totalToday: active.length,
       totalPending: dayBookings.filter(b => b.Status === 'pending').length,
@@ -254,8 +249,7 @@ export async function GET(req: NextRequest) {
     const providerSet = new Set<string>();
     for (const b of active) for (const p of b.providers) providerSet.add(p.name);
 
-    /* ── Recent activity feed (booking events + SMS results) ── */
-    const activities = await prisma.adminactivitylog
+        const activities = await prisma.adminactivitylog
       .findMany({ orderBy: { timestamp: 'desc' }, take: 12 })
       .then(list =>
         list.map(a => ({

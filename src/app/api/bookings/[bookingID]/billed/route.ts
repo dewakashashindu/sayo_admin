@@ -1,15 +1,7 @@
-// src/app/api/bookings/[bookingID]/billed/route.ts
-// Billing page: mark a booking as billed.
-//
-// POST /api/bookings/:bookingID/billed
-// body: { locCode?: string }
-//
-// Sets tbl_bookingheder.BillingTime = NOW(). Once set, the technician
-// workstation locks further material/technician edits ("already billed").
-// Requires: status = DONE (work completed) and not already billed.
 
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { checkBookingAccess } from "@/lib/bookingAccess";
 import { ADMIN_COOKIE } from "@/lib/adminSession";
 
@@ -17,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = global as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma || new PrismaClient();
+const prisma = globalForPrisma.prisma || newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ bookingID: string }> };

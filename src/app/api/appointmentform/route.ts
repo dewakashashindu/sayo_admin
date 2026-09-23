@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ITEM_CODE_LENGTH } from "@/lib/itemCode";
 import { PrismaClient, Prisma } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import nodemailer from "nodemailer";
 import { sendAppointmentSMS } from "@/lib/sms";
 import { verifyAdminToken, ADMIN_COOKIE } from "@/lib/adminSession";
@@ -20,7 +21,7 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
@@ -209,13 +210,6 @@ async function generateCusCode(): Promise<string> {
   return nextSerialTx(prisma, SERIAL_CODES.customer);
 }
 
-/**
- * Hold a lock for one branch while the double-booking check below runs.
- * Booking-ID allocation no longer depends on this (that number comes from
- * Tbl_Serials), but the conflict guard still has to be serialized per branch,
- * and the location master row is present for every enabled branch — so it is a
- * lock target that also works for a branch with no bookings yet.
- */
 async function lockBookingIDNamespaceTx(
   tx: Prisma.TransactionClient,
   locCode: string,
@@ -229,14 +223,6 @@ async function lockBookingIDNamespaceTx(
   `;
 }
 
-/**
- * Booking ID — BK0000001, BK0000002, …
- *
- * The number is issued by the BK series in Tbl_Serials (src/lib/serials.ts):
- * the counter row is read, one is added, and the new value is written back.
- * The read and the write happen under a row lock, so two bookings saved at the
- * very same moment can never end up with the same ID.
- */
 async function generateBookingIDTx(
   tx: Prisma.TransactionClient,
 ): Promise<string> {
@@ -254,15 +240,6 @@ function isDuplicateKeyError(err: any): boolean {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   SERVER-SIDE CONFLICT GUARD (race-safe double-booking prevention)
-   -----------------------------------------------------------------------------
-   Availability is checked on the client for UX, but the server must re-verify
-   inside the SAME database transaction that creates the booking. Two
-   receptionists submitting the same technician + slot concurrently are
-   serialized by a SELECT ... FOR UPDATE lock: the second transaction blocks
-   until the first commits, then sees the new row and is rejected with 409.
-──────────────────────────────────────────────────────────────────────────────── */
 class BookingConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -1374,7 +1351,7 @@ export async function POST(req: NextRequest) {
       cusCode = existingRows[0].CusCode.trim();
       const stored = existingRows[0];
 
-      // ── Blacklist guard ──────────────────────────────────────────────────
+ // Blacklist guard
       // Blacklisted customers are now FOUND by the phone lookup (the UI shows
       // the warning banner). Their booking must not proceed silently as if
       // they were a brand-new customer with a fresh CUS code.
@@ -1389,7 +1366,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // ── Customer master protection (no auto-overwrite) ───────────────────
+ // Customer master protection (no auto-overwrite)
       // The phone may belong to a different person than the one at the
       // counter (e.g. a friend booking on the customer's number). NEVER
       // overwrite the stored profile with form data — that would silently
@@ -1457,7 +1434,7 @@ export async function POST(req: NextRequest) {
         ]),
       );
 
-      // ── Server-authoritative pricing ──────────────────────────────────────
+ // Server-authoritative pricing
       // Never trust the itemPrice sent by the client. Recompute every line
       // from tbl_ItemMaster.Retailprice so a tampered payload (e.g. a LKR
       // 5,000 service priced at 500 via devtools) can never reach the DB or
@@ -1558,7 +1535,7 @@ export async function POST(req: NextRequest) {
             // per branch, and this lock also covers a branch with no bookings.
             await lockBookingIDNamespaceTx(tx, locCode);
 
-            // ── Server-side conflict guard (race-safe) ──────────────────────
+ // Server-side conflict guard (race-safe)
             // Lock every non-cancelled header row for this branch + date. A
             // concurrent submission from another receptionist blocks here
             // until this transaction commits, so it can never slip past the

@@ -1,27 +1,4 @@
 'use client';
-// src/app/inventory/grn/page.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// GOOD RECEIVED NOTE — the legacy screen (SCR_BILLING.pdf pages 6, 7 and 9).
-//
-//   Details   PO Number (only CONFIRMED orders with something left to receive),
-//             Location, Supplier, Sup Inv No, GRN No, GRN Date, the item grid
-//             and the COST AND RETAIL PRICE popup, then the legacy button row
-//             Clear · Confirmation · Print · Delete · Save · Cancel
-//   Find      search saved receipts — Confirmed GRN / Pending GRN
-//
-//   A DIRECT GRN (the legacy “DIRECT GOOD RECIVED NOTE”, page 9) is the same
-//   screen with “Direct GRN” chosen instead of a purchase order: no PO number,
-//   GRNTYPE = 'DG', and the supplier is chosen by hand.
-//
-// WHAT CONFIRMATION DOES — and why it is a separate button:
-//   nothing moves until it is pressed. Confirmation updates StockBalance, writes
-//   the tbl_stocktxn ledger row, writes the quantity back onto the purchase
-//   order and (only if the line asks for it) pushes the RetailPrice into
-//   tbl_itemmaster — all in ONE transaction, server-side.
-//
-// LOCATIONS / SUPPLIERS come from GET /api/inventory/lookups: exactly what
-// tbl_locationmaster / tbl_suppliermaster hold, RTRIM'd, nothing filtered out.
-// ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
@@ -42,8 +19,6 @@ import {
   queueSkipFirst,
   type PoOpenForGrn,
 } from '@/lib/grnPoEntry';
-
-/* ── types ───────────────────────────────────────────────────────────────── */
 
 interface LookupLocation { code: string; des: string; address: string; enable: boolean }
 interface LookupSupplier { supID: string; name: string; contact: string; enable: boolean }
@@ -77,8 +52,6 @@ interface GrnListRow {
   adjustment: number; netTotal: number; confirmed: boolean; userID: string; lineCount: number;
 }
 
-/* ── helpers ─────────────────────────────────────────────────────────────── */
-
 let lineSeq = 0;
 const newLine = (): GrnLine => ({
   key: `G${++lineSeq}`, itemCode: '', itemName: '', unitID: '', batchNo: '', costPrice: '', retailPrice: '',
@@ -103,8 +76,6 @@ function useToast() {
   }, []);
   return { toast, show };
 }
-
-/* ── page ────────────────────────────────────────────────────────────────── */
 
 export default function GrnPage() {
   const router = useRouter();
@@ -158,11 +129,7 @@ export default function GrnPage() {
 
   const [popupKey, setPopupKey] = useState<string | null>(null);
 
-  /* ── "tell the admin to confirm it" ────────────────────────────────────
-     A saved GRN only moves stock once somebody presses Confirmation, and that
-     person is often not at the counter. Saving therefore ends with this popup:
-     pick who to tell, press Send, and they get an SMS. */
-  const [notifyOpen, setNotifyOpen] = useState(false);
+    const [notifyOpen, setNotifyOpen] = useState(false);
   const [notifyLoading, setNotifyLoading] = useState(false);
   const [notifyContacts, setNotifyContacts] = useState<NotifyContact[]>([]);
   const [notifyPick, setNotifyPick] = useState('');
@@ -184,8 +151,7 @@ export default function GrnPage() {
   const [list, setList] = useState<GrnListRow[]>([]);
   const [listBusy, setListBusy] = useState(false);
 
-  /* ── locations / suppliers / units ─────────────────────────────────────── */
-  useEffect(() => {
+    useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -217,13 +183,11 @@ export default function GrnPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── who is signed in (printed as "User") ──────────────────────────────── */
-  useEffect(()=>{
+    useEffect(()=>{
     let a=true; (async()=>{ try{ const r=await fetch('/api/auth/admin-me',{cache:'no-store'}); const j=await r.json() as any; if(!a||!j?.success) return; setActor(j.user?.username||j.user?.name||''); }catch{} })(); return()=>{a=false};
   },[]);
 
-  /* ── open purchase orders for the dropdown ─────────────────────────────── */
-  const loadOpenPos = useCallback(async () => {
+    const loadOpenPos = useCallback(async () => {
     if (!locCode) return;
     setPoErr('');
     try {
@@ -241,8 +205,7 @@ export default function GrnPage() {
     if (!direct && tab === 'details') void loadOpenPos();
   }, [direct, tab, loadOpenPos]);
 
-  /* ── GRN list (Find tab) ───────────────────────────────────────────────── */
-  const loadList = useCallback(async () => {
+    const loadList = useCallback(async () => {
     setListBusy(true);
     try {
       const params = new URLSearchParams({ status: findStatus });
@@ -261,8 +224,7 @@ export default function GrnPage() {
 
   useEffect(() => { if (tab === 'find') void loadList(); }, [tab, loadList]);
 
-  /* ── pick a purchase order → load its open lines ───────────────────────── */
-  async function choosePo(value: string) {
+    async function choosePo(value: string) {
     setPoNo(value);
     setDirty(true);
     if (!value) { setLines([]); setPoQueue([]); setPoLineCount(0); return; }
@@ -295,8 +257,7 @@ export default function GrnPage() {
     }
   }
 
-  /* ── line editing ──────────────────────────────────────────────────────── */
-  function patchLine(key: string, patch: Partial<GrnLine>) {
+    function patchLine(key: string, patch: Partial<GrnLine>) {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
     /* the same key may be the row waiting on the entry row */
     setPoQueue((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -314,8 +275,7 @@ export default function GrnPage() {
     });
   }
 
-  /* ── the entry row: Add, Skip, and the keyboard walk ──────────────────── */
-
+  
   const entry = poQueue[0];
 
   const progress = poEntryProgress(poLineCount, poQueue.length);
@@ -369,8 +329,7 @@ export default function GrnPage() {
     setDirty(true);
   }
 
-  /* ── totals ────────────────────────────────────────────────────────────── */
-  const totals = useMemo(() => {
+    const totals = useMemo(() => {
     const gross = lines.reduce((sum, l) => sum + lineValue(l.costPrice, l.grnQty, l.freeQty), 0);
     const dis = Number(discount) || 0;
     const adj = Number(adjustment) || 0;
@@ -379,8 +338,7 @@ export default function GrnPage() {
 
   const popupLine = lines.find((l) => l.key === popupKey) ?? poQueue.find((l) => l.key === popupKey) ?? null;
 
-  /* ── open a saved GRN ──────────────────────────────────────────────────── */
-  async function openGrn(row: GrnListRow) {
+    async function openGrn(row: GrnListRow) {
     try {
       const res = await fetch(
         `/api/inventory/grn/${encodeURIComponent(row.grnNo)}?locCode=${encodeURIComponent(row.locCode)}`,
@@ -437,8 +395,7 @@ export default function GrnPage() {
     }
   }
 
-  /* ── save ──────────────────────────────────────────────────────────────── */
-  function payload() {
+    function payload() {
     return {
       locCode,
       poNo: direct ? '' : poNo,
@@ -513,8 +470,7 @@ export default function GrnPage() {
     }
   }
 
-  /* ── confirmation: the moment stock moves ──────────────────────────────── */
-  async function handleConfirm() {
+    async function handleConfirm() {
     if (confirmed) { showToast('This receipt is already confirmed'); return; }
     setConfirming(true);
     try {
@@ -606,8 +562,7 @@ export default function GrnPage() {
     router.push(path);
   }
 
-  /* ── printing (like PO) ──────────────────────────────────────────── */
-  const printableLines = lines.filter(l=> (l.itemCode||'').trim() || (l.itemName||'').trim());
+    const printableLines = lines.filter(l=> (l.itemCode||'').trim() || (l.itemName||'').trim());
   const supplierEmail = (suppliers.find(s=>s.supID===supID) as any)?.email || suppliers.find(s=>s.supID===supID)?.contact?.split(/[;,]/)?.find(x=>x.includes('@'))?.trim() || '';
   function handlePrint(){
     if(printableLines.length===0){ showToast('Add at least one item before printing',true); return; }
@@ -620,8 +575,7 @@ export default function GrnPage() {
   }
   useEffect(()=>{ if(!printJob) return; const id=window.setTimeout(()=>window.print(),60); return()=>window.clearTimeout(id); },[printJob]);
 
-  /* ── email to supplier (PDF like PO) ─────────────────────────────── */
-  function openMailDialog(){
+    function openMailDialog(){
     if(printableLines.length===0){ showToast('Add at least one item before emailing',true); return; }
     if(!supID){ showToast('Choose supplier first',true); return; }
     if(!grnNo.trim()){ showToast('Save the GRN first, then it can be emailed',true); return; }
@@ -643,8 +597,7 @@ export default function GrnPage() {
     }catch(e:any){ showToast(e?.message||'Email failed',true); } finally{ setMailSending(false); }
   }
 
-  /* ── tell an admin to come and confirm ─────────────────────────────────── */
-
+  
   async function openNotify(forGrn = grnNo) {
     if (!forGrn) { showToast('Save the receipt first — then the admin can be told to confirm it', true); return; }
     if (confirmed) { showToast(`GRN ${forGrn} is already confirmed`, true); return; }
@@ -716,8 +669,7 @@ export default function GrnPage() {
   const busy = saving || deleting || confirming;
   const locked = confirmed;
 
-  /* ── markup ────────────────────────────────────────────────────────────── */
-  return (
+    return (
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
@@ -751,7 +703,7 @@ export default function GrnPage() {
             </div>
           )}
 
-          {/* ── FIND ─────────────────────────────────────────────────────── */}
+          {}
           {tab === 'find' && (
             <div className="po-card no-print">
               <div className="po-find">
@@ -807,7 +759,7 @@ export default function GrnPage() {
             </div>
           )}
 
-          {/* ── DETAILS ──────────────────────────────────────────────────── */}
+          {}
           {tab === 'details' && (
             <div className="po-card">
               <div className="po-form no-print">
@@ -978,10 +930,7 @@ export default function GrnPage() {
                       </tr>
                     ))}
 
-                    {/* ── the line being received right now ──────────────────
-                        One row only: it carries the Add button, and the moment
-                        it is added the next line of the purchase order takes
-                        its place with the cursor back on Cost Price. */}
+                    {}
                     {entry && (
                       <tr className="po-entry">
                         <td className="num">{lines.length + 1}</td>
@@ -1144,9 +1093,7 @@ export default function GrnPage() {
         </div>
       </div>
 
-      {/* ── TELL AN ADMIN TO CONFIRM IT ───────────────────────────────────
-          Opened by Save (the receipt is in, the stock has not moved yet) and by
-          the Message Admin button. Pick a person — or type a number — and send. */}
+      {}
       {notifyOpen && (
         <div className="modal-bg no-print" onClick={() => setNotifyOpen(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -1219,7 +1166,7 @@ export default function GrnPage() {
         </div>
       )}
 
-      {/* ── WHICH COPY? (Print like PO) ─────────────────────────── */}
+      {}
       {printAsk && (
         <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Print GRN">
           <div className="ask-card">
@@ -1255,7 +1202,7 @@ export default function GrnPage() {
         </div>
       )}
 
-      {/* ── COST AND RETAIL PRICE (legacy popup, page 6) ─────────────────── */}
+      {}
       {popupLine && (
         <div className="modal-bg no-print" onClick={() => setPopupKey(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -1297,8 +1244,6 @@ export default function GrnPage() {
   );
 }
 
-/* ── page CSS ────────────────────────────────────────────────────────────── */
-
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -1319,7 +1264,6 @@ const PAGE_CSS = `
   input:disabled, select:disabled, textarea:disabled {
     background-color:#eef2f2; color:#7b8f92; -webkit-text-fill-color:#7b8f92;
   }
-
 
   @keyframes toastIn { from{opacity:0;transform:translateX(-50%) translateY(16px);} to{opacity:1;transform:translateX(-50%) translateY(0);} }
   .toast {

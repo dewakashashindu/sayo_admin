@@ -1,19 +1,6 @@
-// src/app/api/taxes/route.ts
-// Tax table feed for the bill screen.
-//
-// GET /api/taxes        → only the taxes with Enable = 1 (what a bill may use)
-// GET /api/taxes?all=1  → every row of tbl_taxes, disabled ones included
-//
-//   → { success, data: [ { TaxCode, TaxDescription, TaxPrecentage, Enable,
-//                          ListingOrder, ServiceCharge, ItemBasedTax } ] }
-//
-// Raw SQL on purpose: the live table carries ListingOrder / ServiceCharge /
-// ItemBasedTax, which the generated Prisma client does not know about, and the
-// bill must never depend on a regenerated client.
-// `(bit + 0)` turns the BIT(1) columns into plain 0/1 integers — a raw Buffer
-// cannot travel through JSON.
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { normaliseTaxRows, type TaxRow } from "@/lib/billingTaxes";
 
 export const runtime = "nodejs";
@@ -21,7 +8,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 export async function GET(req: NextRequest) {

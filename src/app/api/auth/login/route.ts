@@ -12,10 +12,6 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/* ── Brute-force protection (this screen had none) ──────────────────────── *
- * Same two counters as the staff sign-in: per caller (socket address, not the
- * header a caller can type) and per account — counted on WRONG passwords only,
- * cleared by a successful sign-in. */
 const CUSTOMER_LOGIN_IP_LIMIT = 20;
 const CUSTOMER_LOGIN_ACCOUNT_LIMIT = 8;
 const CUSTOMER_LOGIN_WINDOW_MS = 10 * 60 * 1000;
@@ -63,8 +59,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Find user in Tbl_CustomerMaster ───────────────────────────────────
-    let user: {
+        let user: {
       CusCode:  string;
       CusName:  string;
       CusEmail: string;
@@ -100,8 +95,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ── Password check ─────────────────────────────────────────────────────
-    const passwordMatch = await bcrypt.compare(password, user.PSW);
+        const passwordMatch = await bcrypt.compare(password, user.PSW);
     if (!passwordMatch) {
       rateLimit(accountRule);   // count the wrong guess against the account
       return NextResponse.json(

@@ -1,21 +1,3 @@
-// src/lib/rateLimit.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// A small in-memory rate limiter, shared by every public endpoint.
-//
-// WHY: the booking form, the register form and the password-reset screens can be
-// opened by anyone without logging in — and each of them sends an SMS or an
-// e-mail. A script calling them in a loop empties the Text.lk balance and gets
-// the Gmail account blocked. So every one of those endpoints is now counted per
-// caller, per account and per phone number.
-//
-// WHAT IT IS NOT: a distributed limiter. The counters live in this process, so
-// if the app is ever started as several processes behind a load balancer, each
-// process counts on its own. For a single server (this shop) that is exactly
-// what is needed, and it needs no Redis and no extra service.
-//
-// The arithmetic is kept pure and separate from the storage, so
-// `bash scripts/run-billing-tests.sh` can check the rules without a server.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** How a bucket behaves. `limit` requests are allowed per `windowMs`. */
 export interface RateRule {

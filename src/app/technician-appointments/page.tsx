@@ -1,19 +1,3 @@
-// src/app/technician-appointments/page.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// "Technician's Appointments" — LIST screen (READ-ONLY).
-//
-// • Shows the appointments of the technician this screen is used by. The
-//   identity is resolved from ?technician= → the signed-in staff user →
-//   this device → "All technicians" (see the resolution effect below).
-// • "All technicians" is a real, labelled answer: it lists the whole day, so a
-//   booking that the BILL screen pushed back from DONE to ONGOING (REVERT)
-//   can never be hidden here by a name that does not match.
-// • The list refreshes itself (20 s poll + whenever the tab is looked at), so a
-//   revert done on another screen appears without pressing Refresh.
-// • No edit / confirm / cancel / reschedule actions on this screen.
-// • ONLY checked-in (ongoing) appointments are clickable → opens the detail
-//   screen at /technician-appointments/[bookingID].
-// ─────────────────────────────────────────────────────────────────────────────
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -262,13 +246,7 @@ export default function TechnicianAppointmentsPage() {
       .catch(() => undefined);
   }, []);
 
-  /* ── who is this screen for? ──────────────────────────────────────────────
-     1. ?technician=<UserId|name> in the URL (support / review),
-     2. the signed-in staff user, when Staff/User details knows them,
-     3. the technician saved on this device (older builds),
-     4. ALL — the whole day. A technician name that matches nothing therefore
-        shows the day's bookings instead of an empty screen. */
-  useEffect(() => {
+    useEffect(() => {
     if (choiceResolved || techDirectory.length === 0) return;
     let cancelled = false;
 

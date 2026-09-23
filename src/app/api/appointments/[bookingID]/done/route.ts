@@ -1,19 +1,12 @@
-// src/app/api/appointments/[bookingID]/done/route.ts
-// Technician workstation: mark a checked-in appointment as DONE (work
-// completed). Only then can the booking move to billing.
-//
-// POST /api/appointments/:bookingID/done
-//
-// NOTE: raw SQL (like the legacy appointments API) so the route does not
-// depend on the generated Prisma client being up to date.
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = global as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma || new PrismaClient();
+const prisma = globalForPrisma.prisma || newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ bookingID: string }> };

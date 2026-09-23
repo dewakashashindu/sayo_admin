@@ -1,30 +1,3 @@
-// src/lib/billingBill.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Everything that has to be true before a bill may be written to the four
-// legacy bill tables. Pure functions only — no database access — so the whole
-// money/mapping layer is testable on its own. The route that actually inserts
-// the rows is src/app/api/billing/booking/[bookingID]/complete/route.ts.
-//
-//   tbl_billheader  LocCode, BillNo, Txndate, Gross, DisPre, DisVal,
-//                   ServiceCharge, OtherServiceCharge, TotalTaxAmount,
-//                   AdvAmount, NetTotal, CusID, TxnTime, ReferalCusID,
-//                   RewardPoints, CashierID, Rmks
-//   tbl_billdetail  LocCode, BillNo, ItemID, Qty, SalesPrice, TotalItmPrice,
-//                   CostPrice                        — key (LocCode, BillNo, ItemID)
-//   tbl_billpaytxn  LocCode, BillNo, PayCode, TenderedAmt, ActAmt, Rmks
-//                                                    — key (LocCode, BillNo, PayCode)
-//   tbl_billtaxes   LocCode, BillNo, TaxCode, TaxAmount   (TaxAmount is CHAR(10)!)
-//
-// Two key facts shape this file:
-//   • `tbl_billdetail` and `tbl_billpaytxn` are keyed on ItemID / PayCode, so a
-//     bill can hold ONE row per item and ONE row per pay code. Lines are merged
-//     accordingly and every payment gets its own unique pay code.
-//   • `tbl_billdetail.ItemID` is CHAR(15) and holds the FULL item code from
-//     tbl_itemmaster (see scripts/migrate-itemcode-char15.sql). Item codes are
-//     never cut down to 10 characters here — that cut is exactly what made two
-//     items sharing a code prefix indistinguishable. `PayCode` is CHAR(10) and
-//     holds the short payment code, as do the tax / customer / cashier codes.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import { money } from "./billingTaxes";
 import { itemCode } from "./itemCode";
@@ -39,10 +12,6 @@ export const SHORT_CODE_LENGTH = 10;
 
 /** CHAR(10) column that holds an amount, e.g. tbl_billtaxes.TaxAmount. */
 export const AMOUNT_TEXT_LENGTH = 10;
-
-/* ─────────────────────────────────────────────────────────────────────────
-   ITEM LINES
-   ───────────────────────────────────────────────────────────────────────── */
 
 export interface BillLineInput {
   /** Item master / service item code. Empty when the cashier typed free text. */
@@ -144,10 +113,6 @@ export function linesWithoutCode(lines: readonly BillLineInput[]): BillLineInput
   return lines.filter((line) => !itemCode(line.itemId));
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
-   PAYMENTS
-   ───────────────────────────────────────────────────────────────────────── */
-
 /** Pay code per payment method — kept short, the column is CHAR(10). */
 const METHOD_PAY_CODE: Record<PayMethod, string> = {
   cash: "CASH",
@@ -211,15 +176,6 @@ export function paymentRemark(type: string, remark: string): string {
   return parts.join(" · ").substring(0, 200);
 }
 
-/**
- * One row per payment line, each with its own pay code — `VISA`, then `VISA2`
- * when the same code is used twice on one bill, so the
- * (LocCode, BillNo, PayCode) primary key is never violated.
- *
- * TenderedAmt is what the customer handed over, ActAmt is what was applied to
- * the bill: paying a LKR 2,500 bill with 3,000 cash stores
- * tendered 3000 / act 2500 (the 500 is change, exactly what the screen shows).
- */
 export function allocatePayments(
   payments: readonly PaymentEntry[],
   netTotal: number,
@@ -259,10 +215,6 @@ export function allocatePayments(
   return rows;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
-   TAXES
-   ───────────────────────────────────────────────────────────────────────── */
-
 export interface BillTaxRow {
   taxCode: string;
   taxDescription: string;
@@ -301,10 +253,6 @@ export function billTaxRows(lines: readonly TaxLine[]): BillTaxRow[] {
     }));
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
-   HEADER
-   ───────────────────────────────────────────────────────────────────────── */
-
 export interface BillHeaderInput {
   gross: number;
   discountPercent: number;
@@ -333,15 +281,6 @@ export interface BillSummary {
   netTotal: number;
 }
 
-/**
- * The numbers that go into tbl_billheader, read back out of the tax breakdown
- * so the header can never disagree with the tax table:
- *
- *   Gross − DisVal + ServiceCharge + TotalTaxAmount = NetTotal
- *
- * ServiceCharge holds the `ServiceCharge = 1` rows; every other tax (VAT, NBT,
- * SSCL, …) is money owed as tax and lands in TotalTaxAmount.
- */
 export function buildBillSummary(
   lines: readonly TaxLine[],
   gross: number,

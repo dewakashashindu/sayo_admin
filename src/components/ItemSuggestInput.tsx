@@ -1,19 +1,4 @@
 'use client';
-// src/components/ItemSuggestInput.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// The item-name box used by the Purchase Order and GRN lines.
-//
-// Type two characters and the names come straight out of tbl_itemmaster for
-// the selected location (GET /api/items/search — the same endpoint the bill
-// screen and the technician recipe editor use, so every screen shows the same
-// code, the same name and the same prices).
-//
-// The list is rendered through <FloatingPanel>, so no card, table wrapper or
-// `overflow:hidden` ancestor can ever cut it off — the round-10 complaint.
-//
-// Picking a suggestion hands the WHOLE row to the caller: the code from the
-// database, its unit, the cost price and the retail price.
-// ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useRef, useState } from 'react';
 import FloatingPanel from './FloatingPanel';
 

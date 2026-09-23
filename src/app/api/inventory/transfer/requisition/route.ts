@@ -4,6 +4,7 @@
 // Mirrors VB6 Tbl_TransferReqHeder/Detail save — see image-1.png: GetSerialNo(GetTxnNo "TRQ") → Insert heder → loop detail
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { itemCode } from "@/lib/itemCode";
 import { nextSerialTx, SERIAL_CODES } from "@/lib/serials";
@@ -27,14 +28,13 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? "").trim();
 
 interface RawLine { itemCode?: unknown; unitID?: unknown; costPrice?: unknown; trQty?: unknown; }
 
-/* ── GET — list ──────────────────────────────────────────────────────── */
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
@@ -101,7 +101,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/* ── POST — create (Save Confirmation Details) ────────────────────────── */
 export async function POST(req: NextRequest) {
   const tag = "POST /api/inventory/transfer/requisition";
   try {
@@ -126,10 +125,11 @@ export async function POST(req: NextRequest) {
       const toLoc = await findLocation(tx, toRaw);
       if (!toLoc) throw new InvError(`Unknown To location “${toRaw}”.`, 400);
 
-      // resolve items against From location (like VB: Tbl_RowItems where LocCode=From)
-      const items = await resolveItems(tx, fromLoc, rawLines.map(l=> itemCode(l.itemCode)));
+            // master the request can pick from is the store's one, so it is read
+      // at the To location (the same one the transfer note will issue from).
+      const items = await resolveItems(tx, toLoc, rawLines.map(l=> itemCode(l.itemCode)));
       const missing = rawLines.map(l=> invId(l.itemCode, "Item code", 50)).filter(c=> !items.has(itemCode(c)));
-      if (missing.length) throw new InvError(`These item codes are not in the item master for ${fromLoc}: ${missing.join(", ")}.`, 400);
+      if (missing.length) throw new InvError(`These item codes are not in the item master for ${toLoc}: ${missing.join(", ")}.`, 400);
 
       // build lines with values (VB: CostPrice from Columns("CostPrice"), TR QTY from Columns("TR QTY"), ItemValue = Cost*TRQty)
       const lines = rawLines.map((line, idx)=>{
@@ -150,8 +150,7 @@ export async function POST(req: NextRequest) {
       const netTotal = lines.reduce((s,l)=> s + l.itemValue, 0);
       const now = new Date();
 
-      // ── VB: dblSysSerNo = GetSerialNo(Trim(cmbLoc.BoundText)) / strTxnNo = GetTxnNo(Trim(cmbLoc.BoundText), "TRQ")
-      // We generate TC number via SERIAL_CODES.transferReq (alias TRQ). SysSerialNo = numeric part.
+            // We generate TC number via SERIAL_CODES.transferReq (alias TRQ). SysSerialNo = numeric part.
       let trNo = "";
       try {
         // 6-digit TC like TC000006 in screenshot
@@ -169,8 +168,7 @@ export async function POST(req: NextRequest) {
       }
       const sysSerNo = Number(trNo.replace(/\D/g,"")) || 0;
 
-      // ── VB: Insert Into Tbl_TransferReqHeder (FromLocCode,ToLoc,TRNO,TRDate,TRDueDate,NetTotal,UserID,Remarks,TxnDate,SysSerialNo,ConUserID,Confirmed,ConDatetime,TakenForTransfer) values(...)
-      // Note: VB uses set dateformat dmy but we pass JS Date; MySQL accepts.
+            // Note: VB uses set dateformat dmy but we pass JS Date; MySQL accepts.
       const confirmedFlag = confirmNow ? "Y" : "N";
       const conUser = confirmNow ? actor.userId : "";
       const conTime = confirmNow ? now : new Date("1900-01-01");
@@ -184,8 +182,7 @@ export async function POST(req: NextRequest) {
            ${invChar(conUser,10)}, ${confirmedFlag}, ${conTime}, ${'N'})
       `;
 
-      // ── VB: Loop grdItemList → Insert Into Tbl_TransferReqDetail (FromLocCode,ToLoc,TRNo,ItemCode,UnitID,CostPrice,TRQty,ItemValue,TransferConfNo,IssuedQTY) values(...)
-      for (const l of lines) {
+            for (const l of lines) {
         await tx.$executeRaw`
           INSERT INTO tbl_transferreqdetail
             (FromLocCode, ToLoc, TRNo, ItemCode, UnitID, CostPrice, TRQty, ItemValue, TransferConfNo, IssuedQTY)

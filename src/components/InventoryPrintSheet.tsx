@@ -1,7 +1,7 @@
 // src/components/InventoryPrintSheet.tsx
 // Generic print sheet that looks exactly like PoPrintSheet (PURCHASE ORDER)
 // but title and columns are parametrised for SRN / Damage / Recon.
-// Reuses the same PO_PRINT_CSS layout so the paper looks “galapenna”.
+// Reuses the same PO_PRINT_CSS layout so the printed sheet matches the other documents.
 import React from 'react';
 
 export interface PrintRow {

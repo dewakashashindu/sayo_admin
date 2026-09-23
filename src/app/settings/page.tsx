@@ -5,9 +5,6 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 
-/* ─────────────────────────────────────────
-   TYPES
-───────────────────────────────────────── */
 interface UserGroup {
   groupId: string;
   groupDes: string;
@@ -21,7 +18,6 @@ interface Speciality {
   specAreaID: string;
   specilities: string;
 }
-// ── NEW ──
 interface Location {
   locCode: string;   // LocCode  char(10)
   locDes: string;    // LocDes   varchar(50)
@@ -50,12 +46,8 @@ interface UserDetail {
   specAreaIDs: string[];
 }
 
-// ── Section type extended ──
 type Section = 'users' | 'groups' | 'bookingtypes' | 'specialities' | 'locations';
 
-/* ─────────────────────────────────────────
-   CONSTANTS
-───────────────────────────────────────── */
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', path: '/dashboard' },
   { key: 'mail',      label: 'Messages',  path: '/admin/messages' },
@@ -70,9 +62,6 @@ const NAV_ITEMS = [
   { key: 'settings',  label: 'Settings',  path: '/settings' },
 ];
 
-/* ─────────────────────────────────────────
-   EMPTY FACTORIES
-───────────────────────────────────────── */
 function emptyGroup(): UserGroup   { return { groupId: '', groupDes: '' }; }
 function emptyBookingType(): BookingType { return { bookingTypeID: '', bookingTypeDes: '', enabel: true }; }
 function emptySpeciality(): Speciality  { return { specAreaID: '', specilities: '' }; }
@@ -87,9 +76,6 @@ function emptyUser(defGroup: string): UserDetail {
   };
 }
 
-/* ─────────────────────────────────────────
-   CSS
-───────────────────────────────────────── */
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -297,9 +283,6 @@ const CSS = `
   }
 `;
 
-/* ─────────────────────────────────────────
-   ICONS
-───────────────────────────────────────── */
 function IGrid({s=20}:{s?:number})      { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>; }
 function IMail({s=20}:{s?:number})      { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>; }
 function ICal({s=20}:{s?:number})       { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>; }
@@ -326,7 +309,6 @@ function IPhone({s=13}:{s?:number})     { return <svg width={s} height={s} viewB
 function IStar({s=13}:{s?:number})      { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>; }
 function IKey({s=13}:{s?:number})       { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>; }
 function IClipboard({s=13}:{s?:number}) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>; }
-// ── NEW: Location pin icon ──
 function IMapPin({s=14}:{s?:number})    { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 1 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>; }
 
 function navIcon(key: string) {
@@ -344,9 +326,6 @@ function navIcon(key: string) {
   return <IGrid/>;
 }
 
-/* ─────────────────────────────────────────
-   SIDEBAR
-───────────────────────────────────────── */
 function Sidebar({ active, setActive, onLogout }: { active: string; setActive: (k: string) => void; onLogout: () => void }) {
   const [open, setOpen] = useState(false);
   const W = open ? 196 : 64;
@@ -378,9 +357,6 @@ function Sidebar({ active, setActive, onLogout }: { active: string; setActive: (
   );
 }
 
-/* ─────────────────────────────────────────
-   REUSABLE COMPONENTS
-───────────────────────────────────────── */
 function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <div className="chk-row" onClick={() => onChange(!checked)} role="checkbox" aria-checked={checked} tabIndex={0}
@@ -427,9 +403,6 @@ function SimpleListItem({ active, title, sub, badge, icon, onClick }: { active: 
   );
 }
 
-/* ═══════════════════════════════════════
-   MAIN PAGE
-═══════════════════════════════════════ */
 export default function SettingsPage() {
   const router  = useRouter();
   const [navKey, setNavKey] = useState('settings');
@@ -442,8 +415,7 @@ export default function SettingsPage() {
   const [saving, setSaving]       = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /* ── state ── */
-  const [users,        setUsers]        = useState<UserDetail[]>([]);
+    const [users,        setUsers]        = useState<UserDetail[]>([]);
   const [curUser,      setCurUser]      = useState<UserDetail>(emptyUser(''));
   const [isNewUser,    setIsNewUser]    = useState(true);
 
@@ -459,15 +431,11 @@ export default function SettingsPage() {
   const [curSpec,      setCurSpec]      = useState<Speciality>(emptySpeciality());
   const [isNewSpec,    setIsNewSpec]    = useState(true);
 
-  // ── NEW: locations state ──
-  const [locations,    setLocations]    = useState<Location[]>([]);
+    const [locations,    setLocations]    = useState<Location[]>([]);
   const [curLoc,       setCurLoc]       = useState<Location>(emptyLocation());
   const [isNewLoc,     setIsNewLoc]     = useState(true);
 
-  /* ══════════════════════════════════
-     LOAD ALL DATA
-  ══════════════════════════════════ */
-  const loadAll = useCallback(async () => {
+    const loadAll = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
@@ -496,8 +464,7 @@ export default function SettingsPage() {
       if (s && s.length > 0) { setCurSpec(s[0]); setIsNewSpec(false); }
       else { setCurSpec(emptySpeciality()); setIsNewSpec(true); }
 
-      // ── NEW: init location selection ──
-      if (l && l.length > 0) { setCurLoc(l[0]); setIsNewLoc(false); }
+            if (l && l.length > 0) { setCurLoc(l[0]); setIsNewLoc(false); }
       else { setCurLoc(emptyLocation()); setIsNewLoc(true); }
 
     } catch (err: any) {
@@ -509,12 +476,10 @@ export default function SettingsPage() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  /* ── helpers ── */
-  const groupDes = (id: string) => groups.find(g => g.groupId === id)?.groupDes ?? id;
+    const groupDes = (id: string) => groups.find(g => g.groupId === id)?.groupDes ?? id;
   const specDes  = (id: string) => specialities.find(s => s.specAreaID === id)?.specilities ?? id;
 
-  /* ── filtered lists ── */
-  const filteredUsers = useMemo(() => users.filter(u =>
+    const filteredUsers = useMemo(() => users.filter(u =>
     u.userName.toLowerCase().includes(search.toLowerCase()) ||
     u.userId.toLowerCase().includes(search.toLowerCase()) ||
     u.logName.toLowerCase().includes(search.toLowerCase())
@@ -535,15 +500,13 @@ export default function SettingsPage() {
     s.specAreaID.toLowerCase().includes(search.toLowerCase())
   ), [specialities, search]);
 
-  // ── NEW: filtered locations ──
-  const filteredLocs = useMemo(() => locations.filter(l =>
+    const filteredLocs = useMemo(() => locations.filter(l =>
     l.locDes.toLowerCase().includes(search.toLowerCase()) ||
     l.locCode.toLowerCase().includes(search.toLowerCase()) ||
     l.address.toLowerCase().includes(search.toLowerCase())
   ), [locations, search]);
 
-  /* ── dirty checks ── */
-  const isDirtyUser  = useMemo(() => {
+    const isDirtyUser  = useMemo(() => {
     if (isNewUser) return JSON.stringify(curUser) !== JSON.stringify(emptyUser(curUser.groupId));
     const orig = users.find(u => u.userId === curUser.userId);
     return orig ? JSON.stringify(curUser) !== JSON.stringify(orig) : false;
@@ -567,8 +530,7 @@ export default function SettingsPage() {
     return orig ? JSON.stringify(curSpec) !== JSON.stringify(orig) : false;
   }, [curSpec, specialities, isNewSpec]);
 
-  // ── NEW: location dirty check ──
-  const isDirtyLoc   = useMemo(() => {
+    const isDirtyLoc   = useMemo(() => {
     if (isNewLoc) return JSON.stringify(curLoc) !== JSON.stringify(emptyLocation());
     const orig = locations.find(l => l.locCode === curLoc.locCode);
     return orig ? JSON.stringify(curLoc) !== JSON.stringify(orig) : false;
@@ -592,10 +554,7 @@ export default function SettingsPage() {
     setUserTab('identification');
   }
 
-  /* ══════════════════════════════════
-     USER CRUD
-  ══════════════════════════════════ */
-  function handleNewUser() {
+    function handleNewUser() {
     if (!confirmDiscard('Discard unsaved changes and create a new user?', isDirtyUser)) return;
     setCurUser(emptyUser(groups[0]?.groupId ?? ''));
     setIsNewUser(true);
@@ -666,10 +625,7 @@ export default function SettingsPage() {
     reader.readAsDataURL(file);
   }
 
-  /* ══════════════════════════════════
-     GROUP CRUD
-  ══════════════════════════════════ */
-  function handleNewGroup() {
+    function handleNewGroup() {
     if (!confirmDiscard('Discard unsaved changes and create a new group?', isDirtyGroup)) return;
     setCurGroup(emptyGroup()); setIsNewGroup(true);
   }
@@ -717,10 +673,7 @@ export default function SettingsPage() {
     else { const orig = groups.find(g => g.groupId === curGroup.groupId); if (orig) setCurGroup({ ...orig }); }
   }
 
-  /* ══════════════════════════════════
-     BOOKING TYPE CRUD
-  ══════════════════════════════════ */
-  function handleNewBT() {
+    function handleNewBT() {
     if (!confirmDiscard('Discard unsaved changes and create a new booking type?', isDirtyBT)) return;
     setCurBT(emptyBookingType()); setIsNewBT(true);
   }
@@ -768,10 +721,7 @@ export default function SettingsPage() {
     else { const orig = bookingTypes.find(b => b.bookingTypeID === curBT.bookingTypeID); if (orig) setCurBT({ ...orig }); }
   }
 
-  /* ══════════════════════════════════
-     SPECIALITY CRUD
-  ══════════════════════════════════ */
-  function handleNewSpec() {
+    function handleNewSpec() {
     if (!confirmDiscard('Discard unsaved changes and create a new speciality?', isDirtySpec)) return;
     setCurSpec(emptySpeciality()); setIsNewSpec(true);
   }
@@ -819,10 +769,7 @@ export default function SettingsPage() {
     else { const orig = specialities.find(s => s.specAreaID === curSpec.specAreaID); if (orig) setCurSpec({ ...orig }); }
   }
 
-  /* ══════════════════════════════════
-     LOCATION CRUD  ← NEW
-  ══════════════════════════════════ */
-  function handleNewLoc() {
+    function handleNewLoc() {
     if (!confirmDiscard('Discard unsaved changes and create a new location?', isDirtyLoc)) return;
     setCurLoc(emptyLocation()); setIsNewLoc(true);
   }
@@ -870,8 +817,7 @@ export default function SettingsPage() {
     else { const orig = locations.find(l => l.locCode === curLoc.locCode); if (orig) setCurLoc({ ...orig }); }
   }
 
-  /* ── navigation ── */
-  function handleNavigate(path: string, key: string) {
+    function handleNavigate(path: string, key: string) {
     if (!confirmDiscard('You have unsaved changes. Leave this page without saving?', isDirtyActive)) return;
     setNavKey(key); router.push(path);
   }
@@ -883,10 +829,7 @@ export default function SettingsPage() {
   const PAGE = '#c2d4d4';
   const HDR  = '#dae6e6';
 
-  /* ══════════════════════════════════
-     LOADING / ERROR
-  ══════════════════════════════════ */
-  if (loading) {
+    if (loading) {
     return (
       <>
         <style jsx global>{CSS}</style>
@@ -914,10 +857,7 @@ export default function SettingsPage() {
     );
   }
 
-  /* ══════════════════════════════════
-     RENDER
-  ══════════════════════════════════ */
-  return (
+    return (
     <>
       <style jsx global>{CSS}</style>
 
@@ -952,7 +892,7 @@ export default function SettingsPage() {
               <button className={`seg-btn ${section === 'groups' ? 'active' : ''}`}       onClick={() => switchSection('groups')}><IIdCard s={14} /> User Groups</button>
               <button className={`seg-btn ${section === 'bookingtypes' ? 'active' : ''}`} onClick={() => switchSection('bookingtypes')}><ICal s={14} /> Booking Types</button>
               <button className={`seg-btn ${section === 'specialities' ? 'active' : ''}`} onClick={() => switchSection('specialities')}><IStar s={14} /> Specialities</button>
-              {/* ── NEW tab ── */}
+              {}
               <button className={`seg-btn ${section === 'locations' ? 'active' : ''}`}    onClick={() => switchSection('locations')}><IMapPin s={14} /> Locations</button>
             </div>
           </div>
@@ -960,7 +900,7 @@ export default function SettingsPage() {
           {/* BODY */}
           <div className="main-body" style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', gap: 13 }}>
 
-            {/* ═══════ USERS ═══════ */}
+            {}
             {section === 'users' && (
               <>
                 <div className="left-panel" style={{ width: 260, flexShrink: 0, background: '#deeaea', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 1px 5px rgba(0,0,0,0.08)' }}>
@@ -1049,7 +989,7 @@ export default function SettingsPage() {
                                 {groups.map(g => <option key={g.groupId} value={g.groupId}>{g.groupDes}</option>)}
                               </select>
                             </FieldRow>
-                            {/* ── Working Location now uses real location dropdown ── */}
+                            {}
                             <FieldRow label="Working Location">
                               <select className="frm-select" value={curUser.workingLocID} onChange={e => setCurUser(p => ({ ...p, workingLocID: e.target.value }))}>
                                 <option value="">-- Select Location --</option>
@@ -1117,7 +1057,7 @@ export default function SettingsPage() {
               </>
             )}
 
-            {/* ═══════ GROUPS ═══════ */}
+            {}
             {section === 'groups' && (
               <>
                 <div className="left-panel" style={{ width: 250, flexShrink: 0, background: '#deeaea', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 1px 5px rgba(0,0,0,0.08)' }}>
@@ -1170,7 +1110,7 @@ export default function SettingsPage() {
               </>
             )}
 
-            {/* ═══════ BOOKING TYPES ═══════ */}
+            {}
             {section === 'bookingtypes' && (
               <>
                 <div className="left-panel" style={{ width: 250, flexShrink: 0, background: '#deeaea', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 1px 5px rgba(0,0,0,0.08)' }}>
@@ -1219,7 +1159,7 @@ export default function SettingsPage() {
               </>
             )}
 
-            {/* ═══════ SPECIALITIES ═══════ */}
+            {}
             {section === 'specialities' && (
               <>
                 <div className="left-panel" style={{ width: 260, flexShrink: 0, background: '#deeaea', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 1px 5px rgba(0,0,0,0.08)' }}>
@@ -1272,7 +1212,7 @@ export default function SettingsPage() {
               </>
             )}
 
-            {/* ═══════ LOCATIONS  ← NEW SECTION ═══════ */}
+            {}
             {section === 'locations' && (
               <>
                 {/* Left panel — list */}

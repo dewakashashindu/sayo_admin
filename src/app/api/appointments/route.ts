@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { timeLabelFromValue } from "@/lib/legacyTime";
 import { sendAppointmentSMS } from "@/lib/sms";
 import { verifyAdminToken, ADMIN_COOKIE } from "@/lib/adminSession";
@@ -29,7 +30,7 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
@@ -589,17 +590,6 @@ function resolveSchedulePairs(
     : buildFallbackSchedule(details, itemDurationMap, appointmentStartMin);
 }
 
-/**
- * Collapse repeated service names for display.
- *
- * A walk-in for several guests stores the same service once per guest, so the
- * raw per-row list can repeat one name a dozen times. Rendering that list
- * verbatim gives "Hair Color, Hair Color, Hair Color, …"; this turns it into
- * "Hair Color × 12".
- *
- * Only the display string is collapsed. `serviceSchedule` keeps one entry per
- * stored row, so per-guest timing, totals and conflict checks are untouched.
- */
 function collapseServiceNames(names: string[]): string[] {
   const counts = new Map<string, number>();
   names.forEach((name) => counts.set(name, (counts.get(name) ?? 0) + 1));
@@ -792,14 +782,7 @@ export async function GET(req: NextRequest) {
         AND RTRIM(h.LocCode)   IN (${Prisma.join(locCodeList)})
     `;
 
-    /* The item-master join resolves the stored ServiceItemID (the full
-       CHAR(15) item code, or a legacy 10-character prefix) and can therefore
-       return the same detail row more than once — colour/size variants and
-       duplicated items share a prefix, and a legacy row whose prefix is not
-       unique matches every item under it. That multiplies services, prices,
-       durations and guest counts. Collapse back to the real key: one row per
-       (LocCode, BookingID, GuessID, ServiceItemID). */
-    const details = dedupeBookingDetailRows(rawDetails);
+        const details = dedupeBookingDetailRows(rawDetails);
 
     const cusCodeList = [
       ...new Set(filtered.map((header) => trimValue(header.CusCode))),
@@ -1037,14 +1020,7 @@ export async function GET(req: NextRequest) {
           ? scheduleEnd - scheduleStart
           : 0;
 
-      /* The time the technician actually works to is the scheduled service
-         time. The header label (`timeSlot` — BookingDate, or the legacy
-         Remarks time behind it) can be stale, and that is what made the
-         technician list disagree with the booking itself (noticed after a
-         bill-screen REVERT put the booking back on the list, where only the
-         list is visible). The technician screens read these two fields; every
-         other screen keeps `timeSlot` exactly as before. */
-      const scheduledStartLabel = schedulePairs.length
+            const scheduledStartLabel = schedulePairs.length
         ? minutesToClock(
             Math.min(...schedulePairs.map((pair) => pair.entry.startMin)),
           )
@@ -1111,13 +1087,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    /* ── technician narrowing ────────────────────────────────────────────
-       Applied to the assembled rows, so the matcher (primary TechID,
-       supporting technicians, provider name) is exactly the one the screen
-       would apply. A booking that the bill screen pushed back from DONE to
-       ONGOING is owned by the same technician as before, so it stays in the
-       list instead of disappearing. */
-    let technician: { userId: string; name: string } | null = null;
+        let technician: { userId: string; name: string } | null = null;
     let rows = data;
 
     if (technicianParam) {

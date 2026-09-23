@@ -1,26 +1,6 @@
-// src/app/api/inventory/grn/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GET  /api/inventory/grn      ?locCode=…&status=confirmed|pending&type=gr|dg&q=…
-// POST /api/inventory/grn      body: {
-//          locCode, poNo?, supID?, supInvNo, grnDate, remarks, discount,
-//          adjustment, confirm,
-//          lines: [{ itemCode, unitID, batchNo, costPrice, retailPrice, grnQty,
-//                    freeQty, expDate, updItemPrice }] }
-//
-// A GRN is either
-//   GR  — against a CONFIRMED purchase order (PONO filled, GRNTYPE 'GR'), or
-//   DG  — a DIRECT GRN with no order behind it (PONO empty, GRNTYPE 'DG').
-//
-// WHAT THIS ROUTE DOES NOT DO
-// Stock is NOT moved here. A saved-but-not-confirmed GRN is a document; the
-// stock, the ledger row, the PO write-back and the item-master price all happen
-// in POST /api/inventory/grn/:grnNo/confirm — one transaction, once.
-//
-// OVER-RECEIPT is checked at save (so the user hears about it immediately) and
-// again at confirm, which is the authoritative check.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { itemCode } from "@/lib/itemCode";
 import { nextSerialTx, SERIAL_CODES } from "@/lib/serials";
@@ -52,7 +32,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? "").trim();
@@ -68,8 +48,6 @@ interface RawGrnLine {
   expDate?: unknown;
   updItemPrice?: unknown;
 }
-
-/* ── GET — list ──────────────────────────────────────────────────────────── */
 
 export async function GET(req: NextRequest) {
   try {
@@ -163,8 +141,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/* ── POST — save ─────────────────────────────────────────────────────────── */
-
 export async function POST(req: NextRequest) {
   const tag = "POST /api/inventory/grn";
   try {
@@ -187,8 +163,7 @@ export async function POST(req: NextRequest) {
       const locCode = await findLocation(tx, locCodeRaw);
       if (!locCode) throw new InvError(`Unknown location “${locCodeRaw}”.`, 400);
 
-      /* ── the purchase order behind the receipt (optional) ── */
-      let poNo = "";
+            let poNo = "";
       let supID = "";
       if (poNoRaw) {
         poNo = invId(poNoRaw, "PO number", 10);
@@ -258,8 +233,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      /* ── the lines being stored ── */
-      const lines = rawLines.map((raw, index) => {
+            const lines = rawLines.map((raw, index) => {
         const code = itemCode(raw.itemCode);
         const item = items.get(code)!;
         const grnQty = invQty(raw.grnQty, `GRN quantity of ${item.des}`, { allowZero: true });

@@ -5,6 +5,7 @@
 // requisition a transfer note already took (TakenForTransfer='Y') is read-only.
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { itemCode } from "@/lib/itemCode";
 import {
@@ -27,7 +28,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ trNo: string }> };
@@ -108,10 +109,12 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   }
 }
 
-/** Lock the header and prove it is still a working draft (pending, not taken). */
+/** Lock the header and prove it is still a working draft (pending, not taken, nothing issued yet). */
 async function lockPendingHead(tx: Prisma.TransactionClient, fromLoc: string, toLoc: string, trNo: string) {
-  const rows = await tx.$queryRaw<{ TRNO: string; Confirmed: string; Taken: string }[]>`
-    SELECT RTRIM(h.TRNO) AS TRNO, UPPER(h.Confirmed) AS Confirmed, UPPER(h.TakenForTransfer) AS Taken
+  const rows = await tx.$queryRaw<{ TRNO: string; Confirmed: string; Taken: string; Issued: number }[]>`
+    SELECT RTRIM(h.TRNO) AS TRNO, UPPER(h.Confirmed) AS Confirmed, UPPER(h.TakenForTransfer) AS Taken,
+      (SELECT IFNULL(SUM(d.IssuedQTY),0) FROM tbl_transferreqdetail d
+        WHERE ${keySql("d.FromLocCode")}=${keySql("h.FromLocCode")} AND ${keySql("d.ToLoc")}=${keySql("h.ToLoc")} AND ${keySql("d.TRNo")}=${keySql("h.TRNO")}) AS Issued
     FROM tbl_transferreqheder h
     WHERE ${keySql("h.FromLocCode")}=${keyVal(fromLoc)} AND ${keySql("h.ToLoc")}=${keyVal(toLoc)} AND ${keySql("h.TRNO")}=${keyVal(trNo)}
     FOR UPDATE
@@ -120,12 +123,15 @@ async function lockPendingHead(tx: Prisma.TransactionClient, fromLoc: string, to
   if (trim(rows[0].Confirmed) === "Y") {
     throw new InvError(`Requisition ${trNo} is confirmed — it can no longer be edited or deleted.`, 409);
   }
-  if (trim(rows[0].Taken) === "Y") {
+    if (trim(rows[0].Taken) === "Y" || trim(rows[0].Taken) === "1") {
     throw new InvError(`A transfer note was already made from ${trNo} — the requisition is read-only now.`, 409);
+  }
+  // a confirmed note has issued at least part of it — editing would corrupt IssuedQTY
+  if (Number(rows[0].Issued || 0) > 0) {
+    throw new InvError(`Items were already issued against ${trNo} — the requisition is read-only now.`, 409);
   }
 }
 
-/* ── PUT — replace a PENDING requisition (number and locations stay) ─────── */
 export async function PUT(req: NextRequest, ctx: Ctx) {
   const tag = "PUT /api/inventory/transfer/requisition/[trNo]";
   try {
@@ -149,12 +155,15 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 
         const fromLoc = await findLocation(tx, fromRaw);
         if (!fromLoc) throw new InvError(`Unknown From location “${fromRaw}”.`, 400);
+        const toLoc = await findLocation(tx, toRaw);
+        if (!toLoc) throw new InvError(`Unknown To location “${toRaw}”.`, 400);
 
-        const items = await resolveItems(tx, fromLoc, rawLines.map((l) => itemCode(l.itemCode)));
+        // items are read at the To (main store) — what the sub is asking for
+        const items = await resolveItems(tx, toLoc, rawLines.map((l) => itemCode(l.itemCode)));
         const lines = rawLines.map((line) => {
           const code = itemCode(line.itemCode);
           const it = items.get(code);
-          if (!it) throw new InvError(`Item ${code} not in ${fromLoc}`, 400);
+          if (!it) throw new InvError(`Item ${code} not in ${toLoc}`, 400);
           const qty = invQty(line.trQty, `TR QTY of ${it.des}`);
           const cost = trim(line.costPrice) === "" ? it.costPrice : invPrice(line.costPrice, `Cost price of ${it.des}`);
           return {
@@ -201,7 +210,6 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   }
 }
 
-/* ── DELETE — only while PENDING and not yet taken by a transfer note ─────── */
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const tag = "DELETE /api/inventory/transfer/requisition/[trNo]";
   try {

@@ -5,15 +5,18 @@
 // Only the system qty changes; nothing else (no price, no category).
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invActor, invFail, invId, InvError, keySql, keyVal, invChar } from '@/lib/inventoryServer';
 import { stockAsItIs } from '@/lib/stockAsItIs';
+import { insertStockTxn } from '@/lib/stockTxnWriter';
+import { adjustBatchesToTotal } from '@/lib/itemDetailBatches';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ recNo: string }> };
@@ -54,7 +57,16 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         if (!item.length) throw new InvError(`Item ${code} not found in item master for ${locCode}.`, 409);
 
         await stockAsItIs(tx, { locCode, rowItemCode: code, txnNo: recNo, txnType: 'RC', txnQty: lastQty, sysSerialId: sysSer, userId: actor.userId, remarks: 'Stock Reconciliation', addDeduct, txnDate: now, txnDateTimeManual: now });
-        try { await tx.$executeRaw`UPDATE tbl_itemdetail SET ItemQty = ${lastQty} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(code)}`; } catch {}
+        try { await adjustBatchesToTotal(tx, locCode, code, lastQty); } catch {}
+        try {
+          await insertStockTxn(tx, {
+            locCode, itemCode: code, txnType: 'RC', refNo: recNo, txnDate: now,
+            qtyIn: addDeduct === '+' ? Math.abs(lastQty - preQty) : 0,
+            qtyOut: addDeduct === '-' ? Math.abs(lastQty - preQty) : 0,
+            balance: lastQty, costPrice: Number(l.CostPrice) || 0,
+            userId: actor.userId, remarks: 'Stock Reconciliation',
+          });
+        } catch {}
       }
 
       await tx.$executeRaw`UPDATE tbl_reconcilheder SET Confirmed='Y', ConUserID=${invChar(actor.userId, 10)}, ConDatetime=${now} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('RecNo')}=${keyVal(recNo)}`;

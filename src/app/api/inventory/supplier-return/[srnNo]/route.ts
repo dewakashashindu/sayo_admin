@@ -2,13 +2,14 @@
 // DELETE /api/inventory/supplier-return/:srnNo?locCode= — delete pending only
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invFail, keySql, keyVal, invId } from '@/lib/inventoryServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 const trim = (v: unknown) => String(v ?? '').trim();
 type Ctx = { params: Promise<{ srnNo: string }> };

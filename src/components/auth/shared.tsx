@@ -2,9 +2,6 @@
 
 import { useState, ReactNode } from 'react';
 
-/* ─────────────────────────────────────────
-   DESIGN TOKENS
-───────────────────────────────────────── */
 export const tokens = {
   color: {
     gold:        '#B8860B',
@@ -35,9 +32,6 @@ export const tokens = {
   },
 } as const;
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
 export function isValidEmail(v: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 }
@@ -55,9 +49,6 @@ export function getPasswordStrength(pw: string): number {
   return score;
 }
 
-/* ─────────────────────────────────────────
-   GLOBAL CSS
-───────────────────────────────────────── */
 export const globalCss = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -243,9 +234,6 @@ export const globalCss = `
   }
 `;
 
-/* ─────────────────────────────────────────
-   ICONS
-───────────────────────────────────────── */
 export const Ico = {
   Check: ({ s = 16, c = 'currentColor' }: { s?: number; c?: string }) => (
     <svg width={s} height={s} viewBox="0 0 24 24" fill="none"
@@ -323,9 +311,6 @@ export const Ico = {
   ),
 };
 
-/* ─────────────────────────────────────────
-   SHARED UI COMPONENTS
-───────────────────────────────────────── */
 export function Card({
   children,
   style,
@@ -566,9 +551,6 @@ export function Divider({ text = 'or' }: { text?: string }) {
   );
 }
 
-/* ─────────────────────────────────────────
-   SHARED STYLES
-───────────────────────────────────────── */
 export const spinnerStyle: React.CSSProperties = {
   width: '0.85rem',
   height: '0.85rem',

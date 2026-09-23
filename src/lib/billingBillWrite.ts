@@ -1,25 +1,3 @@
-// src/lib/billingBillWrite.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// The one place the four bill tables are written. Server-only (it needs the
-// Prisma client), used by
-//
-//   POST /api/billing/booking/[bookingID]/complete   → the real thing
-//   GET  /api/billing/diagnose/bill                  → a DRY RUN that performs
-//                                                      every statement and then
-//                                                      rolls the whole thing
-//                                                      back, so the exact
-//                                                      database error can be
-//                                                      read without writing a
-//                                                      single row
-//
-// Keeping both on the same code path means the dry run cannot drift away from
-// the real write: if the dry run passes, the real one passes.
-//
-// Every step is labelled. When something fails the caller gets the step name
-// (`header`, `detail`, `paytxn`, `taxes`, `booking`) plus the real database
-// message and a hint for the usual causes — the bill screen shows that instead
-// of a generic “could not be saved”.
-// ─────────────────────────────────────────────────────────────────────────────
 import { Prisma, PrismaClient } from "@prisma/client";
 import { nextSerialTx, SERIAL_CODES } from "./serials";
 import type { PaymentEntry } from "./billingPayments";
@@ -41,10 +19,6 @@ import { createItemCodeIndex, itemCode, legacyItemCode } from "./itemCode";
 
 /** Anything that can run raw queries — the shared client or a transaction. */
 export type SqlClient = Prisma.TransactionClient | PrismaClient;
-
-/* ─────────────────────────────────────────────────────────────────────────
-   ERRORS
-   ───────────────────────────────────────────────────────────────────────── */
 
 /** A failure with the step it happened on, so the screen can say where. */
 export class BillWriteError extends Error {
@@ -251,10 +225,6 @@ export async function applyItemMasterCosts<T extends CostedLine>(
   }
   return rows;
 }
-
-/* ─────────────────────────────────────────────────────────────────────────
-   WRITE (inside the transaction)
-   ───────────────────────────────────────────────────────────────────────── */
 
 export interface BillWriteRequest {
   locCode: string;

@@ -1,13 +1,3 @@
-// src/lib/stockAsItIs.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// VB6 frmStocks.StockAsItIs — galapenna widiyata MySQL
-// Public Function StockAsItIs(strLocCode As String, strItmCode As String, strTxnNo As String, strTxnType As String, dblTxnQty As Double, dblSysSerNo As Double) As Boolean
-//   rsItemDet.Open "Select * from Vu_RowItemMaster Where LocCode = '" & Trim(strLocCode) & "' And RowItemCode = '" & strItmCode & "' "
-//   Insert Into Tbl_TxnMovement (LocCode,RowItemCode,TxnNo,TxnType,TxnDate,PreQty,TxnQty,LastQty,UserId,SysSerialId,Remarks,AddDeduct,TXNDATETIMEMANUAL)Values(strLocCode, strItmCode, strTxnNo, strTxnType, dtCurDate, rsItemDet![StkBal], dblTxnQty, dblTxnQty, strUserId, dblSysSerNo, '', '', dtCurdateTime)
-//   Update Tbl_RowItems Set StkBal = dblTxnQty Where LocCode = Trim(strLocCode) And RowItemCode = Trim(strItmCode)
-// See image-1.png
-// In MySQL: Vu_RowItemMaster → tbl_itemmaster (StockBalance = StkBal), Tbl_RowItems → tbl_itemmaster
-// All 5 docs use this same ledger: PO (no stock), GRN (+), SRN (-), Damage (-), Recon (set). AddDeduct '+' when LastQty>PreQty else '-'.
 import { Prisma } from '@prisma/client';
 import { InvError, keySql, keyVal, invChar } from './inventoryServer';
 
@@ -63,8 +53,7 @@ export async function stockAsItIs(db: Db, args: StockAsItIsArgs): Promise<boolea
     await db.$executeRaw`UPDATE tbl_itemmaster SET StockBalance = ${lastQty} WHERE ${keySql('LocCode')}=${keyVal(loc)} AND ${keySql('ItemCode')}=${keyVal(code)}`;
   } catch (e: any) {
     const msg = String(e?.message || e);
-    // galapena VB: Err.Number 354354 is user-cancel / already handled via SackTrap → treat as ok (return false)
-    if (msg.includes('354354')) return false;
+        if (msg.includes('354354')) return false;
     throw new InvError(`Stock Adjestment Process. ${msg}`, 500);
   }
 

@@ -1,26 +1,3 @@
-// src/lib/itemCode.ts
-// Item-code normalisation + matching, shared by every module that reads or
-// writes an item code.
-//
-// WHY THIS EXISTS
-// tbl_itemmaster.ItemCode is CHAR(15) and is the real identity of an item.
-// The detail tables used to be CHAR(10) and stored only the FIRST 10
-// CHARACTERS of that code (tbl_bookingservicedetail.ServiceItemID,
-// Tbl_BookingServiceItemAddTech.ServiceItemID, Tbl_BookingServiceRecipe.
-// ServiceItemID/RawItemCode, Tbl_Recipes.MenuItmID, tbl_billdetail.ItemID), so
-// every lookup had to guess with LEFT(ItemCode, 10) — which silently resolves
-// to the WRONG item as soon as two item codes share their first 10 characters
-// (e.g. ITM0000000001 and ITM0000000002 both start with "ITM0000000").
-//
-// scripts/migrate-itemcode-char15.sql widens those columns to CHAR(15) so the
-// full code is stored everywhere. Rows written BEFORE that migration can still
-// hold the 10-character legacy prefix, so matching is always:
-//
-//   1. exact full code
-//   2. the legacy 10-character prefix, but only when it is unambiguous
-//
-// Pure module on purpose (no Prisma import) so the regression suite can compile
-// and exercise it directly.
 
 /** Width of an item code column (tbl_itemmaster.ItemCode, CHAR(15)). */
 export const ITEM_CODE_LENGTH = 15;
@@ -66,14 +43,6 @@ export interface ItemCodeIndex<T> {
   size: number;
 }
 
-/**
- * Build a lookup that resolves both full item codes and legacy 10-character
- * prefixes to the same item.
- *
- * A legacy prefix is only registered while it points at ONE item: if two master
- * rows share their first 10 characters the prefix key is dropped (and `get`
- * refuses it) instead of naming an arbitrary — wrong — item.
- */
 export function createItemCodeIndex<T>(
   rows: readonly T[],
   getCode: (row: T) => unknown,
@@ -112,16 +81,6 @@ export function createItemCodeIndex<T>(
   };
 }
 
-/**
- * SQL predicate: does this item-master row belong to this stored item code?
- *
- * `itemCodeColumn` is the master side (i.ItemCode), `storedCodeColumn` is the
- * code as stored on the detail row (d.ServiceItemID, b.ItemID, r.RawItemCode…).
- * Exact match first; a shorter stored value (legacy CHAR(10) row) is matched as
- * a prefix. RTRIM on both sides keeps this correct on PAD SPACE and NO PAD
- * collations alike, and the length guard stops an empty stored value from
- * matching every item.
- */
 export function itemCodeJoinSql(
   itemCodeColumn: string,
   storedCodeColumn: string,
@@ -136,13 +95,6 @@ export function itemCodeJoinSql(
   );
 }
 
-/**
- * Scalar subquery that resolves ONE item-master row for a stored code.
- *
- * Used where a plain LEFT JOIN would multiply rows when several items share a
- * legacy prefix — e.g. the technician-capacity guard, where a duplicated row
- * turns into a false "technician is busy" rejection.
- */
 export function itemCodeScalarSql(
   selectClause: string,
   storedCodeColumn: string,

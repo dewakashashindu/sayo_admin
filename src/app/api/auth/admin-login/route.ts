@@ -8,16 +8,6 @@ import { clientIp, ipForLog } from '@/lib/clientIp';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-/* ── Brute-force protection ─────────────────────────────────────────────── *
- * TWO counters, because one is not enough:
- *   · per CALLER — the address from the socket (`server.mjs` writes it into
- *     `x-sayo-ip`), never the `x-forwarded-for` a caller can type. A script
- *     that changes that header gains nothing.
- *   · per ACCOUNT — counted on every WRONG password only, so a shared branch
- *     address cannot lock a colleague out, and an attacker cannot keep trying
- *     one user name by hopping addresses.
- * A successful sign-in clears the account counter (that is what it is for).
- */
 const LOGIN_IP_LIMIT = 20;          // every attempt, per caller
 const LOGIN_ACCOUNT_LIMIT = 8;      // WRONG attempts, per user name
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;

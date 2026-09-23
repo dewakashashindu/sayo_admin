@@ -1,13 +1,11 @@
 // app/api/settings/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import bcrypt from "bcryptjs";
 
-const prisma = new PrismaClient();
+const prisma = newRobustPrisma();
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
 function bufToBase64(buf: Buffer | Uint8Array | null | undefined): string | null {
   if (!buf) return null;
   const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
@@ -59,9 +57,6 @@ function nextSeqId(prefix: string, len: number, existingIds: string[]): string {
   return `${prefix}${String(next).padStart(digits, "0")}`;
 }
 
-/* ─────────────────────────────────────────
-   MAPPERS
-───────────────────────────────────────── */
 function mapGroup(g: any) {
   return { groupId: g.GroupId.trim(), groupDes: g.GroupDes.trim() };
 }
@@ -81,7 +76,6 @@ function mapSpeciality(s: any) {
   };
 }
 
-// ── NEW: Location mapper ──
 function mapLocation(l: any) {
   return {
     locCode: l.LocCode.trim(),
@@ -132,9 +126,6 @@ async function fetchAllUsers() {
   return users.map((u) => mapUser(u, specMap.get(u.UserId.trim()) || []));
 }
 
-/* ═══════════════════════════════════════
-   GET
-═══════════════════════════════════════ */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const entity = searchParams.get("entity");
@@ -160,14 +151,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, data });
     }
 
-    // ── NEW: locations entity ──
-    if (entity === "locations") {
+        if (entity === "locations") {
       const rows = await prisma.tbl_LocationMaster.findMany({ orderBy: { LocCode: "asc" } });
       return NextResponse.json({ success: true, data: rows.map(mapLocation) });
     }
 
-    // ── Full load (no entity param) ──
-    const [groups, bookingTypes, specialities, users, locations] = await Promise.all([
+        const [groups, bookingTypes, specialities, users, locations] = await Promise.all([
       prisma.tbl_usergroups.findMany({ orderBy: { GroupId: "asc" } }),
       prisma.tbl_bookingtypes.findMany({ orderBy: { BooikingTypeID: "asc" } }),
       prisma.tbl_technicianspecilities.findMany({ orderBy: { SpecAreaID: "asc" } }),
@@ -193,9 +182,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-/* ═══════════════════════════════════════
-   POST
-═══════════════════════════════════════ */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -250,8 +236,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: true, data: mapSpeciality(created) });
       }
 
-      // ── NEW: locations POST ──
-      case "locations": {
+            case "locations": {
         if (!payload.locDes?.trim()) {
           return NextResponse.json({ success: false, error: "Location description is required" }, { status: 422 });
         }
@@ -331,9 +316,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/* ═══════════════════════════════════════
-   PUT
-═══════════════════════════════════════ */
 export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
@@ -375,8 +357,7 @@ export async function PUT(req: NextRequest) {
         return NextResponse.json({ success: true, data: mapSpeciality(updated) });
       }
 
-      // ── NEW: locations PUT ──
-      case "locations": {
+            case "locations": {
         const updated = await prisma.tbl_LocationMaster.update({
           where: { LocCode: toChar(id, 10) },
           data: {
@@ -458,9 +439,6 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-/* ═══════════════════════════════════════
-   DELETE
-═══════════════════════════════════════ */
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const entity = searchParams.get("entity");
@@ -509,8 +487,7 @@ export async function DELETE(req: NextRequest) {
         return NextResponse.json({ success: true });
       }
 
-      // ── NEW: locations DELETE ──
-      case "locations": {
+            case "locations": {
         // Block delete if items use this location
         const usedByItems = await prisma.tbl_ItemMaster.count({
           where: { LocCode: toChar(id, 10) },

@@ -1,23 +1,6 @@
-// src/app/api/billing/diagnose/route.ts
-// TEMPORARY diagnostic endpoint — answers "why does one service show quantity
-// N?" for a single booking without needing database access.
-//
-// GET /api/billing/diagnose?bookingID=BK0000010
-//
-// Returns the raw rows of the booking with the exact numbers the bill uses:
-//   • the booking header row
-//   • every tbl_bookingservicedetail row (all columns)
-//   • the same rows grouped by (GuessID, ServiceItemID, Qty, ItemPrice, TechID)
-//     so copies of one row are obvious
-//   • how many times the item-master join would match each ServiceItemID — the
-//     classic source of multiplication (exact CHAR(15) match, else a legacy
-//     10-character prefix shared by several items)
-//
-// Read-only. Admin session required (the middleware protects /api/*) and it
-// can be switched off completely with ENABLE_DIAGNOSTICS=false in .env — the
-// route then answers 404.
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { itemCode, legacyItemCode } from "@/lib/itemCode";
 import { diagnosticsEnabled, diagnosticsDisabledResponse } from "@/lib/diagnostics";
 
@@ -26,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? "").trim();

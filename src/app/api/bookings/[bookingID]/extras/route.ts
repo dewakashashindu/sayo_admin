@@ -1,43 +1,19 @@
-// src/app/api/bookings/[bookingID]/extras/route.ts
-// Per-booking technician additions (post check-in):
-//   • supporting technicians  → Tbl_BookingServiceItemAddTech
-//   • materials actually used → Tbl_BookingServiceRecipe
-//
-// GET  /api/bookings/:bookingID/extras            → read both sets (+ names/prices)
-// PUT  /api/bookings/:bookingID/extras            → replace either set
-//      body: { addTech?: [...], recipe?: [...], recipeScope?: [...] }
-//
-// Writes are only allowed while the booking is checked-in, not marked done
-// and not billed yet.
-//
-// NOTE: uses raw SQL (like the legacy appointments API) so the route works
-// even if the generated Prisma client on the server is stale.
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { createItemCodeIndex, ITEM_CODE_LENGTH } from "@/lib/itemCode";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = global as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma || new PrismaClient();
+const prisma = globalForPrisma.prisma || newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ bookingID: string }> };
 
 const trim = (v: unknown) => String(v ?? "").trim();
 
-/**
- * Pad a value to the width of the fixed-width char(10) columns — for INSERTs.
- *
- * Do NOT use this in a WHERE clause. Comparing a padded literal with a
- * char/varchar column only matches while the database uses a PAD SPACE
- * collation; on a NO PAD collation (MySQL 8's default utf8mb4_0900_ai_ci,
- * MariaDB's *_nopad_ci) 'BK0000008 ' never equals 'BK0000008' and the lookup
- * silently comes back empty — which is exactly why this endpoint used to
- * answer 404 "Booking not found" for bookings that were plainly there.
- * Comparisons use RTRIM(column) = value instead, like the rest of the app.
- */
 function pad10(v: string): string {
   return v.padEnd(10, " ").slice(0, 10);
 }

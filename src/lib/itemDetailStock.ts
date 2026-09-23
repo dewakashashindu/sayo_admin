@@ -1,24 +1,3 @@
-// src/lib/itemDetailStock.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// THE BATCH-WISE STOCK TABLE — tbl_itemdetail
-//
-// The database keeps stock in two places and they answer two different
-// questions:
-//
-//   tbl_itemmaster.StockBalance   “how much of this item is in this branch”
-//   tbl_itemdetail                “how much of it is left in each batch”
-//       (LocCode, ItemCode, ExpiryDate, ItemQty)
-//
-// The Item Master screen reads the second one — its Stock box and its
-// “Stock (read-only)” column are `SUM(tbl_itemdetail.ItemQty)` — so a receipt
-// that only moved `StockBalance` left that screen showing a number that never
-// changed. Confirming a GRN now writes both, out of the same quantity, so the
-// two can never disagree.
-//
-// This file is the pure part of that: the bucket a line belongs to, the
-// quantity that goes in, and the words for the activity log. No database, no
-// Prisma — so the rules are covered by tests (`bash scripts/run-billing-tests.sh`).
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** The “no expiry” marker, exactly as the purchase tables use it. */
 export const ITEM_DETAIL_EMPTY_EXPIRY = "1900-01-01";

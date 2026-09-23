@@ -5,9 +5,6 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import AdminSidebar from '@/components/AdminSidebar';
 
-/* ─────────────────────────────────────────
-   TYPES
-───────────────────────────────────────── */
 interface AdminUser    { name: string; email: string; }
 interface ServiceItem  { name: string; price: string; duration: string; category: string; }
 interface ProviderItem { name: string; role: string; }
@@ -41,9 +38,6 @@ interface WaitingOrder {
   orderedAt: string; status: 'pending' | 'confirmed' | 'shipped';
 }
 
-/* ─────────────────────────────────────────
-   CONSTANTS
-───────────────────────────────────────── */
 const SLOT_H     = 72;
 const SLOT_MIN   = 30;
 const DAY_START  = 9 * 60;
@@ -56,9 +50,6 @@ for (let m = DAY_START; m < DAY_START + 6 * 60; m += SLOT_MIN) {
   TIME_SLOTS.push(`${h12}:${String(mn).padStart(2, '0')} ${ap}`);
 }
 
-/* ─────────────────────────────────────────
-   MOCK DATA
-───────────────────────────────────────── */
 const LOW_STOCK: ProductStock[] = [
   { id:1, name:'Argan Hair Oil 250ml',        category:'Hair Care', stock:4,  threshold:15, unit:'bottles', supplier:'Beauty Essentials Lanka', supplierPhone:'011 234 5678' },
   { id:2, name:'Keratin Shampoo 1L',          category:'Hair Care', stock:2,  threshold:10, unit:'bottles', supplier:'ProHair Distributors',     supplierPhone:'077 345 6789' },
@@ -86,9 +77,6 @@ function emptyData(d: string): DashboardData {
   };
 }
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
 function todayISO()  { return new Date().toISOString().split('T')[0]; }
 function fmtDateNav(iso: string) {
   const d  = new Date(iso + 'T00:00');
@@ -130,9 +118,6 @@ function minToSlot(mins: number): string {
 const MONTHS_LONG  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-/* ─────────────────────────────────────────
-   PAGE CSS  (sidebar CSS is in AdminSidebar)
-───────────────────────────────────────── */
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -290,9 +275,6 @@ const CSS = `
   @media(max-width:960px)  { .right-col{display:none!important;} }
 `;
 
-/* ─────────────────────────────────────────
-   ICONS  (page-local, not exported)
-───────────────────────────────────────── */
 function IBell()   { return <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>; }
 function ISearch() { return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>; }
 function IChevD({s=14}:{s?:number}) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>; }
@@ -314,9 +296,6 @@ function ITruck({s=14}:{s?:number}) { return <svg width={s} height={s} viewBox="
 function IPhone({s=11}:{s?:number}) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.61 1.27h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.91a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16.92z"/></svg>; }
 function IUsers2() { return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>; }
 
-/* ─────────────────────────────────────────
-   BADGES / MINI STAT
-───────────────────────────────────────── */
 function StatusBadge({ status }: { status: string }) {
   const lo = (status || '').toLowerCase();
   if (lo === 'confirmed') return <span className="badge b-ok"><span style={{width:5,height:5,borderRadius:'50%',background:'#22c55e',display:'inline-block'}}/> Confirmed</span>;
@@ -342,9 +321,6 @@ function MiniStat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-/* ─────────────────────────────────────────
-   BOOKING DETAIL MODAL
-───────────────────────────────────────── */
 function BookingModal({ b, onClose }: { b: Booking; onClose: () => void }) {
   return (
     <div className="modal-bg" onClick={onClose}>
@@ -420,9 +396,6 @@ function MIBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-/* ─────────────────────────────────────────
-   DAY SCHEDULE GRID
-───────────────────────────────────────── */
 function DayScheduleGrid({ bookings, providers, onCardClick }: {
   bookings: Booking[]; providers: string[]; onCardClick: (b: Booking) => void;
 }) {
@@ -511,9 +484,6 @@ function DayScheduleGrid({ bookings, providers, onCardClick }: {
   );
 }
 
-/* ─────────────────────────────────────────
-   RANGE GRID
-───────────────────────────────────────── */
 function RangeScheduleGrid({ dates, providers, counts, onCellClick }: {
   dates: string[]; providers: string[];
   counts: Record<string, Record<string, number>>;
@@ -567,9 +537,6 @@ function RangeScheduleGrid({ dates, providers, counts, onCellClick }: {
   );
 }
 
-/* ─────────────────────────────────────────
-   LOW STOCK PANEL
-───────────────────────────────────────── */
 function LowStockPanel({ products }: { products: ProductStock[] }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   function toggleOne(id: number) {
@@ -631,9 +598,6 @@ function LowStockPanel({ products }: { products: ProductStock[] }) {
   );
 }
 
-/* ─────────────────────────────────────────
-   WAITING ORDERS PANEL
-───────────────────────────────────────── */
 function WaitingOrdersPanel({ orders }: { orders: WaitingOrder[] }) {
   return (
     <div id="waiting-orders-panel" style={{background:'#deeaea',borderRadius:12,boxShadow:'0 1px 5px rgba(0,0,0,0.08)',padding:15,display:'flex',flexDirection:'column',gap:10}}>
@@ -659,9 +623,6 @@ function WaitingOrdersPanel({ orders }: { orders: WaitingOrder[] }) {
   );
 }
 
-/* ─────────────────────────────────────────
-   BOOKINGS TABLE
-───────────────────────────────────────── */
 function BkCard({ b, onView }: { b: Booking; onView: () => void }) {
   return (
     <div className="bk-card" onClick={onView}>
@@ -753,9 +714,6 @@ function BookingsTable({ bookings }: { bookings: Booking[] }) {
   );
 }
 
-/* ─────────────────────────────────────────
-   CALENDAR POPUP
-───────────────────────────────────────── */
 type CalView = 'day' | 'month' | 'year';
 function CalendarPopup({ value, onChange, onClose }: { value:string; onChange:(iso:string)=>void; onClose:()=>void }) {
   const sel    = new Date(value + 'T00:00');
@@ -846,9 +804,6 @@ function CalendarPopup({ value, onChange, onClose }: { value:string; onChange:(i
   );
 }
 
-/* ─────────────────────────────────────────
-   DATE NAV
-───────────────────────────────────────── */
 function DateNav({ date, onChange }: { date:string; onChange:(d:string)=>void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -869,9 +824,6 @@ function DateNav({ date, onChange }: { date:string; onChange:(d:string)=>void })
   );
 }
 
-/* ─────────────────────────────────────────
-   NOTIFICATION DROPDOWN
-───────────────────────────────────────── */
 function NotifDropdown({ onScrollToLow, onClose }: { onScrollToLow:()=>void; onClose:()=>void }) {
   return (
     <div className="notif-drop pop-in" onClick={e => e.stopPropagation()}>
@@ -901,9 +853,6 @@ function NotifDropdown({ onScrollToLow, onClose }: { onScrollToLow:()=>void; onC
   );
 }
 
-/* ─────────────────────────────────────────
-   MAIN PAGE
-───────────────────────────────────────── */
 export default function AdminDashboardPage() {
   const router = useRouter();
   const [admin,       setAdmin]       = useState<AdminUser|null>(null);
@@ -1060,14 +1009,14 @@ export default function AdminDashboardPage() {
 
       <div style={{display:'flex',height:'100vh',overflow:'hidden',background:PAGE}}>
 
-        {/* ── SIDEBAR (desktop + mobile) ── */}
+        {}
         <AdminSidebar
           active={navKey}
           onNav={handleNav}
           onLogout={() => router.push('/admin/login')}
         />
 
-        {/* ── MAIN ── */}
+        {}
         <div style={{flex:1,display:'flex',flexDirection:'column',minWidth:0,overflow:'hidden'}}>
 
           {/* HEADER */}

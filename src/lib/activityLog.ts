@@ -1,12 +1,5 @@
 import { prisma } from '@/lib/prisma';
 
-/**
- * Writes a row into `adminactivitylog` — the feed shown under
- * "Recent Activities" on the dashboard (booking events, SMS results,
- * confirm/cancel/check-in actions, …).
- *
- * Never throws: a failed log write must not break the calling flow.
- */
 export async function logActivity(
   actor: string,
   section: string,

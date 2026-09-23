@@ -1,12 +1,6 @@
-// src/app/api/inventory/recon/route.ts
-// GET  /api/inventory/recon?status=confirmed|pending|all&q=&locCode=&limit=300
-// POST /api/inventory/recon  body: { locCode, recDate, remarks, lines:[{itemCode,unitID,costPrice,systemQty,phyQty,applica}], confirm? }
-// GET lists tbl_reconcilheder (via Vw_Reconcilliation when available, fallback to header)
-// POST saves a new recon (pending unless confirm:true). The recon number comes
-// from tbl_serials REC — same allocator GRN uses. Uses raw SQL so the route
-// works even when the generated Prisma client is stale.
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invActor, invFail, invId, InvError, keySql, keyVal, invChar, invDateField } from '@/lib/inventoryServer';
 import { stockAsItIs } from '@/lib/stockAsItIs';
 import { nextSerialTx, SERIAL_CODES } from '@/lib/serials';
@@ -16,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? '').trim();

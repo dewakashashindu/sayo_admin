@@ -1,19 +1,3 @@
-// src/lib/inventoryServer.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared server-side helpers for the Purchase Order / GRN APIs.
-//
-// Everything that is true for BOTH documents lives here once:
-//
-//   · who is signed in          (the actor is ALWAYS taken from the signed
-//                                session cookie, never from the request body)
-//   · input validation          (numbers, dates, ids, item codes)
-//   · "does this exist in the database?" checks — a location, a supplier and
-//     an item are always resolved against the real table and the value the
-//     DATABASE holds is what gets written, so a padded/legacy code in the
-//     payload can never be stored as-is
-//   · error → HTTP response     (400 validation / 401 session / 409 conflict /
-//                                500 with the failing step named)
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";
@@ -25,8 +9,6 @@ import { itemDetailExpiry, itemDetailQty } from "./itemDetailStock";
 
 /** Anything that can run a query: the shared client or a transaction. */
 export type Db = Prisma.TransactionClient | PrismaClient;
-
-/* ── errors ──────────────────────────────────────────────────────────────── */
 
 /**
  * A failure that has an HTTP status and a message the user can act on.
@@ -259,22 +241,6 @@ export interface PoReceivedResult {
   words: string;
 }
 
-/**
- * Stamp `tbl_poheader.GRNed` after a receipt is confirmed — exactly the mark the
- * old desktop GRN save left behind, so an old report that reads that column
- * agrees with the new screen.
- *
- * WHY ‘fully received’ and not ‘any receipt’:
- *   the old program set it the moment one receipt went in; this screen can
- *   receive an order in several parts, so the flag only says Y when every line
- *   has arrived in full. A part delivery leaves the order open — which is what
- *   `poReceiptWords()` then explains in the activity log.
- *
- * Returns null when nothing was written: no PO on this receipt, the order is
- * not in the table, or the column is not there yet (an older database).
- * Running `node scripts/add-po-grn-columns.mjs` adds it; until then this GRN
- * still confirms normally — nothing is refused because of a missing flag.
- */
 export async function markPoReceived(
   db: Db,
   locCode: string,
@@ -319,18 +285,6 @@ export function batchColumnMissing(): InvError {
 }
 
 /** "2026-09-16" or a full ISO string → Date. Empty → undefined (caller decides). */
-/* ── empty dates ────────────────────────────────────────────────────────────
-   tbl_poheader.ConDatetime / tbl_grnheader.ConDatetime / tbl_grndetails.ExpDate
-   are nullable in the schema this project ships, but a database that was
-   created from the original SQL-Server DDL (or by hand) often declares them
-   NOT NULL — and then MySQL answers
-
-       Code: `1048`. Message: `Column 'ConDatetime' cannot be null`
-
-   and the whole save is rolled back. So an “empty” date is written as the
-   legacy empty-date value 1900-01-01 (what the old desktop screens used for
-   “no date”) and reads map it back to blank, which keeps the app working on
-   BOTH table shapes.  Do not put NULL into these columns again. */
 export const EMPTY_DATE = new Date(Date.UTC(1900, 0, 1, 0, 0, 0));
 
 /** Is this the 1900-01-01 “no date” marker rather than a real date? */
@@ -395,8 +349,6 @@ export function invId(value: unknown, field: string, max: number): string {
   return raw;
 }
 
-/* ── the signed-in user ──────────────────────────────────────────────────── */
-
 export interface InvActor {
   /** UserId — stored in the CHAR(10) UserID / ConUserID columns. */
   userId: string;
@@ -419,28 +371,6 @@ export async function invActor(req: NextRequest): Promise<InvActor> {
   };
 }
 
-/* ── comparing CHAR columns that come from two different worlds ─────────────
-
-   The legacy OEM tables and the PO / GRN tables this project creates do not
-   have to share a collation. When two columns (or a column and a bound value)
-   with DIFFERENT collations meet in one comparison, MySQL and MariaDB refuse
-   the query outright:
-
-       ERROR 1267: Illegal mix of collations (utf8mb4_uca1400_ai_ci,IMPLICIT)
-                                  and (utf8mb4_unicode_ci,IMPLICIT) for '='
-
-   Neither "collate one side" nor "cast to the other side's collation" is enough
-   when the CHARACTER SETS may differ too (a legacy latin1 table next to a
-   utf8mb4 one). So every key comparison in the inventory SQL goes through these
-   two helpers: the column and the value are both converted to utf8mb4 and given
-   ONE explicit collation, which takes precedence over anything the operands
-   bring with them. utf8mb4_general_ci also pads the comparison, so a CHAR(10)
-   value compares equal to the trimmed string in a bound parameter.
-
-   Use them ONLY in WHERE / JOIN / HAVING predicates — never in a SELECT list
-   (they would change the returned value).
-   ─────────────────────────────────────────────────────────────────────────── */
-
 /** A stored key column (LocCode, SupID, ItemCode, PONO, GRNNO …) to compare. */
 export function keySql(column: string): Prisma.Sql {
   return Prisma.raw(`CONVERT(${column} USING utf8mb4) COLLATE utf8mb4_general_ci`);
@@ -450,8 +380,6 @@ export function keySql(column: string): Prisma.Sql {
 export function keyVal(value: unknown): Prisma.Sql {
   return Prisma.sql`CONVERT(${value} USING utf8mb4) COLLATE utf8mb4_general_ci`;
 }
-
-/* ── “does it exist in the database?” ────────────────────────────────────── */
 
 /** The location code as the DATABASE stores it, or null when it is unknown. */
 export async function findLocation(db: Db, locCode: string): Promise<string | null> {
@@ -486,16 +414,6 @@ export interface ResolvedItem {
   stockBalance: number;
 }
 
-/**
- * Resolve the item codes of a document against tbl_itemmaster.
- *
- * The code the browser sends is only a LOOKUP KEY. What gets stored is
- * `item.code` — the value the database holds — so a 10-character legacy code
- * or a padded one can never end up in a new PO/GRN line.
- *
- * Unknown codes are reported together, so the user fixes one list instead of
- * being sent back one line at a time.
- */
 export async function resolveItems(
   db: Db,
   locCode: string,
@@ -547,25 +465,6 @@ export async function resolveItems(
   }
   return out;
 }
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   Purchase Order / GRN writes — ALL RAW SQL
-   -----------------------------------------------------------------------------
-   These four tables are written with `$executeRaw`, not with generated model
-   methods (`tx.tbl_POHeader.create(...)`).
-
-   WHY: the Prisma client inside node_modules is only as new as the last
-   `prisma generate`. A dev server that was started before the models were added
-   — or a deployment where generate was skipped — then has `tx.tbl_POHeader ===
-   undefined` and the save dies with
-
-       TypeError: Cannot read properties of undefined (reading 'create')
-
-   which tells the person at the keyboard nothing. Raw SQL only needs the TABLE
-   to exist in MySQL, so the screens keep working whatever state the generated
-   client is in. (The models stay in prisma/schema.prisma for documentation and
-   for `prisma format` / `validate`.)
-   ──────────────────────────────────────────────────────────────────────────── */
 
 export interface PoHeaderWrite {
   locCode: string;
@@ -624,8 +523,6 @@ export interface GrnLineWrite {
   poNo: string;
   updItemPrice: boolean;
 }
-
-/* ── purchase order ──────────────────────────────────────────────────────── */
 
 export async function insertPoHeader(db: Db, header: PoHeaderWrite): Promise<void> {
   /* ConDatetime gets a real timestamp even while the order is still pending:
@@ -700,8 +597,6 @@ export async function deletePoHeader(db: Db, locCode: string, poNo: string): Pro
     WHERE ${keySql("LocCode")} = ${keyVal(locCode)} AND ${keySql("PONO")} = ${keyVal(poNo)}
   `;
 }
-
-/* ── goods received note ─────────────────────────────────────────────────── */
 
 export async function insertGrnHeader(db: Db, header: GrnHeaderWrite): Promise<void> {
   await db.$executeRaw`

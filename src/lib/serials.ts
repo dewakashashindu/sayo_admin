@@ -1,42 +1,3 @@
-// src/lib/serials.ts
-//
-// Central serial-number allocator backed by Tbl_Serials.
-//
-// WHY THIS EXISTS
-// ---------------
-// Booking IDs and customer codes used to be calculated inside the API code by
-// scanning the transaction tables (MAX(existing BK%) + 1). That is slow, it
-// re-uses numbers once old rows are cleaned up, and the "empty branch" case
-// needed a separate lock row to stay race-safe.
-//
-// Now the number lives in the database, in Tbl_Serials:
-//
-//     SeriCode = "BK"    SeriNo = "0000007"    SeriDate = 2026-09-12
-//
-// and creating a record does:
-//     1. read SeriNo for the code        -> 7
-//     2. add one                         -> 8
-//     3. use "BK" + "0000008" as the ID  -> "BK0000008"
-//     4. write "0000008" back, SeriDate = today
-//
-// HOW IT STAYS RACE-SAFE
-// ----------------------
-// One single UPDATE does steps 1, 2 and 4: it adds one to SeriNo and only
-// touches the counter row for that series. InnoDB takes an exclusive lock on
-// the row for the UPDATE, so if two bookings are saved at the very same moment
-// the second one waits at that lock until the first commits, then reads the
-// number the first one just wrote. Read and write can never interleave.
-//
-// Do NOT add a "SELECT ... FOR UPDATE" or an "INSERT IGNORE" in front of it.
-// An earlier version of this file did exactly that and deadlocked under load:
-// INSERT IGNORE takes a shared lock, the following FOR UPDATE needs an
-// exclusive one, and two transactions end up each holding the lock the other
-// is waiting for. One statement, one lock — that is the whole design.
-//
-// GAPS IN THE SEQUENCE ARE NORMAL AND EXPECTED. If a transaction fails after
-// the number was taken (conflict, validation error, network drop), that number
-// is skipped. Accounting systems require gap-free numbers; booking and
-// customer codes do not. Do not "fix" this by decrementing the counter.
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 
@@ -65,16 +26,6 @@ export const SERIAL_CODES = {
 
 export type SerialCodeName = keyof typeof SERIAL_CODES;
 
-/**
- * The same series can sit under a different `SeriCode` in a real database:
- * the counter that the old system used. The invoice series, for example, is
- * often just `I` because `SeriCode` is char(10) and the old screens printed
- * `I0000042`. Every series is therefore looked up by its canonical code first
- * and by these aliases second — an existing counter (with real numbers in it)
- * is always used before a new row is created.
- *
- * Add to this list (never rename a series) when a database holds another code.
- */
 export const SERIAL_CODE_ALIASES: Record<string, string[]> = {
   BK: ["BK", "B", "BOOK", "BOOKING"],
   CUS: ["CUS", "C", "CUST", "CUSTOMER"],
@@ -178,17 +129,6 @@ function padSerial(value: number, width: number): string {
   return String(value).padStart(width, "0");
 }
 
-/**
- * Claim the next number in a series and return the finished code.
- *
- * Call it inside the same transaction that writes the record whenever there is
- * one, so a rolled-back write gives the number back. Passing the plain
- * PrismaClient is allowed too — the increment is atomic on its own.
- *
- * @example
- *   const bookingID = await nextSerialTx(tx, SERIAL_CODES.booking);
- *   // -> "BK0000042"   (and Tbl_Serials.SeriNo for "BK" is now "0000042")
- */
 export async function nextSerialTx(
   db: SerialClient,
   code: string,
@@ -234,8 +174,7 @@ export async function nextSerialTx(
   // loop only matters the first time a brand-new series is used: create it,
   // then take the first number from it.
   for (let attempt = 0; attempt < 3; attempt++) {
-    // ── Read + add one + write back, in a single statement ─────────────────
-    //   · the UPDATE takes an exclusive lock on the counter row, so concurrent
+        //   · the UPDATE takes an exclusive lock on the counter row, so concurrent
     //     callers queue behind it instead of racing;
     //   · "SeriNo < maxValue" stops the series from overflowing — without it
     //     LPAD would silently chop 10000000 back down to 1000000;
@@ -270,8 +209,7 @@ export async function nextSerialTx(
       return `${seriCode}${padSerial(value, width)}`;
     }
 
-    // ── Nothing was updated: either the series is full, or it is new ────────
-    const existing = await db.$queryRaw<{ SeriNo: string }[]>`
+        const existing = await db.$queryRaw<{ SeriNo: string }[]>`
       SELECT TRIM(SeriNo) AS SeriNo
         FROM tbl_serials
        WHERE SeriCode = ${seriKey}
@@ -286,8 +224,7 @@ export async function nextSerialTx(
 
     // First use of this series. INSERT IGNORE keeps the (rare) race harmless:
     // whichever caller gets there first creates the row, the other simply
-    // loops round and takes the next number from it.
-    await db.$executeRaw`
+        await db.$executeRaw`
       INSERT IGNORE INTO tbl_serials (SeriCode, SeriNo, SeriDate)
       VALUES (${seriKey}, ${padSerial(startAt, width)}, CURDATE())
     `;
@@ -333,13 +270,6 @@ export async function peekSerial(
   };
 }
 
-/**
- * Create a counter row if it is missing, or raise it when the table it counts
- * already contains higher numbers. Safe to run at any time.
- *
- * Used by the seed/backfill script so a series added to a database that
- * already holds data starts above the highest existing code.
- */
 export async function ensureSerialRow(
   db: SerialClient,
   code: string,

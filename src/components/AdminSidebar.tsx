@@ -1,12 +1,10 @@
 // E:\sayo_admin\sayo-admin\src\components\AdminSidebar.tsx
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import Image from 'next/image';
 
-/* ─────────────────────────────────────────
-   TYPES
-───────────────────────────────────────── */
 export interface AdminSidebarProps {
   active: string;
   onNav: (key: string, path: string) => void;
@@ -29,9 +27,6 @@ interface NavGroup {
   children?: SubItem[];
 }
 
-/* ─────────────────────────────────────────
-   ICONS
-───────────────────────────────────────── */
 export function IGrid()      { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>; }
 export function ICal()       { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>; }
 export function IDollar()    { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>; }
@@ -47,9 +42,6 @@ export function IStar()      { return <svg width="18" height="18" viewBox="0 0 2
 export function IChevRight() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>; }
 export function IChevDown()  { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>; }
 
-/* ─────────────────────────────────────────
-   NAV STRUCTURE
-───────────────────────────────────────── */
 export const NAV_GROUPS: NavGroup[] = [
   {
     key: 'dashboard',
@@ -78,26 +70,29 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Inventory',
     icon: <IBox />,
     children: [
-      { key: 'inv-head-ref',   label: '— Reference —',   path: '',              heading: true },
-      { key: 'inv-location',   label: 'Location Master', path: '/locations'   },
-      { key: 'inv-categories', label: 'Categories',      path: '/categories' },
-      { key: 'inv-items',      label: 'Item Master',     path: '/service'      },
-      { key: 'inv-units',      label: 'Unit Master',     path: '/units'      },
-      { key: 'inv-suppliers',  label: 'Supplier Master', path: '/suppliers'  },
-      { key: 'inv-head-txn',   label: '— Transaction —', path: '',              heading: true },
-      { key: 'inv-po',         label: 'Purchase Orders', path: '/inventory/po'         },
-      { key: 'inv-grn',        label: 'GRN / DGRN',      path: '/inventory/grn'        },
-      { key: 'inv-srn',        label: 'SRN',             path: '/inventory/srn'        },
-      { key: 'inv-damage',     label: 'Damage',          path: '/inventory/damage'     },
-      { key: 'inv-transfer',   label: 'Transfer',        path: '', children: [
-        { key: 'inv-tr-req',  label: 'Requisition Note', path: '/inventory/transfer/requisition' },
-        { key: 'inv-tr-note', label: 'Transfer Note',    path: '/inventory/transfer/note'       },
-        { key: 'inv-tr-ret',  label: 'Return Note',      path: '/inventory/transfer/return'     },
+      { key: 'inv-ref',   label: 'Reference',   path: '', children: [
+        { key: 'inv-location',   label: 'Location Master', path: '/locations'   },
+        { key: 'inv-categories', label: 'Categories',      path: '/categories' },
+        { key: 'inv-items',      label: 'Item Master',     path: '/service'      },
+        { key: 'inv-units',      label: 'Unit Master',     path: '/units'      },
+        { key: 'inv-suppliers',  label: 'Supplier Master', path: '/suppliers'  },
       ]},
-      { key: 'inv-issue',      label: 'Issue',           path: '/inventory/issue'      },
-      { key: 'inv-recon',      label: 'Stock Recon.',    path: '/inventory/recon'      },
-      { key: 'inv-head-rep',   label: '— Reports —',     path: '',              heading: true },
-      { key: 'inv-reports',    label: 'Reports',         path: '/inventory/reports'    },
+      { key: 'inv-txn',   label: 'Transactions', path: '', children: [
+        { key: 'inv-po',         label: 'Purchase Orders', path: '/inventory/po'         },
+        { key: 'inv-grn',        label: 'GRN / DGRN',      path: '/inventory/grn'        },
+        { key: 'inv-srn',        label: 'SRN',             path: '/inventory/srn'        },
+        { key: 'inv-damage',     label: 'Damage',          path: '/inventory/damage'     },
+        { key: 'inv-transfer',   label: 'Transfer',        path: '', children: [
+          { key: 'inv-tr-req',  label: 'Requisition Note', path: '/inventory/transfer/requisition' },
+          { key: 'inv-tr-note', label: 'Transfer Note',    path: '/inventory/transfer/note'       },
+          { key: 'inv-tr-ret',  label: 'Return Note',      path: '/inventory/transfer/return'     },
+        ]},
+        { key: 'inv-issue',      label: 'Issue',           path: '/inventory/issue'      },
+        { key: 'inv-recon',      label: 'Stock Recon.',    path: '/inventory/recon'      },
+      ]},
+      { key: 'inv-rep',   label: 'Reports',     path: '', children: [
+        { key: 'inv-reports',    label: 'Reports',         path: '/inventory/reports'    },
+      ]},
     ],
   },
   {
@@ -161,9 +156,6 @@ export const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-/* ─────────────────────────────────────────
-   CSS
-───────────────────────────────────────── */
 export const SIDEBAR_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
@@ -276,48 +268,145 @@ export const SIDEBAR_CSS = `
   }
 `;
 
-/* ─────────────────────────────────────────
-   HELPER
-───────────────────────────────────────── */
-function activeGroupKey(activeKey: string): string {
-  for (const g of NAV_GROUPS) {
-    if (g.key === activeKey) return g.key;
-    if (g.children?.some(c => {
-      if (c.key === activeKey) return true;
-      if (c.children?.some(sc => sc.key === activeKey)) return true;
-      return false;
-    })) return g.key;
-  }
-  return '';
-}
-function isTransferActive(active: string): boolean {
-  return ['inv-transfer','inv-tr-req','inv-tr-note','inv-tr-ret'].includes(active);
+
+/** Every (key, path) leaf under an item — used to match the current URL. */
+function leafItemsOf(item: SubItem): { key: string; path: string }[] {
+  if (!item.children?.length) return item.path ? [{ key: item.key, path: item.path }] : [];
+  return item.children.flatMap(leafItemsOf);
 }
 
-/* ─────────────────────────────────────────
-   DESKTOP SIDEBAR
-───────────────────────────────────────── */
+/** First reachable page under a group (the mobile tap target). */
+function firstLeafPath(g: NavGroup): string {
+  if (g.path) return g.path;
+  return (g.children ?? []).flatMap(leafItemsOf)[0]?.path ?? '/';
+}
+
+/** Group + subgroup keys that contain the given item key. */
+function ancestorKeysOf(key: string): string[] {
+  for (const g of NAV_GROUPS) {
+    if (g.key === key) return [g.key];
+    for (const c of g.children ?? []) {
+      if (c.key === key) return [g.key, c.key];
+      for (const sc of c.children ?? []) if (sc.key === key) return [g.key, c.key, sc.key];
+    }
+  }
+  return [];
+}
+
+function rowsOf(items: SubItem[]): number {
+  return items.reduce((n, c) => n + 1 + (c.children?.length ?? 0), 0);
+}
+
+const SB_EXPANDED_KEY = 'sayo.sb.expanded';
+
 function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
+  const pathname = usePathname() || '';
   const [open, setOpen] = useState(true);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {};
-    const ag = activeGroupKey(active);
-    if (ag) init[ag] = true;
-    return init;
-  });
+
+  // The URL decides what is active — the group containing the current page always stays expanded.
+  const effActive = useMemo(() => {
+    let best: { key: string; path: string } | null = null;
+    for (const g of NAV_GROUPS) {
+      const leaves = g.path ? [{ key: g.key, path: g.path }] : (g.children ?? []).flatMap(leafItemsOf);
+      for (const l of leaves) {
+        if (pathname === l.path || (l.path !== '/' && pathname.startsWith(l.path + '/'))) {
+          if (!best || l.path.length > best.path.length) best = l;
+        }
+      }
+    }
+    return best?.key || active;
+  }, [pathname, active]);
+
+  // Open/closed groups start identical on server and client (all closed), then the
+  // saved state hydrates after mount — reading localStorage in the initializer
+  // would make the first client render differ from the server HTML.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const storageLoaded = useRef(false);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SB_EXPANDED_KEY);
+      if (raw) setExpanded(JSON.parse(raw) as Record<string, boolean>);
+    } catch { /* private mode */ }
+    storageLoaded.current = true;
+  }, []);
+
+  const ancestors = useMemo(() => ancestorKeysOf(effActive), [effActive]);
+  useEffect(() => {
+    if (!ancestors.length) return;
+    setExpanded((p) => {
+      let changed = false;
+      const next = { ...p };
+      for (const k of ancestors) if (!next[k]) { next[k] = true; changed = true; }
+      return changed ? next : p;
+    });
+  }, [ancestors]);
+
+  useEffect(() => {
+    if (!storageLoaded.current) return;
+    try { window.localStorage.setItem(SB_EXPANDED_KEY, JSON.stringify(expanded)); } catch { /* private mode */ }
+  }, [expanded]);
 
   const W = open ? 210 : 64;
 
   function toggleGroup(key: string) {
     if (!open) {
       setOpen(true);
-      setExpanded({ [key]: true });
+      setExpanded((p) => ({ ...p, [key]: true }));
       return;
     }
-    setExpanded(p => ({ ...p, [key]: !p[key] }));
+    setExpanded((p) => ({ ...p, [key]: !p[key] }));
   }
 
-  const ag = activeGroupKey(active);
+  const ag = ancestors[0] ?? '';
+
+  // Any nesting depth renders the same collapsible row.
+  function renderChild(child: SubItem): React.ReactNode {
+    const hasKids = !!child.children?.length;
+    const isParentActive = ancestorKeysOf(effActive).includes(child.key);
+    const isOpen = !!expanded[child.key];
+
+    if (!hasKids) {
+      return (
+        <button
+          key={child.key}
+          className={`sb-sub-btn ${effActive === child.key ? 'active' : ''}`}
+          onClick={() => child.path && onNav(child.key, child.path)}
+        >
+          <span style={{
+            width: 4, height: 4, borderRadius: '50%', flexShrink: 0,
+            background: effActive === child.key ? '#7dd3d8' : 'rgba(255,255,255,0.25)',
+          }} />
+          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {child.label}
+          </span>
+        </button>
+      );
+    }
+
+    return (
+      <div key={child.key}>
+        <button
+          className={`sb-sub-btn ${isParentActive ? 'active' : ''}`}
+          onClick={() => setExpanded((p) => ({ ...p, [child.key]: !p[child.key] }))}
+          style={{ justifyContent: 'space-between', paddingRight: 10 }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ width: 4, height: 4, borderRadius: '50%', flexShrink: 0, background: isParentActive ? '#7dd3d8' : 'rgba(255,255,255,0.25)' }} />
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{child.label}</span>
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', opacity: 0.55 }}>
+            {isOpen ? <IChevDown /> : <IChevRight />}
+          </span>
+        </button>
+        <div style={{ overflow: 'hidden', transition: 'max-height 0.22s ease, opacity 0.18s ease', maxHeight: isOpen ? `${rowsOf(child.children ?? []) * 32}px` : '0px', opacity: isOpen ? 1 : 0 }}>
+          <div style={{ paddingLeft: 16 }}>
+            {(child.children ?? []).map(renderChild)}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <aside
@@ -404,73 +493,12 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
                 <div
                   className="sb-children"
                   style={{
-                    maxHeight: isExpanded ? `${(group.children.length + 3) * 36}px` : '0px',
+                    maxHeight: isExpanded ? `${rowsOf(group.children) * 36 + 8}px` : '0px',
                     opacity:   isExpanded ? 1 : 0,
                   }}
                 >
                   <div style={{ paddingBottom: 4 }}>
-                    {group.children.map(child => {
-                      if (child.heading) {
-                        return (
-                          <div key={child.key} style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.35)', padding: '8px 10px 2px 14px', textTransform: 'uppercase' }}>
-                            {child.label.replace(/—/g,'').trim()}
-                          </div>
-                        );
-                      }
-                      if (child.children && child.children.length) {
-                        const isOpen = expanded['transfer'] ?? isTransferActive(active);
-                        const isParentActive = isTransferActive(active);
-                        return (
-                          <div key={child.key}>
-                            <button
-                              className={`sb-sub-btn ${isParentActive ? 'active' : ''}`}
-                              onClick={() => setExpanded(p => ({ ...p, transfer: !isOpen }))}
-                              style={{ justifyContent: 'space-between', paddingRight: 10 }}
-                            >
-                              <span style={{display:'flex',alignItems:'center',gap:8}}>
-                                <span style={{ width:4,height:4,borderRadius:'50%',flexShrink:0, background: isParentActive ? '#7dd3d8' : 'rgba(255,255,255,0.25)' }} />
-                                <span style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{child.label}</span>
-                              </span>
-                              <span style={{display:'flex',alignItems:'center',opacity:0.55}}>
-                                {isOpen ? <IChevDown /> : <IChevRight />}
-                              </span>
-                            </button>
-                            <div style={{ overflow:'hidden', transition:'max-height 0.22s ease, opacity 0.18s ease', maxHeight: isOpen ? `${child.children.length * 32}px` : '0px', opacity: isOpen ? 1 : 0 }}>
-                              <div style={{paddingLeft:16}}>
-                                {child.children.map(sc => (
-                                  <button
-                                    key={sc.key}
-                                    className={`sb-sub-btn ${active === sc.key ? 'active' : ''}`}
-                                    onClick={() => sc.path && onNav(sc.key, sc.path)}
-                                    style={{paddingLeft:28, fontSize:11.5}}
-                                  >
-                                    <span style={{width:4,height:4,borderRadius:'50%',flexShrink:0, background: active===sc.key ? '#7dd3d8' : 'rgba(255,255,255,0.18)'}} />
-                                    <span style={{whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{sc.label}</span>
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      }
-                      return (
-                        <button
-                          key={child.key}
-                          className={`sb-sub-btn ${active === child.key ? 'active' : ''}`}
-                          onClick={() => child.path && onNav(child.key, child.path)}
-                        >
-                          <span style={{
-                            width: 4, height: 4, borderRadius: '50%', flexShrink: 0,
-                            background: active === child.key
-                              ? '#7dd3d8'
-                              : 'rgba(255,255,255,0.25)',
-                          }} />
-                          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {child.label}
-                          </span>
-                        </button>
-                      );
-                    })}
+                    {group.children.map(renderChild)}
                   </div>
                 </div>
               )}
@@ -521,11 +549,21 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
   );
 }
 
-/* ─────────────────────────────────────────
-   MOBILE BOTTOM NAV
-───────────────────────────────────────── */
 function MobileNav({ active, onNav, onLogout }: AdminSidebarProps) {
-  const ag = activeGroupKey(active);
+  const pathname = usePathname() || '';
+  const activeKey = useMemo(() => {
+    let best: { key: string; path: string } | null = null;
+    for (const g of NAV_GROUPS) {
+      const leaves = g.path ? [{ key: g.key, path: g.path }] : (g.children ?? []).flatMap(leafItemsOf);
+      for (const l of leaves) {
+        if (pathname === l.path || (l.path !== '/' && pathname.startsWith(l.path + '/'))) {
+          if (!best || l.path.length > best.path.length) best = l;
+        }
+      }
+    }
+    return best?.key || active;
+  }, [pathname, active]);
+  const ag = ancestorKeysOf(activeKey)[0] ?? '';
 
   return (
     <nav className="mob-nav">
@@ -536,7 +574,7 @@ function MobileNav({ active, onNav, onLogout }: AdminSidebarProps) {
           onClick={() =>
             g.path
               ? onNav(g.key, g.path)
-              : onNav(g.key, g.children?.[0]?.path ?? '/')
+              : onNav(g.key, firstLeafPath(g))
           }
         >
           {g.icon}
@@ -551,9 +589,6 @@ function MobileNav({ active, onNav, onLogout }: AdminSidebarProps) {
   );
 }
 
-/* ─────────────────────────────────────────
-   MAIN EXPORT
-───────────────────────────────────────── */
 export default function AdminSidebar(props: AdminSidebarProps) {
   return (
     <>

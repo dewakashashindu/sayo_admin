@@ -1,16 +1,6 @@
-// src/app/api/inventory/grn/[grnNo]/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GET    /api/inventory/grn/:grnNo?locCode=…   → header + lines (+ item names)
-// PUT    /api/inventory/grn/:grnNo              → replace a PENDING document
-// DELETE /api/inventory/grn/:grnNo?locCode=…    → delete a PENDING document
-//
-// A CONFIRMED GRN can never be edited or deleted here: confirmation is the
-// moment stock moved (tbl_itemmaster.StockBalance, tbl_stocktxn) and the
-// purchase order was written back. Reversing that is a return to the supplier
-// (SRN / Damage), not an edit — so the answer is 409 with that explanation.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { itemCode } from "@/lib/itemCode";
 import { grnLineValue, grnTotals, overReceiptQty } from "@/lib/inventoryTotals";
@@ -44,7 +34,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ grnNo: string }> };
@@ -149,8 +139,6 @@ async function buildLines(
     };
   });
 }
-
-/* ── GET ─────────────────────────────────────────────────────────────────── */
 
 export async function GET(req: NextRequest, ctx: Ctx) {
   try {
@@ -288,8 +276,6 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   }
 }
 
-/* ── PUT ─────────────────────────────────────────────────────────────────── */
-
 export async function PUT(req: NextRequest, ctx: Ctx) {
   const tag = "PUT /api/inventory/grn/[grnNo]";
   try {
@@ -379,8 +365,6 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     return invFail(err, tag);
   }
 }
-
-/* ── DELETE ──────────────────────────────────────────────────────────────── */
 
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const tag = "DELETE /api/inventory/grn/[grnNo]";

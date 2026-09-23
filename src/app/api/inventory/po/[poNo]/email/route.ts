@@ -1,24 +1,6 @@
-// src/app/api/inventory/po/[poNo]/email/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/inventory/po/:poNo/email
-//
-//   body: { locCode, copy: 'standard'|'supplier', to?, subject?, message? }
-//
-// “Email to Supplier” on the Purchase Order screen: the order is drawn as a PDF
-// (the same sheet the Print button makes — see src/lib/poPdf.ts) and mailed to
-// the supplier the order is addressed to, using the SMTP_ settings from .env
-// that the rest of this project already mails with.
-//
-// WHAT IT REFUSES, AND WHY
-//   · an order that was never saved          → 400, “save it first”
-//   · a supplier with no usable address      → 400, with what is on the row
-//   · an empty order                         → 400
-//   · an unconfigured mail server            → 503, naming the empty .env keys
-// Nothing is written to the database: emailing a purchase order is not an event
-// in the order's life the way Confirmation is. The activity log records it.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import nodemailer from "nodemailer";
 import { logActivity } from "@/lib/activityLog";
 import { invActor, invFail, invId, InvError, keySql, keyVal } from "@/lib/inventoryServer";
@@ -48,7 +30,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ poNo: string }> };
@@ -65,8 +47,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const poNo = invId(poNoRaw, "PO number", 10);
     const copy: PoPrintCopy = trim(body.copy) === "supplier" ? "supplier" : "standard";
 
-    /* ── the order, as the sheet needs it ────────────────────────────────── */
-    const headRows = await prisma.$queryRaw<
+        const headRows = await prisma.$queryRaw<
       {
         PONO: string; SupID: string; PODate: Date | null; DueDate: Date | null;
         DeliAdd: string | null; Remarks: string | null; NetTotal: number | null;
@@ -107,8 +88,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       throw new InvError(`Purchase order ${poNo} has no item lines, so there is nothing to email.`, 400);
     }
 
-    /* ── the supplier, and the address to send to ────────────────────────── */
-    const supRows = await prisma.$queryRaw<
+        const supRows = await prisma.$queryRaw<
       { SupName: string | null; Emails: string | null; ContAdd1: string | null; ContactNO: string | null }[]
     >`
       SELECT s.SupName, s.Emails, s.SuppAdd1 AS ContAdd1, s.ContactNO
@@ -133,8 +113,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     }
     const rejectedParts = invalidSupplierEmailParts(trim(body.to) ? "" : supplier?.Emails);
 
-    /* ── the letterhead and the branch ───────────────────────────────────── */
-    const locationRows = await prisma.$queryRaw<
+        const locationRows = await prisma.$queryRaw<
       { LocDes: string | null; Address: string | null }[]
     >`
       SELECT l.LocDes, l.Address
@@ -146,8 +125,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const companyName = letterheadName(company, trim(location?.LocDes));
     const companyAddress = letterheadAddress(company, trim(location?.Address));
 
-    /* ── the sheet ───────────────────────────────────────────────────────── */
-    const lines = lineRows.map((l) => ({
+        const lines = lineRows.map((l) => ({
       itemCode: trim(l.ItemCode),
       name: trim(l.ItemPrintDes) || trim(l.ItemDes) || trim(l.ItemCode),
       unitID: trim(l.UnitID),
@@ -182,8 +160,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       remarks: trim(head.Remarks),
     });
 
-    /* ── the mail server ─────────────────────────────────────────────────── */
-    const missing = smtpMissingEnv(process.env);
+        const missing = smtpMissingEnv(process.env);
     if (missing.length > 0) {
       return NextResponse.json(
         { success: false, message: smtpSetupMessage(missing), missingEnv: missing },

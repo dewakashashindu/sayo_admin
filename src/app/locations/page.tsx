@@ -5,19 +5,17 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 
-/* ─────────────────────────────────────────
-   TYPES  — matches Tbl_LocationMaster exactly
-───────────────────────────────────────── */
 interface LocationMaster {
-  LocCode: string;   // CHAR(10) PK
-  LocDes:  string;   // VARCHAR(50)
-  Address: string;   // VARCHAR(300)
-  Enable:  boolean;  // TINYINT(1)
+  LocCode: string;      // CHAR(10) PK
+  LocDes:  string;      // VARCHAR(50)
+  Address: string;      // VARCHAR(300)
+  Enable:  boolean;     // TINYINT(1)
+  MainLoc:   boolean;   // TINYINT(1) — this is a MAIN location
+  SubLoc:    boolean;   // TINYINT(1) — this is a SUB location
+  MainLocCode: string;  // CHAR(10) — the main a sub sits under ('' = none)
+  MainLocDes:  string;  // joined — the main location's name
 }
 
-/* ─────────────────────────────────────────
-   API HELPERS
-───────────────────────────────────────── */
 const API = '/api/locations';
 
 interface ApiResponse<T> {
@@ -36,9 +34,6 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<ApiRespo
   }
 }
 
-/* ─────────────────────────────────────────
-   PAGE CSS
-───────────────────────────────────────── */
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -170,9 +165,17 @@ const PAGE_CSS = `
   }
   .srv-list-item:hover  { background:rgba(30,58,64,0.06); }
   .srv-list-item.active { background:rgba(30,58,64,0.1); }
+  .srv-list-item.sub { padding-left:8px; }
 
   .badge-active   { display:inline-flex;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:#dcfce7;color:#15803d; }
   .badge-inactive { display:inline-flex;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:#fee2e2;color:#dc2626; }
+  .badge-main     { display:inline-flex;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:#ede9fe;color:#6d28d9; }
+  .badge-sub      { display:inline-flex;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8; }
+
+  .grp-hdr {
+    font-size:10px; font-weight:800; letter-spacing:0.08em; text-transform:uppercase;
+    color:#5b7377; padding:10px 4px 4px;
+  }
 
   .toast {
     position:fixed; bottom:24px; right:24px; z-index:9999;
@@ -184,12 +187,18 @@ const PAGE_CSS = `
   .toast-success { background:#15803d; }
   .toast-error   { background:#dc2626; }
 
+  /* QA #4 — the Print button prints ONLY this hidden report, never the app shell */
+  #loc-print-area { display:none; }
+  @media print {
+    html, body { overflow:visible !important; height:auto !important; }
+    body * { visibility:hidden !important; }
+    #loc-print-area, #loc-print-area * { visibility:visible !important; }
+    #loc-print-area { display:block !important; position:absolute; inset:0 0 auto 0; }
+  }
+
   @media(max-width:767px) { .left-panel { display:none !important; } }
 `;
 
-/* ─────────────────────────────────────────
-   ICONS
-───────────────────────────────────────── */
 function IBell({ s=21 }: { s?: number })     { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>; }
 function ISearch({ s=15 }: { s?: number })  { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>; }
 function IChevD({ s=13 }: { s?: number })   { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>; }
@@ -201,10 +210,9 @@ function IRefresh({ s=15 }: { s?: number }) { return <svg width={s} height={s} v
 function ICheck({ s=11 }: { s?: number })   { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>; }
 function IMapPin({ s=13 }: { s?: number })  { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>; }
 function IAlertCircle({ s=32 }: { s?: number }) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>; }
+function IBuilding({ s=13 }: { s?: number }) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><line x1="8" y1="6" x2="8" y2="6.01"/><line x1="16" y1="6" x2="16" y2="6.01"/><line x1="12" y1="6" x2="12" y2="6.01"/><line x1="12" y1="10" x2="12" y2="10.01"/><line x1="8" y1="10" x2="8" y2="10.01"/><line x1="16" y1="10" x2="16" y2="10.01"/><line x1="12" y1="14" x2="12" y2="14.01"/><line x1="8" y1="14" x2="8" y2="14.01"/><line x1="16" y1="14" x2="16" y2="14.01"/></svg>; }
+function ICorner({ s=13 }: { s?: number })  { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg>; }
 
-/* ─────────────────────────────────────────
-   TOAST HOOK
-───────────────────────────────────────── */
 function useToast() {
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const show = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
@@ -214,9 +222,6 @@ function useToast() {
   return { toast, show };
 }
 
-/* ─────────────────────────────────────────
-   SMALL COMPONENTS
-───────────────────────────────────────── */
 function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <div className="chk-row" onClick={() => onChange(!checked)} role="checkbox" aria-checked={checked} tabIndex={0}
@@ -248,17 +253,49 @@ function SectBox({ title, icon, children }: { title: string; icon?: React.ReactN
   );
 }
 
-/* ─────────────────────────────────────────
-   MAIN PAGE
-───────────────────────────────────────── */
+function TypeBadge({ l }: { l: LocationMaster }) {
+  if (l.MainLoc) return <span className="badge-main">MAIN</span>;
+  if (l.SubLoc)  return <span className="badge-sub">SUB</span>;
+  return null;
+}
+
+function LocationRow({ l, isSub, active, onSelect }: { l: LocationMaster; isSub?: boolean; active: boolean; onSelect: (l: LocationMaster) => void }) {
+  return (
+    <button
+      className={`srv-list-item ${isSub ? 'sub' : ''} ${active ? 'active' : ''}`}
+      onClick={() => onSelect(l)}
+    >
+      {isSub && (
+        <span style={{ color: '#5b7377', flexShrink: 0, display: 'flex' }}><ICorner s={14} /></span>
+      )}
+      <div style={{ width: 38, height: 38, borderRadius: 10, background: l.Enable ? 'linear-gradient(135deg,#1e3a40,#2a5260)' : '#d1d5db', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#fff' }}>
+        {l.MainLoc ? <IBuilding s={17} /> : <IMapPin s={18} />}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontSize: 13, fontWeight: 700, color: '#1e3a40', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {l.LocDes || '(no name)'}
+        </p>
+        <p style={{ fontSize: 11, color: '#6b7280', marginTop: 1 }}>
+          {l.LocCode}{l.SubLoc && l.MainLocDes ? ` · under ${l.MainLocDes}` : ''}
+        </p>
+        <span style={{ display: 'inline-flex', gap: 4, marginTop: 3 }}>
+          <span className={l.Enable ? 'badge-active' : 'badge-inactive'}>
+            {l.Enable ? 'Active' : 'Inactive'}
+          </span>
+          <TypeBadge l={l} />
+        </span>
+      </div>
+    </button>
+  );
+}
+
 export default function LocationsPage() {
   const router = useRouter();
   const [navKey, setNavKey] = useState('locations');
   const [search, setSearch] = useState('');
   const { toast, show: showToast } = useToast();
 
-  /* ── data state ── */
-  const [locations, setLocations] = useState<LocationMaster[]>([]);
+    const [locations, setLocations] = useState<LocationMaster[]>([]);
   const [selLoc,    setSelLoc]    = useState<LocationMaster | null>(null);
   const [isNew,     setIsNew]     = useState(false);
   const [loading,   setLoading]   = useState(true);
@@ -266,27 +303,45 @@ export default function LocationsPage() {
   const [saving,    setSaving]    = useState(false);
   const [deleting,  setDeleting]  = useState(false);
 
-  /* ── form fields (mirrors Tbl_LocationMaster columns) ── */
-  const [fLocCode, setFLocCode] = useState('');
+    const [fLocCode, setFLocCode] = useState('');
   const [fLocDes,  setFLocDes]  = useState('');
   const [fAddress, setFAddress] = useState('');
   const [fEnable,  setFEnable]  = useState(true);
+  const [fMain,    setFMain]    = useState(false);
+  const [fSub,     setFSub]     = useState(false);
+  const [fMainCode, setFMainCode] = useState('');
 
   const MAX_DES  = 50;
   const MAX_ADDR = 300;
 
-  /* ── filtered list (client-side quick filter; server search also available) ── */
-  const filtered = useMemo(() =>
-    locations.filter((l) =>
-      l.LocCode.toLowerCase().includes(search.toLowerCase()) ||
-      l.LocDes.toLowerCase().includes(search.toLowerCase())  ||
-      l.Address.toLowerCase().includes(search.toLowerCase())
-    ), [locations, search]);
+    const mainOptions = useMemo(
+    () => locations.filter((l) => l.MainLoc && !l.SubLoc && l.LocCode !== fLocCode),
+    [locations, fLocCode],
+  );
 
-  /* ════════════════════════════════════════
-     FETCH — real data from DB via API
-  ════════════════════════════════════════ */
-  const fetchLocations = useCallback(async () => {
+    const grouped = useMemo(() => {
+    if (!search.trim()) {
+      const mains       = locations.filter((l) => l.MainLoc).sort((a, b) => a.LocCode.localeCompare(b.LocCode));
+      const subsOf      = (code: string) =>
+        locations.filter((l) => l.SubLoc && l.MainLocCode === code).sort((a, b) => a.LocCode.localeCompare(b.LocCode));
+      const mainCodes   = new Set(mains.map((m) => m.LocCode));
+      const orphanSubs  = locations.filter((l) => l.SubLoc && !mainCodes.has(l.MainLocCode));
+      const plain       = locations.filter((l) => !l.MainLoc && !l.SubLoc);
+      return { mains, subsOf, orphanSubs, plain };
+    }
+    const q = search.toLowerCase();
+    const hits = locations.filter((l) =>
+      l.LocCode.toLowerCase().includes(q) ||
+      l.LocDes.toLowerCase().includes(q)  ||
+      l.Address.toLowerCase().includes(q) ||
+      (l.MainLocDes || '').toLowerCase().includes(q)
+    );
+    return { mains: [], subsOf: () => [] as LocationMaster[], orphanSubs: hits.filter((l) => l.SubLoc), plain: hits.filter((l) => !l.SubLoc) };
+  }, [locations, search]);
+
+  const listIsEmpty = grouped.mains.length === 0 && grouped.plain.length === 0 && grouped.orphanSubs.length === 0;
+
+    const fetchLocations = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     const res = await apiFetch<LocationMaster[]>(API);
@@ -307,62 +362,71 @@ export default function LocationsPage() {
 
   useEffect(() => { fetchLocations(); }, [fetchLocations]);
 
-  /* ── load form from a record ── */
-  function loadForm(l: LocationMaster) {
+    function loadForm(l: LocationMaster) {
     setFLocCode(l.LocCode);
     setFLocDes(l.LocDes);
     setFAddress(l.Address.trim() === '' ? '' : l.Address);
     setFEnable(l.Enable);
+    setFMain(l.MainLoc);
+    setFSub(l.SubLoc);
+    setFMainCode(l.MainLocCode);
     setSelLoc(l);
     setIsNew(false);
   }
 
-  /* ── SELECT ── */
-  function handleSelect(l: LocationMaster) { loadForm(l); }
+    function handleSelect(l: LocationMaster) { loadForm(l); }
 
-  /* ── NEW ── */
-  function handleNew() {
+    function handleNew() {
     setFLocCode('(auto-generated)');
     setFLocDes('');
     setFAddress('');
     setFEnable(true);
+    setFMain(false);
+    setFSub(false);
+    setFMainCode('');
     setSelLoc(null);
     setIsNew(true);
   }
 
-  /* ── SAVE ── */
-  async function handleSave() {
+    function pickMain(v: boolean) { setFMain(v); if (v) { setFSub(false); setFMainCode(''); } }
+  function pickSub(v: boolean)  {
+    setFSub(v);
+    if (v) { setFMain(false); if (!fMainCode && mainOptions.length) setFMainCode(mainOptions[0].LocCode); }
+  }
+
+    async function handleSave() {
     const trimmedDes = fLocDes.trim();
     if (!trimmedDes) { showToast('Location Description is required', 'error'); return; }
     if (trimmedDes.length > MAX_DES) { showToast(`Description must be ≤ ${MAX_DES} characters`, 'error'); return; }
     if (fAddress.length > MAX_ADDR) { showToast(`Address must be ≤ ${MAX_ADDR} characters`, 'error'); return; }
+    if (fMain && fSub) { showToast('A location is either a Main Location or a Sub Location — pick one', 'error'); return; }
+    if (fSub && !fMainCode) { showToast('Select the main location this sub belongs to', 'error'); return; }
 
     setSaving(true);
     try {
+      const payload = {
+        locDes:  trimmedDes,
+        address: fAddress.trim(),
+        enable:  fEnable,
+        mainLoc: fMain,
+        subLoc:  fSub,
+        mainLocCode: fSub ? fMainCode : '',
+      };
       if (isNew) {
         const res = await apiFetch<LocationMaster>(API, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            locDes:  trimmedDes,
-            address: fAddress.trim(),
-            enable:  fEnable,
-          }),
+          body: JSON.stringify(payload),
         });
         if (!res.success || !res.data) { showToast(res.message ?? 'Save failed', 'error'); return; }
-        setLocations((p) => [...p, res.data!].sort((a, b) => a.LocCode.localeCompare(b.LocCode)));
+        setLocations((p) => [...p, res.data!]);
         loadForm(res.data);
         showToast(`Location "${res.data.LocDes}" created ✓`);
       } else {
         const res = await apiFetch<LocationMaster>(API, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            locCode: fLocCode,
-            locDes:  trimmedDes,
-            address: fAddress.trim(),
-            enable:  fEnable,
-          }),
+          body: JSON.stringify({ ...payload, locCode: fLocCode }),
         });
         if (!res.success || !res.data) { showToast(res.message ?? 'Update failed', 'error'); return; }
         setLocations((p) => p.map((l) => l.LocCode === fLocCode ? res.data! : l));
@@ -374,8 +438,7 @@ export default function LocationsPage() {
     }
   }
 
-  /* ── DELETE ── */
-  async function handleDelete() {
+    async function handleDelete() {
     if (!selLoc) { showToast('Select a location to delete', 'error'); return; }
     if (!confirm(`Delete location "${selLoc.LocDes}" (${selLoc.LocCode})?\nThis cannot be undone.`)) return;
 
@@ -393,25 +456,39 @@ export default function LocationsPage() {
     }
   }
 
-  /* ── CLEAR ── */
-  function handleClear() {
+    function handleClear() {
     if (isNew) {
-      setFLocDes(''); setFAddress(''); setFEnable(true);
+      setFLocDes(''); setFAddress(''); setFEnable(true); setFMain(false); setFSub(false); setFMainCode('');
     } else if (selLoc) {
       loadForm(selLoc);
     }
   }
 
-  /* ── navigation ── */
-  function handleNavigate(key: string, path: string) { setNavKey(key); router.push(path); }
+    function handleNavigate(key: string, path: string) { setNavKey(key); router.push(path); }
   function handleLogout() { router.push('/admin/login'); }
 
-  const HDR = '#dae6e6';
+    function enterNext(e: React.KeyboardEvent<HTMLElement>) {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    e.preventDefault();
+    const order = ['lc-des', 'lc-addr', 'lc-main', 'btn-save-loc'];
+    const cur = (e.currentTarget as HTMLElement).id;
+    const idx = order.indexOf(cur);
+    for (let i = idx + 1; i < order.length; i++) {
+      const el = document.getElementById(order[i]);
+      if (el) { el.focus(); return; }
+    }
+    document.getElementById('btn-save-loc')?.focus();
+  }
 
-  /* ════════════════════════════════════════
-     RENDER
-  ════════════════════════════════════════ */
-  return (
+    function handlePrint() {
+    if (!selLoc && !isNew) { showToast('Select a location to print', 'error'); return; }
+    window.print();
+  }
+
+  const HDR = '#dae6e6';
+  const searching = !!search.trim();
+
+    return (
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
@@ -466,7 +543,7 @@ export default function LocationsPage() {
           {/* BODY */}
           <div style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', gap: 13 }}>
 
-            {/* ── LEFT PANEL ── */}
+            {}
             <div className="left-panel" style={{ width: 260, flexShrink: 0, background: '#deeaea', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 1px 5px rgba(0,0,0,0.08)' }}>
               <div style={{ padding: '12px 12px 8px', borderBottom: '1px solid rgba(30,58,64,0.1)', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -489,43 +566,64 @@ export default function LocationsPage() {
                     <p style={{ fontSize: 12, marginTop: 8 }}>Could not load locations</p>
                     <button className="btn-retry" onClick={fetchLocations}><IRefresh s={13} /> Retry</button>
                   </div>
-                ) : filtered.length === 0 ? (
+                ) : listIsEmpty ? (
                   <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: 12, padding: '2rem 0' }}>
                     {search ? 'No locations found' : 'No locations yet — click "New Location"'}
                   </p>
                 ) : (
-                  filtered.map((l) => (
-                    <button
-                      key={l.LocCode}
-                      className={`srv-list-item ${selLoc?.LocCode === l.LocCode && !isNew ? 'active' : ''}`}
-                      onClick={() => handleSelect(l)}
-                    >
-                      <div style={{ width: 38, height: 38, borderRadius: 10, background: l.Enable ? 'linear-gradient(135deg,#1e3a40,#2a5260)' : '#d1d5db', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: '#fff' }}>
-                        <IMapPin s={18} />
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ fontSize: 13, fontWeight: 700, color: '#1e3a40', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {l.LocDes || '(no name)'}
-                        </p>
-                        <p style={{ fontSize: 11, color: '#6b7280', marginTop: 1 }}>{l.LocCode}</p>
-                        <span className={l.Enable ? 'badge-active' : 'badge-inactive'} style={{ marginTop: 3 }}>
-                          {l.Enable ? 'Active' : 'Inactive'}
-                        </span>
-                      </div>
-                    </button>
-                  ))
+                  <>
+                    {/* mains, each with its subs underneath */}
+                    {grouped.mains.map((m) => {
+                      const subs = grouped.subsOf(m.LocCode);
+                      return (
+                        <React.Fragment key={m.LocCode}>
+                          <LocationRow l={m} active={selLoc?.LocCode === m.LocCode && !isNew} onSelect={handleSelect} />
+                          {subs.length > 0 && (
+                            <div className="grp-hdr">Under {m.LocDes.length > 18 ? `${m.LocDes.slice(0, 18)}…` : m.LocDes}</div>
+                          )}
+                          {subs.map((s) => (
+                            <LocationRow key={s.LocCode} l={s} isSub active={selLoc?.LocCode === s.LocCode && !isNew} onSelect={handleSelect} />
+                          ))}
+                        </React.Fragment>
+                      );
+                    })}
+
+                    {/* plain branches — neither main nor sub */}
+                    {grouped.plain.length > 0 && (
+                      <>
+                        {grouped.mains.length > 0 && <div className="grp-hdr">{searching ? 'Matching' : 'Other branches'}</div>}
+                        {grouped.plain.map((l) => (
+                          <LocationRow key={l.LocCode} l={l} active={selLoc?.LocCode === l.LocCode && !isNew} onSelect={handleSelect} />
+                        ))}
+                      </>
+                    )}
+
+                    {/* subs whose main is missing (data from before the structure existed) */}
+                    {grouped.orphanSubs.length > 0 && (
+                      <>
+                        <div className="grp-hdr">{searching ? 'Matching (sub)' : 'Subs without a main'}</div>
+                        {grouped.orphanSubs.map((l) => (
+                          <LocationRow key={l.LocCode} l={l} isSub active={selLoc?.LocCode === l.LocCode && !isNew} onSelect={handleSelect} />
+                        ))}
+                      </>
+                    )}
+                  </>
                 )}
               </div>
             </div>
 
-            {/* ── RIGHT PANEL — FORM ── */}
+            {}
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
               <div style={{ background: '#1e3a40', borderRadius: '12px 12px 0 0', padding: '14px 18px', flexShrink: 0 }}>
                 <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
                   {isNew ? 'New Location' : selLoc ? 'Edit Location' : 'No Location Selected'}
                 </p>
-                <p style={{ color: '#fff', fontSize: 18, fontWeight: 800, marginTop: 2 }}>LOCATION DETAIL</p>
+                <p style={{ color: '#fff', fontSize: 18, fontWeight: 800, marginTop: 2 }}>
+                  LOCATION DETAIL
+                  {selLoc?.MainLoc && <span className="badge-main" style={{ marginLeft: 10, verticalAlign: 'middle' }}>MAIN</span>}
+                  {selLoc?.SubLoc && <span className="badge-sub" style={{ marginLeft: 10, verticalAlign: 'middle' }}>SUB</span>}
+                </p>
               </div>
 
               <div style={{ flex: 1, overflowY: 'auto', padding: '14px', display: 'flex', flexDirection: 'column', gap: 13, background: '#e8f0f1' }}>
@@ -553,6 +651,7 @@ export default function LocationsPage() {
                             value={fLocDes}
                             maxLength={MAX_DES}
                             onChange={(e) => setFLocDes(e.target.value)}
+                            onKeyDown={enterNext}
                             placeholder="e.g. HEAD OFFICE"
                           />
                         </FieldRow>
@@ -568,6 +667,7 @@ export default function LocationsPage() {
                           value={fAddress}
                           maxLength={MAX_ADDR}
                           onChange={(e) => setFAddress(e.target.value)}
+                          onKeyDown={enterNext}
                           placeholder="Full address…"
                         />
                       </FieldRow>
@@ -576,8 +676,47 @@ export default function LocationsPage() {
                       </span>
                     </SectBox>
 
-                    <SectBox title="Status">
-                      <Checkbox checked={fEnable} onChange={setFEnable} label="Enable" />
+                    <SectBox title="Status" icon={<IBuilding s={14} />}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <Checkbox checked={fEnable} onChange={setFEnable} label="Enable" />
+                        <Checkbox checked={fMain} onChange={pickMain} label="Main Location" />
+                        <Checkbox checked={fSub} onChange={pickSub} label="Sub Location" />
+                      </div>
+
+                      {/* a sub ALWAYS sits under a main — the dropdown is required */}
+                      {fSub && (
+                        <FieldRow label="Main Location *" htmlFor="lc-main">
+                          <select
+                            id="lc-main"
+                            className="frm-input"
+                            value={fMainCode}
+                            onChange={(e) => setFMainCode(e.target.value)}
+                            onKeyDown={enterNext}
+                          >
+                            <option value="">-- Select the main location --</option>
+                            {mainOptions.map((m) => (
+                              <option key={m.LocCode} value={m.LocCode}>
+                                {m.LocDes} ({m.LocCode})
+                              </option>
+                            ))}
+                          </select>
+                          {mainOptions.length === 0 ? (
+                            <span style={{ fontSize: 11.5, color: '#b45309', marginTop: 4 }}>
+                              No main locations yet — mark one as “Main Location” first, then add subs under it.
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: 11.5, color: '#6b7280', marginTop: 4 }}>
+                              This sub will be listed under <b>{mainOptions.find((m) => m.LocCode === fMainCode)?.LocDes || '…'}</b>.
+                            </span>
+                          )}
+                        </FieldRow>
+                      )}
+
+                      {fMain && (
+                        <span style={{ fontSize: 11.5, color: '#6b7280' }}>
+                          Sub locations can be added under this main location.
+                        </span>
+                      )}
                     </SectBox>
 
                   </div>
@@ -589,7 +728,7 @@ export default function LocationsPage() {
                 <button className="btn-clear" onClick={handleClear} disabled={saving || deleting || (!selLoc && !isNew)}>
                   <IRefresh s={14} /> Clear
                 </button>
-                <button className="btn-print" onClick={() => window.print()}>
+                <button className="btn-print" onClick={handlePrint}>
                   <IPrint s={14} /> Print
                 </button>
                 <div style={{ flex: 1 }} />
@@ -598,7 +737,7 @@ export default function LocationsPage() {
                     <ITrash s={14} /> {deleting ? 'Deleting…' : 'Delete'}
                   </button>
                 )}
-                <button className="btn-save" onClick={handleSave} disabled={saving || deleting || (!selLoc && !isNew)}>
+                <button id="btn-save-loc" className="btn-save" onClick={handleSave} disabled={saving || deleting || (!selLoc && !isNew)}>
                   <ISave s={14} /> {saving ? 'Saving…' : 'Save'}
                 </button>
               </div>
@@ -606,6 +745,49 @@ export default function LocationsPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {}
+      <div id="loc-print-area" aria-hidden="true">
+        {(() => {
+          const now = new Date();
+          const subs = !isNew && fLocCode
+            ? locations.filter((l) => l.SubLoc && l.MainLocCode === fLocCode)
+            : [];
+          const typeTxt = fMain ? 'MAIN LOCATION' : fSub ? 'SUB LOCATION' : 'BRANCH (STANDALONE)';
+          const underTxt =
+            mainOptions.find((m) => m.LocCode === fMainCode)?.LocDes ||
+            selLoc?.MainLocDes || fMainCode || '—';
+          const R = ({ k, children }: { k: string; children: React.ReactNode }) => (
+            <tr>
+              <td style={{ border: '1px solid #94a3b8', padding: '6px 10px', fontSize: 12, fontWeight: 700, background: '#eef4f5', width: 230 }}>{k}</td>
+              <td style={{ border: '1px solid #94a3b8', padding: '6px 10px', fontSize: 12 }}>{children}</td>
+            </tr>
+          );
+          return (
+            <div style={{ padding: '18mm 14mm', background: '#fff', color: '#111827', fontFamily: "'Inter',sans-serif" }}>
+              <p style={{ textAlign: 'center', fontSize: 16, fontWeight: 800, letterSpacing: '0.12em' }}>SAYO</p>
+              <p style={{ textAlign: 'center', fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', marginTop: 3 }}>LOCATION DETAIL REPORT</p>
+              <p style={{ textAlign: 'center', fontSize: 10.5, color: '#6b7280', marginTop: 3 }}>
+                Printed on {now.toLocaleDateString('en-GB')} at {now.toLocaleTimeString('en-GB')}
+              </p>
+              <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 640, margin: '18px auto 0' }}>
+                <tbody>
+                  <R k="Location Code (LocCode)">{fLocCode}</R>
+                  <R k="Location Description (LocDes)">{fLocDes || '—'}</R>
+                  <R k="Address">{fAddress || '—'}</R>
+                  <R k="Status">{fEnable ? 'Active / Enabled' : 'Disabled'}</R>
+                  <R k="Location Type">{typeTxt}</R>
+                  {fSub ? <R k="Under Main Location">{underTxt}</R> : null}
+                  {fMain ? <R k="Sub Locations">{subs.length ? subs.map((s) => `${s.LocDes} (${s.LocCode})`).join(', ') : 'None yet'}</R> : null}
+                </tbody>
+              </table>
+              <p style={{ marginTop: 28, fontSize: 11, color: '#374151', textAlign: 'left', maxWidth: 640, margin: '28px auto 0' }}>
+                Printed by: Admin&emsp;Signature: __________________
+              </p>
+            </div>
+          );
+        })()}
       </div>
     </>
   );

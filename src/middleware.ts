@@ -1,11 +1,3 @@
-/**
- * Route protection middleware.
- *
- * PUBLIC  : /booking (online client-side booking) + /admin-login + the APIs the
- *           public booking page needs.
- * PROTECTED: everything else (all admin pages + all admin APIs) — requires a
- *           valid signed admin session cookie.
- */
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminToken, ADMIN_COOKIE } from '@/lib/adminSession';
 
@@ -42,8 +34,7 @@ async function hasValidSession(req: NextRequest): Promise<boolean> {
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  /* ── API routes ── */
-  if (pathname.startsWith('/api')) {
+    if (pathname.startsWith('/api')) {
     const pub = PUBLIC_API.find(p => p.path === pathname && p.methods.includes(req.method));
     if (pub) return NextResponse.next();
 
@@ -51,8 +42,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  /* ── Pages ── */
-  if (PUBLIC_PAGES.includes(pathname)) return NextResponse.next();
+    if (PUBLIC_PAGES.includes(pathname)) return NextResponse.next();
 
   if (await hasValidSession(req)) return NextResponse.next();
 

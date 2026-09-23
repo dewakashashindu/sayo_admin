@@ -1,35 +1,4 @@
 'use client';
-// src/app/inventory/po/page.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// PURCHASE ORDER — the legacy screen (SCR_BILLING.pdf pages 3, 4 and 5) as a
-// web page, on this project's MySQL database.
-//
-//   Find            search saved orders (Confirmed / Pending radio, like the
-//                   legacy screen) and load one into Details
-//   Details         Location, Supplier, dates, the item grid, remarks,
-//                   delivery address, Net Value, and the legacy button row
-//                   Clear · Confirmation · Print · Delete · Save · Cancel
-//   Stock Require-  every item at or below its reorder level, GROUPED
-//   ments           SUPPLIER-WISE, with a tick box per item (and one per
-//                   supplier) — several items can be ticked at once and
-//                   "Add selected to PO" puts exactly those items on the
-//                   order: the grid is replaced by the selection, and the
-//                   Location and the Supplier fill themselves in.
-//
-// TWO THINGS THE SCREEN SHOWS BY NAME
-//   · the UNIT column shows the unit NAME from tbl_unitmaster (UnitDes) —
-//     the code (MasterUnitID) is what gets stored, the name is what is read.
-//   · the Stock Requirements table shows the unit name the same way.
-// A purchase order is addressed to ONE supplier, so the auto-fill only
-// happens when every ticked item points at the same supplier; ticking items
-// from two suppliers asks you to narrow the choice instead of guessing.
-//
-// LOCATIONS / SUPPLIERS come from GET /api/inventory/lookups, which reads
-// tbl_locationmaster / tbl_suppliermaster / tbl_unitmaster exactly as they are:
-// RTRIM'd, nothing filtered out, inactive rows shown as “(Inactive)”. If one of
-// those tables cannot be read the page says so in red instead of showing an
-// empty dropdown.
-// ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
@@ -54,8 +23,6 @@ import {
   poPrintValueColumns,
   type PoPrintCopy,
 } from '@/lib/poPrint';
-
-/* ── types ───────────────────────────────────────────────────────────────── */
 
 interface LookupLocation { code: string; des: string; address: string; enable: boolean }
 interface LookupSupplier {
@@ -92,8 +59,6 @@ interface PoListRow {
    live in src/lib/poRequirements.ts so they can be tested on their own */
 type Requirement = StockRequirement;
 
-/* ── small helpers ───────────────────────────────────────────────────────── */
-
 let lineSeq = 0;
 const newLine = (): PoLine => ({
   key: `L${++lineSeq}`, itemCode: '', name: '', unitID: '', costPrice: '', poQty: '',
@@ -113,8 +78,6 @@ function useToast() {
   }, []);
   return { toast, show };
 }
-
-/* ── page ────────────────────────────────────────────────────────────────── */
 
 export default function PurchaseOrderPage() {
   const router = useRouter();
@@ -178,8 +141,7 @@ export default function PurchaseOrderPage() {
      thing that decides what goes on the order */
   const [picked, setPicked] = useState<Record<string, boolean>>({});
 
-  /* ── load locations / suppliers / units (once) ─────────────────────────── */
-  useEffect(() => {
+    useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -214,8 +176,7 @@ export default function PurchaseOrderPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── who is signed in (printed as "User") ──────────────────────────────── */
-  useEffect(() => {
+    useEffect(() => {
     let active = true;
     (async () => {
       try {
@@ -230,8 +191,7 @@ export default function PurchaseOrderPage() {
     return () => { active = false; };
   }, []);
 
-  /* ── the order list (Find tab) ─────────────────────────────────────────── */
-  const loadList = useCallback(async () => {
+    const loadList = useCallback(async () => {
     setListBusy(true);
     try {
       const params = new URLSearchParams({ status: findStatus });
@@ -250,8 +210,7 @@ export default function PurchaseOrderPage() {
 
   useEffect(() => { if (tab === 'find') void loadList(); }, [tab, loadList]);
 
-  /* ── stock requirements ────────────────────────────────────────────────── */
-  const loadReqs = useCallback(async () => {
+    const loadReqs = useCallback(async () => {
     if (!locCode) return;
     setReqBusy(true);
     setReqErr('');
@@ -272,8 +231,7 @@ export default function PurchaseOrderPage() {
 
   useEffect(() => { if (tab === 'req') void loadReqs(); }, [tab, loadReqs]);
 
-  /* ── line editing ──────────────────────────────────────────────────────── */
-  function patchLine(key: string, patch: Partial<PoLine>) {
+    function patchLine(key: string, patch: Partial<PoLine>) {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
     setDirty(true);
   }
@@ -299,14 +257,12 @@ export default function PurchaseOrderPage() {
     setDirty(true);
   }
 
-  /* ── totals (display only — the API calculates the stored value) ───────── */
-  const netValue = useMemo(
+    const netValue = useMemo(
     () => lines.reduce((sum, l) => sum + lineValue(l.costPrice, l.poQty), 0),
     [lines],
   );
 
-  /* ── unit names ────────────────────────────────────────────────────────── */
-  /* tbl_unitmaster holds the unit NAME (UnitDes) next to the code
+    /* tbl_unitmaster holds the unit NAME (UnitDes) next to the code
      (MasterUnitID). The screen shows the name; tbl_podetails keeps the code,
      exactly like the legacy screen did. */
   const unitName = useCallback(
@@ -314,8 +270,7 @@ export default function PurchaseOrderPage() {
     [units],
   );
 
-  /* ── the requirements, supplier-wise ──────────────────────────────────── */
-  /* One block per supplier (the supplier the item master points at), each
+    /* One block per supplier (the supplier the item master points at), each
      block keeping the order the API returned: worst shortage first. */
   const reqGroups = useMemo<RequirementGroup[]>(
     () => groupRequirementsSupplierWise(reqs),
@@ -341,8 +296,7 @@ export default function PurchaseOrderPage() {
     setPicked(on ? Object.fromEntries(reqs.map((r) => [r.itemCode, true])) : {});
   }
 
-  /* ── tick items → they go on the order, and nothing else does ───────────── */
-  /* The order grid is REPLACED by the ticked items: what you selected in
+    /* The order grid is REPLACED by the ticked items: what you selected in
      Current Stock Requirements is what the purchase order shows. The Location
      is the one the requirements were read for, the Supplier is the one the
      ticked items belong to — both fill themselves in. */
@@ -389,8 +343,7 @@ export default function PurchaseOrderPage() {
       : `${rows.length} item(s) put on the order — these items carry no supplier, choose one on the form`);
   }
 
-  /* ── open an order ─────────────────────────────────────────────────────── */
-  async function openOrder(row: PoListRow) {
+    async function openOrder(row: PoListRow) {
     try {
       const res = await fetch(
         `/api/inventory/po/${encodeURIComponent(row.poNo)}?locCode=${encodeURIComponent(row.locCode)}`,
@@ -435,8 +388,7 @@ export default function PurchaseOrderPage() {
     }
   }
 
-  /* ── save ──────────────────────────────────────────────────────────────── */
-  function payload() {
+    function payload() {
     return {
       locCode,
       supID,
@@ -490,8 +442,7 @@ export default function PurchaseOrderPage() {
     }
   }
 
-  /* ── confirmation ──────────────────────────────────────────────────────── */
-  async function handleConfirm() {
+    async function handleConfirm() {
     if (confirmed) { showToast('This order is already confirmed'); return; }
     setConfirming(true);
     try {
@@ -565,8 +516,7 @@ export default function PurchaseOrderPage() {
     router.push(path);
   }
 
-  /* ── printing ──────────────────────────────────────────────────────────── */
-  /* The Print button does not print straight away: the legacy screen printed
+    /* The Print button does not print straight away: the legacy screen printed
      two different sheets, so the operator is asked which copy is wanted.
        Standard Copy — code · name · unit · qty · cost price · value · Total
        Supplier Copy — code · name · unit · qty  (no money at all)            */
@@ -580,16 +530,13 @@ export default function PurchaseOrderPage() {
     setPrintJob({ copy, at: new Date(), nonce: ++printNonce.current });
   }
 
-  /* The sheet is rendered first, THEN the browser's print dialog opens — the
-     other way round would print the screen it had a moment ago. */
-  useEffect(() => {
+    useEffect(() => {
     if (!printJob) return;
     const id = window.setTimeout(() => window.print(), 60);
     return () => window.clearTimeout(id);
   }, [printJob]);
 
-  /* ── emailing the order to the supplier ─────────────────────────────────── */
-  /* The same sheet the Print button makes is attached as a PDF — the server
+    /* The same sheet the Print button makes is attached as a PDF — the server
      draws it from the saved order, so the file is the order in the database,
      not whatever is on the screen at that moment. */
   const supplierEmail = (suppliers.find((s) => s.supID === supID)?.email || '').trim();
@@ -688,8 +635,7 @@ export default function PurchaseOrderPage() {
     };
   })();
 
-  /* ── markup ────────────────────────────────────────────────────────────── */
-  return (
+    return (
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
@@ -725,7 +671,7 @@ export default function PurchaseOrderPage() {
             </div>
           )}
 
-          {/* ── FIND ─────────────────────────────────────────────────────── */}
+          {}
           {tab === 'find' && (
             <div className="po-card no-print">
               <div className="po-find">
@@ -779,7 +725,7 @@ export default function PurchaseOrderPage() {
             </div>
           )}
 
-          {/* ── DETAILS ──────────────────────────────────────────────────── */}
+          {}
           {tab === 'details' && (
             <div className="po-card">
               <div className="po-form no-print">
@@ -937,7 +883,7 @@ export default function PurchaseOrderPage() {
             </div>
           )}
 
-          {/* ── STOCK REQUIREMENTS ──────────────────────────────────────── */}
+          {}
           {tab === 'req' && (
             <div className="po-card no-print">
               <div className="po-find">
@@ -1055,7 +1001,7 @@ export default function PurchaseOrderPage() {
         </div>
       </div>
 
-      {/* ── WHICH COPY? (the Print button asks first) ────────────────────── */}
+      {}
       {printAsk && (
         <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Print purchase order">
           <div className="ask-card">
@@ -1079,7 +1025,7 @@ export default function PurchaseOrderPage() {
         </div>
       )}
 
-      {/* ── EMAIL TO SUPPLIER (the same sheet, as a PDF attachment) ──────── */}
+      {}
       {mailAsk && (
         <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Email purchase order">
           <div className="ask-card mail-card">
@@ -1202,14 +1148,7 @@ export default function PurchaseOrderPage() {
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
-  /* ── the screen must look the same whatever the OS theme is ──────────────
-     app/globals.css flips --foreground to #ededed inside
-     @media (prefers-color-scheme: dark), so on a machine that prefers dark
-     mode every element WITHOUT an explicit colour came out near-white: the
-     Item Value column, the words on the toolbar and the form controls were
-     invisible on the white rows. So the scheme is pinned to light here and
-     every text/input colour is written out instead of inherited. */
-  :root { color-scheme:light; }
+    :root { color-scheme:light; }
   html, body {
     height:100%; font-family:'Inter',sans-serif;
     color:#1f2937; background:#c2d4d4; color-scheme:light;
@@ -1219,7 +1158,6 @@ const PAGE_CSS = `
   input:disabled, select:disabled, textarea:disabled {
     background-color:#eef2f2; color:#7b8f92; -webkit-text-fill-color:#7b8f92;
   }
-
 
   @keyframes toastIn { from{opacity:0;transform:translateX(-50%) translateY(16px);} to{opacity:1;transform:translateX(-50%) translateY(0);} }
   .toast {
@@ -1310,8 +1248,7 @@ const PAGE_CSS = `
   .x:hover:not(:disabled) { background:#fee2e2; }
   .x:disabled { opacity:0.4; cursor:not-allowed; }
 
-  /* ── "which copy?" dialog ───────────────────────────────────────────────── */
-  .ask-back {
+    .ask-back {
     position:fixed; inset:0; background:rgba(16,32,36,0.55); z-index:10000;
     display:flex; align-items:center; justify-content:center; padding:20px;
   }
@@ -1331,8 +1268,7 @@ const PAGE_CSS = `
   .ask-choice-hint { font-size:11.5px; color:#5b7176; line-height:1.45; }
   .ask-foot { display:flex; justify-content:flex-end; gap:8px; }
 
-  /* ── the "email to supplier" dialog ─────────────────────────────────────── */
-  .mail-card { width:min(760px,95vw); max-height:92vh; overflow:auto; }
+    .mail-card { width:min(760px,95vw); max-height:92vh; overflow:auto; }
   .mail-field { display:flex; flex-direction:column; gap:5px; }
   .mail-field > label { font-size:11px; font-weight:700; color:#3c5a60; text-transform:uppercase; letter-spacing:0.03em; }
   .mail-field input, .mail-field textarea {

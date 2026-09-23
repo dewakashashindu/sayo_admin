@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 
-const prisma = new PrismaClient();
+const prisma = newRobustPrisma();
 
 function clean(v: string | null | undefined) {
   if (!v || v.trim() === ' ' || v.trim() === '') return '';
   return v.trim();
 }
 
-/* ── GET all suppliers ── */
 export async function GET() {
   try {
     const rows = await prisma.tbl_SupplierMaster.findMany({
@@ -37,7 +37,6 @@ export async function GET() {
   }
 }
 
-/* ── POST create supplier ── */
 export async function POST(req: NextRequest) {
   try {
     const b = await req.json();

@@ -1,34 +1,6 @@
-// src/app/api/inventory/grn/[grnNo]/confirm/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/inventory/grn/:grnNo/confirm        body: { locCode }
-//
-// The Confirmation button on the legacy GRN screen. This is the ONLY place
-// where a receipt touches stock, and it does everything in ONE transaction:
-//
-//   for every line
-//     1. lock the item-master row            (SELECT … FOR UPDATE)
-//     2. lock the purchase-order line if the GRN is PO-backed
-//        · refuse the whole receipt when it would go past what the PO has open
-//     3. tally the line onto the PO line      (GRNQty, GRNNOs)
-//     4. add the goods to tbl_itemmaster.StockBalance — GRNQty + FreeQty —
-//        and write the ledger row into tbl_stocktxn
-//        …and the same quantity into tbl_itemdetail (the per-expiry row the
-//        Item Master screen reads), so the two screens cannot disagree
-//     5. push RetailPrice into the item master ONLY when the line asked for it
-//   then the header is stamped Confirmed / ConUserID / ConDatetime
-//
-// WHY ONE TRANSACTION: a GRN that half-happened is worse than a failed one.
-// If any line fails, nothing is written and the user gets the line that failed
-// with the reason (the billing screen learned this the hard way).
-//
-// SERVICES: a line whose item is tbl_itemmaster.ServiceItem = 1 is recorded on
-// the document but does not touch stock — a haircut has no balance.
-//
-// RE-CONFIRMING IS REFUSED (409) — the header is locked first, so two people
-// pressing the button together cannot move the stock twice.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { invActor, invChar, invFail, invId, InvError,
   addItemDetailStock,
@@ -45,7 +17,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ grnNo: string }> };
@@ -75,8 +47,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
     const result = await prisma.$transaction(async (tx) => {
       let itemDetailWritten = false;
-      /* ── 1. the document ───────────────────────────────────────────────── */
-      const head = await tx.$queryRaw<
+            const head = await tx.$queryRaw<
         { GRNNO: string; GRNTYPE: string; Confirmed: string; PONO: string; NetTotal: number }[]
       >`
         SELECT RTRIM(GRNNO) AS GRNNO, UPPER(GRNTYPE) AS GRNTYPE,
@@ -97,8 +68,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       const grnType = trim(head[0].GRNTYPE) || (trim(head[0].PONO) ? "GR" : "DG");
       const headerPoNo = trim(head[0].PONO);
 
-      /* ── 2. the lines ──────────────────────────────────────────────────── */
-      const lines = await tx.$queryRaw<LineRow[]>`
+            const lines = await tx.$queryRaw<LineRow[]>`
         SELECT d.LineNo, RTRIM(d.ItemCode) AS ItemCode,
                COALESCE(i.ItemPrintDes, i.ItemDes) AS ItemName,
                d.GRNQty, d.FreeQty, d.CostPrice, d.RetailPrice,
@@ -189,8 +159,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           poLine = headerPoNo;
         }
 
-        /* stock — only for real stock items — galapena VB StockAsItIs */
-        let newBalance: number | null = null;
+                let newBalance: number | null = null;
         if (!isService) {
           const stock = safeQty(item[0].StockBalance);
           const qtyIn = round2(received + free);
@@ -254,17 +223,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         });
       }
 
-      /* ── 3. stamp the header ───────────────────────────────────────────── */
-      await confirmGrnHeader(tx, locCode, grnNo, actor.userId);
+            await confirmGrnHeader(tx, locCode, grnNo, actor.userId);
 
-      /* ── 4. mark the purchase order as received ────────────────────────── *
-       * The old desktop program ended its GRN save with
-       *     UPDATE Tbl_POHeader SET GRNed = 'Y' …
-       * Same table, same column, written here in the same transaction, so an
-       * old report reading that flag agrees with this screen. `poReceived` is
-       * null when the order is fully received… or when the database has no
-       * GRNed column yet — that never blocks the confirmation. */
-      const poReceived = headerPoNo
+            const poReceived = headerPoNo
         ? await markPoReceived(tx, locCode, headerPoNo)
         : null;
 

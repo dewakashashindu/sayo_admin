@@ -1,35 +1,3 @@
-// src/lib/billingTaxes.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Tax engine for the bill screen. Every rate comes from the `tbl_taxes` table —
-// only the rows with `Enable = 1` are used, and the description + percentage are
-// printed exactly as they are stored there.
-//
-// The salon's worksheet (same order the amounts are shown on the screen):
-//
-//   Gross ................. (A)
-//   Discount .............. (B)
-//   Gross After Discount ... (C) = [A - B]
-//   Service Charge ......... (D) = [C * (x/100)]     ← rows with ServiceCharge = 1
-//   VAT .................... (E) = [(C + D) * (y/100)]
-//   NBT .................... (F) = [C + D + E] * (z/100)
-//   SSCL ................... (G) = [C + D] * (p/100)
-//   Net Total .............. (H) = [C + D + E + F + G]
-//
-// Which formula a row uses is decided by its kind, not by its position:
-//   • `ServiceCharge = 1` — or, when that flag was never set, a row named
-//     “Service Charge” / “Ser. Charge” / “SVC” or coded SC / SVC / SER — is the
-//     service charge: charge stage, base C. A differently named row (“Service
-//     Tax”, “City Levy”, …) is NOT treated as the service charge.
-//   • description containing “VAT”       → base (C + D)
-//   • description containing “NBT”       → base (C + D + E)   — VAT included
-//   • description containing “SSCL”      → base (C + D)
-//   • anything else still enabled        → base (C + D), added after the rest
-// So an extra row in tbl_taxes — “Other VAT”, “Tax”, anything new — is picked up
-// automatically without touching this file.
-//
-// `ItemBasedTax` is read and handed over to the UI untouched; it does not change
-// the calculation here. Add a rule above if a future tax needs its own base.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type TaxStage = "charge" | "vat" | "nbt" | "sscl" | "other";
 

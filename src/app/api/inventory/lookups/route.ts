@@ -1,41 +1,17 @@
-// src/app/api/inventory/lookups/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/inventory/lookups
-//
-// Every dropdown the Purchase Order / GRN screens need, in ONE round trip:
-//
-//   { success, locations[], suppliers[], units[], company{}, errors{} }
-//
-// `company` is the letterhead the printed Purchase Order carries
-// (`navconfig.logo_text` / `footerconfig`), read best-effort — a database
-// without those tables still returns the three dropdown lists.
-//
-// THE RULE (asked for in the round): the lists must be EXACTLY what the
-// database holds —
-//
-//   · read straight from tbl_locationmaster / tbl_suppliermaster /
-//     tbl_unitmaster — no hard-coded lists, no sample data, no cache
-//   · CHAR columns are RTRIM'd (a padded CHAR(10) would show as "LOC0000004   ")
-//   · NOTHING is filtered out: a row with Enable = 0 is returned too and marked
-//     `enable: false`, so the screen can show it as "(Inactive)" instead of the
-//     value silently disappearing
-//   · the three lists are loaded independently: if one table cannot be read the
-//     other two still arrive, and the failing one reports why in `errors`
-//
-// Sorted so the screen is predictable: active rows first, then by name/code.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invFail } from "@/lib/inventoryServer";
 import { loadCompanyLetterhead } from "@/lib/companyLetterhead";
 import { primarySupplierEmail } from "@/lib/poEmail";
+import { ensureLocationExtras } from "@/lib/locationExtras";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 export interface LookupLocation {
@@ -43,6 +19,11 @@ export interface LookupLocation {
   des: string;
   address: string;
   enable: boolean;
+  /** legacy MainLoc / SubLoc / MainLocCode — the transfer requisition asks a
+      SUB location what it needs and routes the request to its MAIN location */
+  mainLoc: boolean;
+  subLoc: boolean;
+  mainLocCode: string;
 }
 export interface LookupSupplier {
   supID: string;
@@ -82,14 +63,18 @@ export async function GET() {
     const company = await loadCompanyLetterhead(prisma);
 
     const locations = await load(errors, "locations", async () => {
+      await ensureLocationExtras();
       const rows = await prisma.$queryRaw<
-        { code: string; des: string; address: string; enable: number }[]
+        { code: string; des: string; address: string; enable: number; mainLoc: number; subLoc: number; mainLocCode: string }[]
       >`
         SELECT
-          RTRIM(LocCode)                      AS code,
-          LocDes                              AS des,
-          COALESCE(RTRIM(Address), '')        AS address,
-          COALESCE(CAST(Enable AS UNSIGNED), 1) AS enable
+          RTRIM(LocCode)                         AS code,
+          LocDes                                 AS des,
+          COALESCE(RTRIM(Address), '')           AS address,
+          COALESCE(CAST(Enable AS UNSIGNED), 1)  AS enable,
+          COALESCE(CAST(MainLoc AS UNSIGNED), 0) AS mainLoc,
+          COALESCE(CAST(SubLoc AS UNSIGNED), 0)  AS subLoc,
+          COALESCE(RTRIM(MainLocCode), '')       AS mainLocCode
         FROM tbl_locationmaster
         ORDER BY enable DESC, LocDes ASC, LocCode ASC
       `;
@@ -98,6 +83,9 @@ export async function GET() {
         des: String(r.des ?? "").trim(),
         address: String(r.address ?? "").trim(),
         enable: Number(r.enable) === 1,
+        mainLoc: Number(r.mainLoc) === 1,
+        subLoc: Number(r.subLoc) === 1,
+        mainLocCode: String(r.mainLocCode ?? "").trim(),
       }));
     });
 

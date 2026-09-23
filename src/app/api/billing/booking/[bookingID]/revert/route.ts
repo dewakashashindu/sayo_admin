@@ -1,37 +1,6 @@
-// src/app/api/billing/booking/[bookingID]/revert/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/billing/booking/:bookingID/revert      body: { locCode? }
-//
-// THE MISTAKE THIS FIXES
-// The technician marks the work Done and the booking leaves the appointment
-// grid — only the Billing Dashboard (and this bill screen) can see it any more.
-// If the tap was a mistake there was no way back: the materials, the supporters
-// and even the services could no longer be corrected, and the cashier was left
-// with a booking that was not ready to be billed.
-//
-// WHAT IT DOES — one status step back, and the booking is editable again:
-//
-//   DONE    → ONGOING     (the wrong “Done” — back to the technician)
-//   ONGOING → CONFIRMED   (the check-in itself was wrong; CheckInTime is
-//                          cleared, so the technician additions lock again)
-//
-// REFUSED while the booking is already billed (BillingTime stamped): the money
-// is in the four bill tables, and moving the status afterwards would leave the
-// bill and the booking disagreeing. Cancelling a finished sale is a separate
-// (refund) flow on purpose.
-//
-// The technician screen finds the booking again by itself: it refreshes every
-// 20 seconds and whenever the tab is looked at, and its day list is no longer
-// narrowed by a technician name that may not match (see the technician screens
-// and GET /api/appointments).
-//
-// The header row is locked (SELECT … FOR UPDATE) and the status change runs in
-// one transaction, so two cashiers pressing the button at the same time cannot
-// move the booking twice. Every revert is written to the activity log with the
-// signed-in user's name.
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { ADMIN_COOKIE, verifyAdminToken } from "@/lib/adminSession";
 import { logActivity } from "@/lib/activityLog";
 import {
@@ -44,7 +13,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ bookingID: string }> };

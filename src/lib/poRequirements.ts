@@ -1,26 +1,3 @@
-// src/lib/poRequirements.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// The rules behind the "Current Stock Requirements" tab of the Purchase Order
-// screen — kept here, out of the page, so the screen and the tests agree.
-//
-//   groupRequirementsSupplierWise()  one block per supplier, in supplier-name
-//                                    order; inside a block the API order is
-//                                    kept (worst shortage first)
-//   supplierForSelection()           a purchase order is addressed to ONE
-//                                    supplier: this answers "which one?" for
-//                                    the items that were ticked — the code, an
-//                                    empty string when the items carry no
-//                                    supplier, or null when the ticks span more
-//                                    than one supplier (then nothing is filled
-//                                    in and the screen asks to narrow it)
-//   requirementLines()               the ticked rows turned into order lines,
-//                                    in the order they were selected, with the
-//                                    suggested quantity and the master cost
-//                                    price (OverallCost, otherwise RawCost —
-//                                    the same rule as resolveItems())
-//
-// Nothing here reads the database or React: it is pure.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export interface StockRequirement {
   itemCode: string;

@@ -47,14 +47,6 @@ function maskPhone(phone: string): string {
   return `${prefix}${maskedMiddle}${suffix}`;
 }
 
-/**
- * Convert all supported Sri Lankan mobile formats to the Text.lk format.
- *
- * 07XXXXXXXX     -> 947XXXXXXXX
- * 947XXXXXXXX    -> 947XXXXXXXX
- * +947XXXXXXXX   -> 947XXXXXXXX
- * 00947XXXXXXXX  -> 947XXXXXXXX
- */
 export function normalizeSmsPhone(phone: string): string {
   const digits = String(phone || "").replace(/\D/g, "");
   if (!digits) return "";
@@ -165,17 +157,6 @@ export interface TextLkResult {
   error?: string;
 }
 
-/* ── is Text.lk set up? ────────────────────────────────────────────────────
-
-   The two settings live in the project's .env file (the one that already holds
-   DATABASE_URL and AUTH_SECRET):
-
-       TEXTLK_API_TOKEN=…
-       TEXTLK_SENDER_ID=SAYO
-
-   Nothing is sent while one of them is empty; the screens say which one it is
-   instead of silently pretending to have sent a message. */
-
 export const SMS_ENV_KEYS = ["TEXTLK_API_TOKEN", "TEXTLK_SENDER_ID"] as const;
 
 export function smsMissingEnv(env: Record<string, string | undefined> = process.env): string[] {
@@ -208,8 +189,6 @@ async function sendTextLkSMS(
     console.error(`[SMS Service] ${smsSetupMessage(missing)}`);
     return { success: false, error: smsSetupMessage(missing) };
   }
-
-
 
   try {
     const response = await fetch(TEXTLK_ENDPOINT, {

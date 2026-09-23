@@ -1,21 +1,5 @@
-// src/lib/grnNotify.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// "Tell the admin to come and confirm this GRN."
-//
-// A saved GRN does not move stock — it waits for someone to press
-// **Confirmation**. When the store keeper saves a receipt at the counter, the
-// admin who can confirm it may be somewhere else, so the save now ends with a
-// small popup: pick the person, press Send, and they get an SMS saying which
-// GRN is waiting. They walk over and confirm it.
-//
-// The wording of that message, who may be chosen, and the Text.lk settings are
-// all decided here, away from React and away from the network, so section 14 of
-// scripts/billing-tests.js can check them without a database or a phone.
-// ─────────────────────────────────────────────────────────────────────────────
 
 import { normalizeSmsPhone } from "./sms";
-
-/* ── the message ─────────────────────────────────────────────────────────── */
 
 export interface GrnNotifyFacts {
   grnNo: string;
@@ -37,13 +21,6 @@ export function notifyMoney(value: number | string | undefined): string {
   return n.toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/**
- * The SMS itself. Short on purpose — it has to be readable on a lock screen:
- *
- *   SAYO: GRN GRN0000007 is saved and waiting for Confirmation.
- *   PO0000004 · LANKA HAIR & SKIN CARE SUPPLIES · 70,950.00
- *   MAIN BRANCH - COLOMBO 03 · 2 item line(s) · by Admin
- */
 export function grnNotifyMessage(facts: GrnNotifyFacts): string {
   const salon = (facts.companyName || "SAYO Beauty").trim().slice(0, 30);
   const grnNo = String(facts.grnNo || "").trim() || "a good received note";
@@ -73,8 +50,6 @@ export function smsPartCount(text: string): number {
   const length = String(text ?? "").length;
   return Math.max(1, Math.ceil(length / 160));
 }
-
-/* ── who can be told ─────────────────────────────────────────────────────── */
 
 /** One row of tbl_userdetails, as far as this feature cares. */
 export interface StaffRow {
@@ -117,13 +92,6 @@ export function isMobileForSms(phone: string): boolean {
   return /^947\d{8}$/.test(normalizeSmsPhone(phone));
 }
 
-/**
- * The people offered in the popup, best first:
- *   · admins (their group name contains "admin"), then everyone else
- *   · inside each group, by name
- * Disabled logins are left out, and a number that is saved against two people
- * is offered once (the first of them, which is the admin if there is one).
- */
 export function notifyContacts(rows: StaffRow[], groups: GroupRow[] = []): NotifyContact[] {
   const groupName = new Map(
     groups.map((g) => [trim(g.GroupId).toUpperCase(), trim(g.GroupDes)]),

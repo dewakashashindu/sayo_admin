@@ -1,18 +1,3 @@
-// src/lib/bookingAccess.ts
-//
-// Booking-level write protection for technician-facing endpoints
-// (/api/bookings/[bookingID]/extras, /api/appointments/[bookingID]/done,
-// /api/bookings/[bookingID]/billed).
-//
-// Rule:
-//   • The caller must hold a valid admin session (the middleware already
-//     guarantees this; we re-verify to be safe).
-//   • If the session user maps to a staff row in tbl_userdetails, they may
-//     only touch bookings they are assigned to (TechID on the booking's
-//     service-detail rows, or a supporting-technician row in
-//     Tbl_BookingServiceItemAddTech).
-//   • If the session user has no staff row (a pure admin account), they are
-//     treated as an administrator and may touch any booking.
 
 import { Prisma } from "@prisma/client";
 import type { PrismaClient } from "@prisma/client";

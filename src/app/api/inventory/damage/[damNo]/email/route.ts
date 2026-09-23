@@ -2,6 +2,7 @@
 // Emails the Damage Note sheet — internal document, so To must be supplied (no supplier). PDF like PO.
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import nodemailer from 'nodemailer';
 import { logActivity } from '@/lib/activityLog';
 import { invActor, invFail, invId, InvError, keySql, keyVal } from '@/lib/inventoryServer';
@@ -11,7 +12,7 @@ import { smtpMissingEnv, smtpSetupMessage } from '@/lib/poEmail';
 import { buildInventoryPdf } from '@/lib/inventoryPdf';
 export const runtime='nodejs'; export const dynamic='force-dynamic'; export const revalidate=0;
 const globalForPrisma=globalThis as unknown as { prisma?: PrismaClient };
-const prisma=globalForPrisma.prisma ?? new PrismaClient();
+const prisma=globalForPrisma.prisma ?? newRobustPrisma();
 if(process.env.NODE_ENV!=='production') globalForPrisma.prisma=prisma;
 type Ctx={ params: Promise<{ damNo:string }> };
 const trim=(v:unknown)=>String(v??'').trim();

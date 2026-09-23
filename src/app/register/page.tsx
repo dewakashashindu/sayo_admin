@@ -23,8 +23,7 @@ import {
 import GenderSelect, { type GenderValue } from '@/components/auth/GenderSelect';
 
 export default function RegisterPage() {
-  /* ── field state ── */
-  const [name,            setName           ] = useState('');
+    const [name,            setName           ] = useState('');
   const [email,           setEmail          ] = useState('');
   const [phone,           setPhone          ] = useState('');
   const [gender,          setGender         ] = useState<GenderValue>('');
@@ -32,13 +31,11 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agree,           setAgree          ] = useState(false);
 
-  /* ── ui state ── */
-  const [loading,     setLoading    ] = useState(false);
+    const [loading,     setLoading    ] = useState(false);
   const [success,     setSuccess    ] = useState(false);
   const [serverError, setServerError] = useState('');
 
-  /* ── touched flags ── */
-  const [tName,     setTName    ] = useState(false);
+    const [tName,     setTName    ] = useState(false);
   const [tEmail,    setTEmail   ] = useState(false);
   const [tPhone,    setTPhone   ] = useState(false);
   const [tGender,   setTGender  ] = useState(false);
@@ -46,8 +43,7 @@ export default function RegisterPage() {
   const [tConfirm,  setTConfirm ] = useState(false);
   const [tAgree,    setTAgree   ] = useState(false);
 
-  /* ── inline validation errors ── */
-  const errName    = tName     && !name.trim()                ? 'Full name is required.'                   : '';
+    const errName    = tName     && !name.trim()                ? 'Full name is required.'                   : '';
   const errEmail   = tEmail    && !isValidEmail(email)         ? 'Enter a valid email address.'             : '';
   const errPhone   = tPhone    && !isValidPhone(phone)         ? 'Enter a valid phone number.'              : '';
   const errGender  = tGender   && !gender                      ? 'Please select your gender.'              : '';
@@ -55,8 +51,7 @@ export default function RegisterPage() {
   const errConfirm = tConfirm  && confirmPassword !== password ? 'Passwords do not match.'                 : '';
   const errAgree   = tAgree    && !agree                       ? 'You must agree to the terms.'            : '';
 
-  /* ── gate ── */
-  const canSubmit =
+    const canSubmit =
     !!name.trim()        &&
     isValidEmail(email)  &&
     isValidPhone(phone)  &&
@@ -65,8 +60,7 @@ export default function RegisterPage() {
     confirmPassword === password &&
     agree;
 
-  /* ══ SUBMIT ══ */
-  const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     setTName(true); setTEmail(true); setTPhone(true);
@@ -124,8 +118,7 @@ export default function RegisterPage() {
     }
   };
 
-  /* ══ SUCCESS SCREEN ══ */
-  if (success) {
+    if (success) {
     return (
       <>
         <style>{globalCss}</style>
@@ -216,8 +209,7 @@ export default function RegisterPage() {
     );
   }
 
-  /* ══ REGISTRATION FORM ══ */
-  return (
+    return (
     <>
       <style>{globalCss}</style>
       <main style={mainStyle}>
@@ -305,7 +297,7 @@ export default function RegisterPage() {
                   marginBottom:  '1.4rem',
                 }}>
 
-                  {/* ── full name ── */}
+                  {}
                   <div>
                     <FieldLabel text="Full Name" />
                     <div style={{ position: 'relative' }}>
@@ -332,7 +324,7 @@ export default function RegisterPage() {
                     {errName && <p className="field-err">{errName}</p>}
                   </div>
 
-                  {/* ── email ── */}
+                  {}
                   <div>
                     <FieldLabel text="Email Address" />
                     <div style={{ position: 'relative' }}>
@@ -359,7 +351,7 @@ export default function RegisterPage() {
                     {errEmail && <p className="field-err">{errEmail}</p>}
                   </div>
 
-                  {/* ── phone ── */}
+                  {}
                   <div>
                     <FieldLabel text="Phone Number" />
                     <div style={{ position: 'relative' }}>
@@ -386,7 +378,7 @@ export default function RegisterPage() {
                     {errPhone && <p className="field-err">{errPhone}</p>}
                   </div>
 
-                  {/* ── gender ── */}
+                  {}
                   <div>
                     <FieldLabel text="Gender" />
                     <GenderSelect
@@ -398,7 +390,7 @@ export default function RegisterPage() {
                     {errGender && <p className="field-err">{errGender}</p>}
                   </div>
 
-                  {/* ── password ── */}
+                  {}
                   <div>
                     <FieldLabel text="Password" />
                     <PasswordField
@@ -410,7 +402,7 @@ export default function RegisterPage() {
                     <PasswordStrengthBar password={password} />
                   </div>
 
-                  {/* ── confirm password ── */}
+                  {}
                   <div>
                     <FieldLabel text="Confirm Password" />
                     <PasswordField
@@ -424,7 +416,7 @@ export default function RegisterPage() {
 
                 </div>
 
-                {/* ── agree to terms ── */}
+                {}
                 <div style={{ marginBottom: errAgree ? '0.5rem' : '1.6rem' }}>
                   <Checkbox
                     checked={agree}
@@ -445,7 +437,7 @@ export default function RegisterPage() {
                   </p>
                 )}
 
-                {/* ── server error banner ── */}
+                {}
                 {serverError && (
                   <div style={{
                     background:   'rgba(220,38,38,0.12)',
@@ -462,7 +454,7 @@ export default function RegisterPage() {
                   </div>
                 )}
 
-                {/* ── submit button (fixed) ── */}
+                {}
                 <button
                   type="submit"
                   className="btn-gold"

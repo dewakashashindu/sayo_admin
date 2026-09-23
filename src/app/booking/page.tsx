@@ -26,9 +26,6 @@ import {
 } from '@/i18n/translations';
 import { GENDER_OPTIONS } from '@/lib/genderOptions';
 
-/* ─────────────────────────────────────────
-   STORED USER TYPE
-───────────────────────────────────────── */
 interface SessionUser {
   userId:      string;
   name:        string;
@@ -37,9 +34,6 @@ interface SessionUser {
   gender:      string;
 }
 
-/* ─────────────────────────────────────────
-   DESIGN TOKENS
-───────────────────────────────────────── */
 const tokens = {
   color: {
     gold:        '#B8860B',
@@ -65,21 +59,13 @@ const tokens = {
   radius: { card: '1.25rem', input: '0.625rem' },
 } as const;
 
-/* ─────────────────────────────────────────
-   TYPES
-───────────────────────────────────────── */
 type BookingMode = 'confirmed' | 'without_confirmation';
 type Step        = 1 | 2;
 type GenderValue = 'male' | 'female' | 'prefer_not_to_say' | 'other';
 
-
-
 interface ServiceItem { name: string; price: string; duration: string; category: string; }
 interface Provider    { name: string; role: string; avatar: string; expertise: string[]; }
 
-/* ─────────────────────────────────────────
-   DATA
-───────────────────────────────────────── */
 const CATEGORIES = ['WAX', 'HAIR', 'SKIN', 'NAIL', 'BODY', 'BRIDAL'];
 
 const ALL_SERVICES: Record<string, ServiceItem[]> = {
@@ -185,13 +171,6 @@ const TIME_SLOTS = [
   '05:00 PM','05:30 PM','06:00 PM',
 ];
 
-/* ─────────────────────────────────────────
-   CATALOG (DB-driven, with curated fallback)
-   The booking page used to be driven entirely by the hard-coded constants
-   below. It now sources services / providers / branches / categories from
-   GET /api/booking-catalog. `DEFAULT_CATALOG` keeps the curated list so the
-   page still works when the endpoint fails or the DB is empty.
-───────────────────────────────────────── */
 const DEFAULT_CATALOG: Catalog = {
   locations: LOCATIONS.map((name) => ({ code: name, name })),
   categories: CATEGORIES,
@@ -205,9 +184,6 @@ function useCatalog(): Catalog {
   return useContext(CatalogContext);
 }
 
-/* ─────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────── */
 function formatDate(iso: string, lang: Lang = 'en') {
   return formatDateL(lang, iso);
 }
@@ -226,16 +202,12 @@ function timeToMinutes(tStr: string): number {
   return h * 60 + mn;
 }
 
-
 const SLOT_AVAILABLE_EMPTY: SlotResult = {
   status: 'available',
   isSequenceSwapped: false,
   occupiedSlots: [],
 };
 
-/* ─────────────────────────────────────────
-   R5 HIGHLIGHT HELPERS
-───────────────────────────────────────── */
 function buildSlotResults(
   providers:     Provider[],
   services:      ServiceItem[],
@@ -259,9 +231,6 @@ function getHighlightedSlots(
   return new Set(result.occupiedSlots ?? []);
 }
 
-/* ─────────────────────────────────────────
-   CALENDAR HELPERS
-───────────────────────────────────────── */
 function getDaysInMonth(year: number, month: number) {
   return new Date(year, month + 1, 0).getDate();
 }
@@ -269,9 +238,6 @@ function getFirstDayOfMonth(year: number, month: number) {
   return new Date(year, month, 1).getDay();
 }
 
-/* ─────────────────────────────────────────
-   GLOBAL CSS
-───────────────────────────────────────── */
 const globalCss = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+Sinhala:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&display=swap');
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
@@ -488,9 +454,6 @@ const globalCss = `
   .mg-no-name{font-size:0.66rem;font-weight:600;color:rgba(255,255,255,0.4);font-style:italic;}
 `;
 
-/* ─────────────────────────────────────────
-   SVG ICONS
-───────────────────────────────────────── */
 const Ico = {
   Check:        ({ s=16,c='currentColor' }:{s?:number;c?:string}) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
   Right:        ({ s=15 }:{s?:number})                            => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>,
@@ -521,9 +484,6 @@ function GenderSymbol({ value, s = 22 }: { value: GenderValue | ''; s?: number }
   return <Ico.GenderN s={s} c={c} />;
 }
 
-/* ─────────────────────────────────────────
-   INLINE CALENDAR
-───────────────────────────────────────── */
 interface InlineCalendarProps {
   value:    string;
   minDate:  string;
@@ -652,9 +612,6 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang }: Inl
   );
 }
 
-/* ─────────────────────────────────────────
-   DATE PICKER FIELD
-───────────────────────────────────────── */
 function DatePickerField({ value, minDate, onChange, lang }: {
   value: string; minDate: string;
   onChange: (iso: string) => void;
@@ -715,9 +672,6 @@ function DatePickerField({ value, minDate, onChange, lang }: {
   );
 }
 
-/* ─────────────────────────────────────────
-   STEP INDICATOR
-───────────────────────────────────────── */
 function StepIndicator({ current, mode, lang }: { current: 1 | 2; mode: BookingMode; lang: Lang }) {
   const ac    = mode === 'without_confirmation' ? tokens.color.green : tokens.color.gold;
   const steps = [{ n: 1, label: t(lang, 'steps.one') }, { n: 2, label: t(lang, 'steps.two') }];
@@ -741,9 +695,6 @@ function StepIndicator({ current, mode, lang }: { current: 1 | 2; mode: BookingM
   );
 }
 
-/* ─────────────────────────────────────────
-   SHARED COMPONENTS
-───────────────────────────────────────── */
 function Card({ children, style, mode }: { children: React.ReactNode; style?: React.CSSProperties; mode?: BookingMode }) {
   return (
     <div style={{ background: tokens.color.cardBg, border: `1px solid ${mode === 'without_confirmation' ? 'rgba(34,197,94,0.2)' : mode === 'confirmed' ? 'rgba(184,134,11,0.22)' : tokens.color.whiteBorder}`, borderRadius: tokens.radius.card, padding: 'clamp(1.25rem,3vw,1.85rem)', backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)', ...style }}>
@@ -769,9 +720,6 @@ function SumRow({ icon, label, value }: { icon: React.ReactNode; label: string; 
   );
 }
 
-/* ─────────────────────────────────────────
-   LANGUAGE SWITCHER
-───────────────────────────────────────── */
 const LANG_OPTIONS: { code: Lang; label: string }[] = [
   { code: 'en', label: 'EN' },
   { code: 'si', label: 'සිං' },
@@ -789,9 +737,6 @@ function LangSwitcher({ lang, onChange }: { lang: Lang; onChange: (l: Lang) => v
   );
 }
 
-/* ─────────────────────────────────────────
-   MODE TOGGLE
-───────────────────────────────────────── */
 function ModeToggle({ mode, onChange, lang }: { mode: BookingMode; onChange: (m: BookingMode) => void; lang: Lang }) {
   return (
     <div className="mode-toggle-wrap">
@@ -805,9 +750,6 @@ function ModeToggle({ mode, onChange, lang }: { mode: BookingMode; onChange: (m:
   );
 }
 
-/* ─────────────────────────────────────────
-   GENDER INLINE
-───────────────────────────────────────── */
 function GenderInline({ value, onChange, lang }: { value: GenderValue | ''; onChange: (v: GenderValue) => void; lang: Lang }) {
   return (
     <div className="gender-inline-wrap" title={value ? t(lang, `gender.${value}`) : t(lang, 'gp.selectGenderTitle')}>
@@ -821,9 +763,6 @@ function GenderInline({ value, onChange, lang }: { value: GenderValue | ''; onCh
   );
 }
 
-/* ─────────────────────────────────────────
-   PHONE INLINE
-───────────────────────────────────────── */
 function PhoneInline({ phone, autoFilled, onChange, lang }: { phone: string; autoFilled: boolean; onChange: (v: string) => void; lang: Lang }) {
   if (autoFilled) return <p style={{ color: tokens.color.white, fontFamily: tokens.font.family, fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>{phone}</p>;
   return (
@@ -834,9 +773,6 @@ function PhoneInline({ phone, autoFilled, onChange, lang }: { phone: string; aut
   );
 }
 
-/* ─────────────────────────────────────────
-   GENDER + PHONE CORNER
-───────────────────────────────────────── */
 function GenderPhoneCorner({ gender, onGenderChange, phone, onPhoneChange, phoneAutoFilled, lang }: {
   gender: GenderValue | ''; onGenderChange: (v: GenderValue) => void;
   phone: string; onPhoneChange: (v: string) => void; phoneAutoFilled: boolean; lang: Lang;
@@ -855,9 +791,6 @@ function GenderPhoneCorner({ gender, onGenderChange, phone, onPhoneChange, phone
   );
 }
 
-/* ─────────────────────────────────────────
-   TIME SECTION
-───────────────────────────────────────── */
 interface TimeSectionCardProps {
   date:                 string;
   mode:                 BookingMode;
@@ -923,9 +856,6 @@ function TimeSectionCard({
   );
 }
 
-/* ─────────────────────────────────────────
-   CONFIRMED SLOTS  (with R5 hover)
-───────────────────────────────────────── */
 function ConfirmedSlots({ timeSlot, setTimeSlot, highlightedSlots, onSlotHover }: {
   timeSlot: string;
   setTimeSlot: (s: string) => void;
@@ -958,9 +888,6 @@ function ConfirmedSlots({ timeSlot, setTimeSlot, highlightedSlots, onSlotHover }
   );
 }
 
-/* ─────────────────────────────────────────
-   WALK-IN SLOTS  (with R5 hover)
-───────────────────────────────────────── */
 function WalkinSlots({
   timeSlot, loading, error, disabledReason,
   classifySlot, handleSlotClick,
@@ -1110,19 +1037,6 @@ function WalkinSlots({
   );
 }
 
-/* ═══════════════════════════════════════════
-   MAIN PAGE
-═══════════════════════════════════════════ */
-/* ═══════════════════════════════════════════════════════════════════════
-   MULTI-BOOKING — separate tab
-   The main client is always "ME" (the logged-in user). Every additional
-   client is added as "Guest 1", "Guest 2", … with no name field — they are
-   labelled automatically. Guests inherit ME's selected date (auto-fill),
-   but each person keeps their own services, provider and time slot. One
-   booking is created per person via POST /api/bookings (the server's
-   race-safe conflict guard still protects every slot).
-═══════════════════════════════════════════════════════════════════════ */
-
 interface MultiGuest {
   id: string;
   gender: GenderValue | '';
@@ -1260,14 +1174,7 @@ function MultiGuestEditor({
     onPatch({ providers: next, timeSlot: '' });
   }
 
-  /* ── Same-technician conflict guard ──────────────────────────────────────
-     If another person in this group (ME or a Guest) already selected one of
-     this guest's technicians with an overlapping time window, those slots
-     must be disabled — two guests can never pick the same technician at the
-     same time. The window is [start, start + that guest's total service
-     duration] so overlapping slots (e.g. 10:00 + 10:30 for a 60-min
-     service) are blocked too. */
-  const crossBusy = useMemo(() => {
+    const crossBusy = useMemo(() => {
     const set = new Set<string>();
     if (!guest.date || guest.providers.length === 0 || otherBusy.length === 0) return set;
     for (const w of otherBusy) {
@@ -1648,8 +1555,7 @@ function MultiBookingPanel({
     setLocation('');
   }
 
-  /* ── success screen ── */
-  if (completed && completed.length > 0 && !submitError) {
+    if (completed && completed.length > 0 && !submitError) {
     return (
       <div style={{ maxWidth: '720px', margin: '0 auto' }}>
         <Card mode={mode}>
@@ -1681,8 +1587,7 @@ function MultiBookingPanel({
     );
   }
 
-  /* ── review screen (step 2) ── */
-  if (reviewing) {
+    if (reviewing) {
     return (
       <div style={{ maxWidth: '720px', margin: '0 auto' }}>
         <Card mode={mode}>
@@ -1750,8 +1655,7 @@ function MultiBookingPanel({
     );
   }
 
-  /* ── form ── */
-  return (
+    return (
     <div style={{ maxWidth: '720px', margin: '0 auto' }}>
       <Card mode={mode}>
         <div style={{ marginBottom: '1.1rem' }}>
@@ -1892,13 +1796,10 @@ export default function BookingPage() {
      server can persist each service's actual execution time. */
   const [serviceSchedule, setServiceSchedule] = useState<ServiceScheduleEntry[]>([]);
 
-  /* ── R5: hover state ── */
-  const [hoveredSlot,        setHoveredSlot]        = useState<string | null>(null);
-  /* ── R5: persisted highlight — stays visible after modal closes ── */
-  const [persistedHighlight, setPersistedHighlight] = useState<Set<string>>(new Set());
+    const [hoveredSlot,        setHoveredSlot]        = useState<string | null>(null);
+    const [persistedHighlight, setPersistedHighlight] = useState<Set<string>>(new Set());
 
-  /* ── Catalog: DB-driven services/providers/branches/categories ── */
-  const [catalog, setCatalog] = useState<Catalog>(DEFAULT_CATALOG);
+    const [catalog, setCatalog] = useState<Catalog>(DEFAULT_CATALOG);
 
   /* Fetch the catalog once on mount. If the endpoint fails or the DB has no
      configured services, the curated DEFAULT_CATALOG stays in place. */
@@ -1927,21 +1828,18 @@ export default function BookingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalog.categories]);
 
-  /* ── R5: pre-computed result map — recomputed only when deps change ── */
-  const slotResults = useMemo<Record<string, SlotResult>>(() => {
+    const slotResults = useMemo<Record<string, SlotResult>>(() => {
     if (providers.length === 0 || services.length === 0) return {};
     return buildSlotResults(providers, services, providerSlots, bookedSlots);
   }, [providers, services, providerSlots, bookedSlots]);
 
-  /* ── R5: highlighted cells — hover takes priority; falls back to persisted ── */
-  const highlightedSlots = useMemo<Set<string>>(() => {
+    const highlightedSlots = useMemo<Set<string>>(() => {
     const hovered = getHighlightedSlots(hoveredSlot, slotResults);
     if (hovered.size > 0) return hovered;
     return persistedHighlight;
   }, [hoveredSlot, slotResults, persistedHighlight]);
 
-  /* ── language: restore + persist ── */
-  useEffect(() => {
+    useEffect(() => {
     if (typeof window === 'undefined') return;
     const saved = window.localStorage.getItem('lang');
     if (saved === 'en' || saved === 'si' || saved === 'ta') setLangState(saved as Lang);
@@ -1951,8 +1849,7 @@ export default function BookingPage() {
     if (typeof window !== 'undefined') window.localStorage.setItem('lang', l);
   };
 
-  /* ── customer session gate + auto-fill (signed httpOnly cookie) ── */
-  useEffect(() => {
+    useEffect(() => {
     if (typeof window === 'undefined') return;
     let active = true;
     fetch('/api/auth/customer-me')
@@ -1983,8 +1880,7 @@ export default function BookingPage() {
   const filteredProvs    = allBranchProvs.filter(p => p.expertise.some(e => catFilter.includes(e)));
   const providerNamesKey = providers.map(p => p.name).sort().join(',');
 
-  /* ── fetch live availability ── */
-  useEffect(() => {
+    useEffect(() => {
     if (mode !== 'without_confirmation' || !date || providers.length === 0) {
       setBookedSlots(new Set()); setProviderSlots({}); return;
     }
@@ -2014,33 +1910,12 @@ export default function BookingPage() {
     mode === 'without_confirmation' && providers.length === 0
       ? t(lang, 'time.needProvider') : '';
 
-  /* ─────────────────────────────────────────
-     classifySlot — uses SLOT_AVAILABLE_EMPTY
-     so the return type always satisfies SlotResult
-  ───────────────────────────────────────── */
-  function classifySlot(slot: string): SlotResult {
+    function classifySlot(slot: string): SlotResult {
     if (providers.length === 0) return SLOT_AVAILABLE_EMPTY;
     return evaluateSlot(slot, providers, services, providerSlots, bookedSlots);
   }
 
-  /* ═══════════════════════════════════════════════════════════════════════
-     ✅ FIXED — handleSlotClick
-     ─────────────────────────────────────────────────────────────────────
-     BUG FIXED: Previously this function manually re-calculated gap info
-     using `findBackToBack()` and its own busy-provider loop — which could
-     disagree with what `slotEvaluator.ts` (`evaluateSlot`) already
-     computed. That mismatch caused the modal to show WRONG times
-     (e.g. showing "09:00 AM" chips for an "11:30 AM" booking).
-
-     FIX: Now we trust `result` (the SlotResult from classifySlot/
-     evaluateSlot) as the single source of truth for:
-       - swappedDetails.gapMinutes / nextFreeTime
-       - gapOnlyDetails
-       - recommendedOriginalTime
-     The old `findBackToBack()` helper is no longer needed and has been
-     removed to avoid confusion/drift between two "sources of truth".
-  ═══════════════════════════════════════════════════════════════════════ */
-  function handleSlotClick(slot: string) {
+    function handleSlotClick(slot: string) {
     const result = classifySlot(slot);
     if (result.status === 'booked')    return;
     if (result.status === 'available') {
@@ -2070,7 +1945,7 @@ export default function BookingPage() {
 
     const busyProviders = pa.filter(p => !p.isFree);
 
-    // ✅ Build gap description strictly from evaluator's result — no manual math
+    // Build gap description strictly from evaluator's result — no manual math
     let gapDescription = '';
     const sd = result.swappedDetails;
     const gd = result.gapOnlyDetails;
@@ -2111,7 +1986,7 @@ export default function BookingPage() {
       }
     }
 
-    // ✅ recommendedOriginalTime comes directly from the evaluator —
+    // recommendedOriginalTime comes directly from the evaluator —
     // no separate findBackToBack() scan needed anymore.
     const btb = result.recommendedOriginalTime ?? null;
 
@@ -2188,12 +2063,7 @@ export default function BookingPage() {
     setHoveredSlot(null); setPersistedHighlight(new Set()); setServiceSchedule([]);
   }
 
-  /* ── Provider rules:
-       • Single category  → max 1 provider total (selecting new one replaces old)
-       • Multi category   → max 1 provider PER category (one per each selected cat)
-       • Confirmed mode   → provider selection is optional
-  ── */
-  const isMultiCat     = selectedCats.length > 1;
+    const isMultiCat     = selectedCats.length > 1;
   const maxProviders   = isMultiCat ? selectedCats.length : 1;
 
   /* canStep2: confirmed mode doesn't require providers */
@@ -2269,8 +2139,7 @@ export default function BookingPage() {
     setHoveredSlot(null);
   };
 
-  /* ── submit ── */
-  const handleConfirm = async () => {
+    const handleConfirm = async () => {
     setLoading(true); setApiError('');
     try {
       const payload = {
@@ -2300,10 +2169,7 @@ export default function BookingPage() {
     setHoveredSlot(null); setServiceSchedule([]);
   };
 
-  /* ══════════════════════════════════════
-     SUCCESS SCREEN
-  ══════════════════════════════════════ */
-  if (confirmed) {
+    if (confirmed) {
     return (
       <>
         <style>{globalCss}</style>
@@ -2339,10 +2205,7 @@ export default function BookingPage() {
     );
   }
 
-  /* ══════════════════════════════════════
-     MAIN FORM
-  ══════════════════════════════════════ */
-  return (
+    return (
     <CatalogContext.Provider value={catalog}>
       <style>{globalCss}</style>
       <main style={{ minHeight: '100vh', fontFamily: tokens.font.family, backgroundImage: 'url(/booking.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', position: 'relative' }}>
@@ -2388,7 +2251,7 @@ export default function BookingPage() {
 
           <div style={{ maxWidth: '680px', margin: '0 auto' }}>
 
-            {/* ════════════ STEP 1 ════════════ */}
+            {}
             {step === 1 && (
               <div className="reveal-up">
                 <Card mode={mode}>
@@ -2573,7 +2436,7 @@ export default function BookingPage() {
               </div>
             )}
 
-            {/* ════════════ STEP 2 ════════════ */}
+            {}
             {step === 2 && (
               <div className="reveal-up">
                 <Card mode={mode}>

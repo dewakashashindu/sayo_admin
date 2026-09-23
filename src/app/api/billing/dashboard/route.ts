@@ -1,17 +1,6 @@
-// src/app/api/billing/dashboard/route.ts
-// Billing Dashboard feed — every booking the technicians have marked DONE
-// that still has to be billed (BillingTime not stamped yet).
-//
-// GET /api/billing/dashboard
-//   → { success, data: [ { bookingID, locCode, clientName, clientPhone,
-//                          date, timeSlot, status, mode, services[], techNames[],
-//                          total, pax } ] }
-//
-// Raw SQL (same style as the other booking APIs) so it does not depend on a
-// freshly generated Prisma client. Comparisons always RTRIM() the fixed-width
-// char columns — a padded literal never matches on a NO PAD collation.
 import { NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { timeLabelFromValue } from "@/lib/legacyTime";
 import { dedupeBookingDetailRows } from "@/lib/bookingReadModel";
 import {
@@ -26,7 +15,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 const trim = (v: unknown) => String(v ?? "").trim();

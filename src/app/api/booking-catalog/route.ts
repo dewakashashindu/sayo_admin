@@ -1,27 +1,8 @@
-// src/app/api/booking-catalog/route.ts
-// Public catalog feed for the booking page.
-//
-// The booking UI was previously driven by hard-coded mock data inside
-// src/app/booking/page.tsx. This endpoint reads the live master tables so the
-// public booking flow always reflects what is configured in the POS:
-//   • enabled branches (tbl_locationmaster)
-//   • service items + price + duration (tbl_itemmaster)
-//   • enabled staff and their areas of expertise (tbl_userdetails +
-//     tbl_technicianspecilities + tbl_technicianspecilityassignment)
-//
-// A booking page that consumes this simply renders whatever is returned. When
-// there is no configured service data yet (empty / freshly seeded DB) the
-// endpoint returns `empty: true` and the client falls back to its curated
-// default catalog — the page never goes blank.
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-
-/* ─────────────────────────────────────────────────────────────────────────────
-   Constants / helpers
-───────────────────────────────────────────────────────────────────────────── */
 
 // The booking page exposes a fixed set of salon categories. We normalise the
 // free-text POS category names and staff specialities into these so that the
@@ -100,9 +81,6 @@ interface CatalogProvider {
   techID: string;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   GET  /api/booking-catalog
-───────────────────────────────────────────────────────────────────────────── */
 export async function GET() {
   try {
     const [locations, items, category1, users, specialities, assignments] =

@@ -1,28 +1,3 @@
-// src/lib/legacyTime.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// Reading a TIME out of a legacy DATETIME column.
-//
-// WHY THIS FILE EXISTS
-// The legacy columns (tbl_bookingheder.BookingDate, tbl_bookingtxndetail.*,
-// BillingTime …) hold a WALL-CLOCK value — “2026-09-16 10:00:00” means ten in
-// the morning for everybody looking at the shop’s clock, not ten in the
-// morning UTC. The app writes them that way (the booking form sends the text
-// “2026-09-16 10:00:00” into the INSERT).
-//
-// When that value is read back, the MySQL driver hands over a JS Date that
-// carries the stored numbers in UTC, and `new Date(value).getHours()` converts
-// them into the SERVER’s own timezone. On a server set to Asia/Colombo that
-// added 5 hours 30 minutes to every appointment: a booking stored as
-// 10:00 AM was listed as 3:30 PM on the technician’s screen while the bill
-// screen (which reads the same column through DATE_FORMAT, as text) still
-// showed 10:00 AM. Two screens, one database, two different times.
-//
-// So: read the value the way the database holds it.
-//   • string (DATE_FORMAT / an INSERT value) → the HH:MM inside the text
-//   • Date (raw column)                      → its UTC fields
-//
-// Anything that displays an appointment time must go through these helpers.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** Minutes past midnight, exactly as stored — or null when there is no time. */
 export function minutesFromValue(value: unknown): number | null {

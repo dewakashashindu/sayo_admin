@@ -16,8 +16,6 @@ export type AdminSessionPayload = {
   gender?: string;
 };
 
-/* ── helpers ─────────────────────────────────────────────── */
-
 function getSecret(): Uint8Array | null {
   const s = process.env.AUTH_SECRET;
   if (!s || s.trim().length < 16) return null;
@@ -51,8 +49,6 @@ async function hmacKey(secret: Uint8Array): Promise<CryptoKey> {
     ['sign', 'verify'],
   );
 }
-
-/* ── public API ──────────────────────────────────────────── */
 
 /** Creates a signed session token. Returns null if AUTH_SECRET is not configured. */
 export async function createSessionToken(p: Omit<AdminSessionPayload, 'exp'>): Promise<string | null> {

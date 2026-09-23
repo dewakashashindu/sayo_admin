@@ -53,7 +53,7 @@ export type FooterData = {
   social_instagram: string;
 };
 
-// ✅ UPDATED: Added photo field
+// Added photo field
 export type StaffMember = {
   name:        string;
   role:        string;
@@ -204,7 +204,7 @@ const FOOTER_DEFAULTS: FooterData = {
   social_instagram: '',
 };
 
-// ✅ UPDATED: Added photo: '' to defaults
+// Added photo: '' to defaults
 const ABOUT_DEFAULTS: AboutData = {
   hero_eyebrow:       'OUR STORY',
   hero_heading:       'We are experience in making you more beautiful',
@@ -435,7 +435,6 @@ const FEEDBACK_CSS = `
   }
 `;
 
-/* ─── Icons ─── */
 const IconCompass       = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>);
 const IconHome          = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>);
 const IconBook          = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>);
@@ -473,9 +472,6 @@ const IconMessageSquare = () => (<svg width="16" height="16" viewBox="0 0 24 24"
 const IconImage         = () => (<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>);
 const IconRefresh       = () => (<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>);
 
-/* ─────────────────────────────────────────
-   COMMON STYLES
-───────────────────────────────────────── */
 const inputStyle: React.CSSProperties = {
   width:'100%', background:tokens.color.bgInput,
   border:`1px solid ${tokens.color.whiteBorder}`, color:tokens.color.white,
@@ -505,9 +501,6 @@ const fieldLabel: React.CSSProperties = {
   color:tokens.color.whiteMuted, marginBottom:'0.4rem',
 };
 
-/* ─────────────────────────────────────────
-   ADMIN LOGO
-───────────────────────────────────────── */
 function AdminLogoIcon({ size = 42 }: { size?: number }) {
   return (
     <div style={{ width:`${size}px`, height:`${size}px`, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
@@ -516,9 +509,6 @@ function AdminLogoIcon({ size = 42 }: { size?: number }) {
   );
 }
 
-/* ─────────────────────────────────────────
-   LIVE PREVIEW PANEL
-───────────────────────────────────────── */
 function LivePreviewPanel({ open, onClose, navData, homeData, footerData, activeTab }: {
   open:boolean; onClose:()=>void; navData:NavData; homeData:HomeData; footerData:FooterData; activeTab:string;
 }) {
@@ -574,9 +564,6 @@ function LivePreviewPanel({ open, onClose, navData, homeData, footerData, active
   );
 }
 
-/* ═══════════════════════════════════════════
-   FEEDBACK — STAR DISPLAY
-═══════════════════════════════════════════ */
 function FbStars({ rating }: { rating: number }) {
   const GOLD = '#B8860B';
   return (
@@ -593,9 +580,6 @@ function FbStars({ rating }: { rating: number }) {
   );
 }
 
-/* ═══════════════════════════════════════════
-   FEEDBACK — AVATAR
-═══════════════════════════════════════════ */
 function FbAvatar({ name }: { name: string }) {
   const initials = name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
   return (
@@ -605,9 +589,6 @@ function FbAvatar({ name }: { name: string }) {
   );
 }
 
-/* ═══════════════════════════════════════════
-   FEEDBACK — PUBLISH TOGGLE
-═══════════════════════════════════════════ */
 function FbPublishToggle({ id, value, onChange }: {
   id: number;
   value: boolean;
@@ -686,9 +667,6 @@ function FbPublishToggle({ id, value, onChange }: {
   );
 }
 
-/* ═══════════════════════════════════════════
-   FEEDBACK — STATS BAR
-═══════════════════════════════════════════ */
 function FbStatsBar({ data }: { data: Feedback[] }) {
   const total     = data.length;
   const published = data.filter(d => d.isPublished).length;
@@ -710,9 +688,6 @@ function FbStatsBar({ data }: { data: Feedback[] }) {
   );
 }
 
-/* ═══════════════════════════════════════════
-   FEEDBACK — REVIEW CARD
-═══════════════════════════════════════════ */
 function FbReviewCard({ item, onToggle }: { item: Feedback; onToggle: (id: number, val: boolean) => void }) {
   const GOLD        = '#B8860B';
   const GOLD_BORDER = 'rgba(184,134,11,0.35)';
@@ -760,9 +735,6 @@ function FbReviewCard({ item, onToggle }: { item: Feedback; onToggle: (id: numbe
   );
 }
 
-/* ═══════════════════════════════════════════
-   FEEDBACK TAB — MAIN
-═══════════════════════════════════════════ */
 function FeedbackTab() {
   const [allReviews,    setAllReviews]    = useState<Feedback[]>([]);
   const [loading,       setLoading]       = useState(true);
@@ -794,15 +766,13 @@ function FeedbackTab() {
 
   useEffect(() => { fetchReviews(); }, [fetchReviews]);
 
-  /* ── Unattended = unpublished AND submitted within UNATTENDED_DAYS days ── */
-  const isUnattended = useCallback((r: Feedback) => {
+    const isUnattended = useCallback((r: Feedback) => {
     if (r.isPublished) return false;
     const ageDays = (Date.now() - new Date(r.submittedAt).getTime()) / (1000 * 60 * 60 * 24);
     return ageDays <= UNATTENDED_DAYS;
   }, []);
 
-  /* ── FIX: service filter handles comma-separated multi-service strings ── */
-  const filtered = useMemo(() => {
+    const filtered = useMemo(() => {
     return allReviews
       .filter(r => {
         if (location !== 'All' && r.cusLocation !== location) return false;
@@ -836,7 +806,7 @@ function FeedbackTab() {
     <>
       <style>{FEEDBACK_CSS}</style>
 
-      {/* ── Top bar ── */}
+      {}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:'1rem', marginBottom:'1.25rem' }}>
         <p style={{ color:'rgba(255,255,255,0.45)', fontSize:'0.82rem', margin:0 }}>
           {allReviews.length} total · {filtered.length} matching · {publishedCount} live on website
@@ -854,10 +824,10 @@ function FeedbackTab() {
         </button>
       </div>
 
-      {/* ── Stats bar ── */}
+      {}
       {!loading && !error && <FbStatsBar data={allReviews} />}
 
-      {/* ── Unattended alert banner ── */}
+      {}
       {!loading && !error && unattendedCount > 0 && (
         <div style={{ marginBottom:'1.25rem', background:'rgba(249,115,22,0.07)', border:'1.5px solid rgba(249,115,22,0.35)', borderRadius:'0.75rem', padding:'0.875rem 1.25rem', display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:'0.75rem' }}>
           <div style={{ display:'flex', alignItems:'center', gap:'0.55rem' }}>
@@ -881,7 +851,7 @@ function FeedbackTab() {
         </div>
       )}
 
-      {/* ── Filters ── */}
+      {}
       <div style={{ display:'flex', flexWrap:'wrap', gap:'0.65rem', marginBottom:'1.5rem', alignItems:'center' }}>
         <select className="fb-select" value={location} onChange={e => changeFilter(() => setLocation(e.target.value))}>
           {FB_LOCATIONS.map(l => <option key={l} value={l}>{l === 'All' ? 'All Locations' : l}</option>)}
@@ -907,7 +877,7 @@ function FeedbackTab() {
         ))}
       </div>
 
-      {/* ── Results ── */}
+      {}
       {loading ? (
         <div style={{ display:'flex', alignItems:'center', justifyContent:'center', padding:'4rem', gap:'0.75rem', color:'rgba(255,255,255,0.45)' }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={GOLD} strokeWidth="2.5" style={{ animation:'fbSpin 0.8s linear infinite' }}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
@@ -935,7 +905,7 @@ function FeedbackTab() {
         </div>
       )}
 
-      {/* ── Pagination ── */}
+      {}
       {!loading && !error && totalPages > 1 && (
         <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:'0.45rem', marginTop:'2rem', flexWrap:'wrap' }}>
           <button className="fb-pg-btn" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
@@ -955,9 +925,6 @@ function FeedbackTab() {
     </>
   );
 }
-/* ═══════════════════════════════════════════
-   MAIN ADMIN PAGE
-═══════════════════════════════════════════ */
 export default function SayoAdminPage() {
   const [adminUsername,   setAdminUsername]   = useState('');
 
@@ -982,15 +949,15 @@ export default function SayoAdminPage() {
   const [svcGender,   setSvcGender]   = useState<GenderKey>('her');
   const [svcCategory, setSvcCategory] = useState<string>('');
 
-  // ✅ NEW: Staff photo upload states
+  // Staff photo upload states
   const [staffUploadLoading, setStaffUploadLoading] = useState<Record<number, boolean>>({});
   const [staffUploadError,   setStaffUploadError]   = useState<Record<number, string>>({});
 
-  // ✅ NEW: Gallery image upload states
+  // Gallery image upload states
   const [galleryUploadLoading, setGalleryUploadLoading] = useState<Record<number, boolean>>({});
   const [galleryUploadError,   setGalleryUploadError]   = useState<Record<number, string>>({});
 
-  // ✅ NEW: Gallery TAB photo upload states (keyed by item index)
+  // Gallery TAB photo upload states (keyed by item index)
   const [galPhotoUploadLoading, setGalPhotoUploadLoading] = useState<Record<number, boolean>>({});
   const [galPhotoUploadError,   setGalPhotoUploadError]   = useState<Record<number, string>>({});
 
@@ -1066,14 +1033,12 @@ export default function SayoAdminPage() {
     window.location.href = '/admin-login';
   };
 
-  /* ── Nav helpers ── */
-  const updateNavItem = (idx:number, field:keyof NavItem, value:string) => { const u=[...navData.nav_items]; u[idx]={...u[idx],[field]:value}; setNavData({...navData,nav_items:u}); };
+    const updateNavItem = (idx:number, field:keyof NavItem, value:string) => { const u=[...navData.nav_items]; u[idx]={...u[idx],[field]:value}; setNavData({...navData,nav_items:u}); };
   const addNavItem    = () => setNavData({...navData,nav_items:[...navData.nav_items,{label:'NEW LINK',href:'/'}]});
   const removeNavItem = (idx:number) => setNavData({...navData,nav_items:navData.nav_items.filter((_,i)=>i!==idx)});
   const moveNavItem   = (idx:number,dir:-1|1) => { const u=[...navData.nav_items]; const n=idx+dir; if(n<0||n>=u.length)return; [u[idx],u[n]]=[u[n],u[idx]]; setNavData({...navData,nav_items:u}); };
 
-  /* ── Footer helpers ── */
-  const updateQuickLink = (idx:number,field:keyof QuickLink,value:string) => { const u=[...footerData.quick_links]; u[idx]={...u[idx],[field]:value}; setFooterData({...footerData,quick_links:u}); };
+    const updateQuickLink = (idx:number,field:keyof QuickLink,value:string) => { const u=[...footerData.quick_links]; u[idx]={...u[idx],[field]:value}; setFooterData({...footerData,quick_links:u}); };
   const addQuickLink    = () => setFooterData({...footerData,quick_links:[...footerData.quick_links,{label:'New Link',href:'/'}]});
   const removeQuickLink = (idx:number) => setFooterData({...footerData,quick_links:footerData.quick_links.filter((_,i)=>i!==idx)});
   const moveQuickLink   = (idx:number,dir:-1|1) => { const u=[...footerData.quick_links]; const n=idx+dir; if(n<0||n>=u.length)return; [u[idx],u[n]]=[u[n],u[idx]]; setFooterData({...footerData,quick_links:u}); };
@@ -1081,13 +1046,12 @@ export default function SayoAdminPage() {
   const addLocation     = () => setFooterData({...footerData,locations:[...footerData.locations,'New Location']});
   const removeLocation  = (idx:number) => setFooterData({...footerData,locations:footerData.locations.filter((_,i)=>i!==idx)});
 
-  /* ── Staff helpers ── */
-  const updateStaffMember = (idx:number,field:keyof StaffMember,value:string) => { const u=[...aboutData.staff]; u[idx]={...u[idx],[field]:value}; setAboutData({...aboutData,staff:u}); };
+    const updateStaffMember = (idx:number,field:keyof StaffMember,value:string) => { const u=[...aboutData.staff]; u[idx]={...u[idx],[field]:value}; setAboutData({...aboutData,staff:u}); };
   const addStaffMember    = () => setAboutData({...aboutData,staff:[...aboutData.staff,{name:'New Staff',role:'Role',experience:'1+ Years',bio:'',specialties:'',photo:''}]});
   const removeStaffMember = (idx:number) => setAboutData({...aboutData,staff:aboutData.staff.filter((_,i)=>i!==idx)});
   const moveStaffMember   = (idx:number,dir:-1|1) => { const u=[...aboutData.staff]; const n=idx+dir; if(n<0||n>=u.length)return; [u[idx],u[n]]=[u[n],u[idx]]; setAboutData({...aboutData,staff:u}); };
 
-  // ✅ NEW: Staff photo upload handler
+  // Staff photo upload handler
   const handleStaffPhotoUpload = async (idx: number, file: File) => {
     setStaffUploadLoading(prev => ({ ...prev, [idx]: true }));
     setStaffUploadError(prev =>   ({ ...prev, [idx]: '' }));
@@ -1106,7 +1070,7 @@ export default function SayoAdminPage() {
     }
   };
 
-  // ✅ NEW: Gallery image upload handler
+  // Gallery image upload handler
   const handleGalleryImageUpload = async (idx: number, file: File) => {
     setGalleryUploadLoading(prev => ({ ...prev, [idx]: true }));
     setGalleryUploadError(prev =>   ({ ...prev, [idx]: '' }));
@@ -1139,7 +1103,7 @@ export default function SayoAdminPage() {
   const removeGalleryItem = (idx:number) => setGalleryData({...galleryData, items:galleryData.items.filter((_,i)=>i!==idx)});
   const moveGalleryItem   = (idx:number,dir:-1|1) => { const u=[...galleryData.items]; const n=idx+dir; if(n<0||n>=u.length)return; [u[idx],u[n]]=[u[n],u[idx]]; setGalleryData({...galleryData,items:u}); };
 
-  // ✅ NEW: Gallery TAB photo upload handler → Cloudinary
+  // Gallery TAB photo upload handler → Cloudinary
   const handleGalleryPhotoUpload = async (idx: number, file: File) => {
     setGalPhotoUploadLoading(prev => ({ ...prev, [idx]: true }));
     setGalPhotoUploadError(prev =>   ({ ...prev, [idx]: '' }));
@@ -1158,14 +1122,12 @@ export default function SayoAdminPage() {
     }
   };
 
-  /* ── Review helpers ── */
-  const updateAboutReview = (idx:number,field:keyof AboutReview,value:string) => { const u=[...aboutData.reviews]; u[idx]={...u[idx],[field]:value}; setAboutData({...aboutData,reviews:u}); };
+    const updateAboutReview = (idx:number,field:keyof AboutReview,value:string) => { const u=[...aboutData.reviews]; u[idx]={...u[idx],[field]:value}; setAboutData({...aboutData,reviews:u}); };
   const addAboutReview    = () => setAboutData({...aboutData,reviews:[...aboutData.reviews,{quote:'',author:''}]});
   const removeAboutReview = (idx:number) => setAboutData({...aboutData,reviews:aboutData.reviews.filter((_,i)=>i!==idx)});
   const moveAboutReview   = (idx:number,dir:-1|1) => { const u=[...aboutData.reviews]; const n=idx+dir; if(n<0||n>=u.length)return; [u[idx],u[n]]=[u[n],u[idx]]; setAboutData({...aboutData,reviews:u}); };
 
-  /* ── Category helpers ── */
-  const labelToKey = (label:string) => label.trim().toUpperCase().replace(/\s+/g,'_').replace(/[^A-Z0-9_]/g,'');
+    const labelToKey = (label:string) => label.trim().toUpperCase().replace(/\s+/g,'_').replace(/[^A-Z0-9_]/g,'');
   const updateCategoryLabel = (idx:number,newLabel:string) => {
     const cats=[...servicesData.categories]; const oldKey=cats[idx].key; const newKey=labelToKey(newLabel);
     cats[idx]={...cats[idx],label:newLabel,key:newKey};
@@ -1178,15 +1140,13 @@ export default function SayoAdminPage() {
   const removeCategory   = (idx:number) => { const cats=[...servicesData.categories]; const removedKey=cats[idx].key; cats.splice(idx,1); const newPL={...servicesData.price_list}; for(const g of Object.keys(newPL)){const gd={...newPL[g]};delete gd[removedKey];newPL[g]=gd;} if(svcCategory===removedKey)setSvcCategory(cats[0]?.key??''); setServicesData({...servicesData,categories:cats,price_list:newPL}); };
   const moveCategoryItem = (idx:number,dir:-1|1) => { const cats=[...servicesData.categories]; const n=idx+dir; if(n<0||n>=cats.length)return; [cats[idx],cats[n]]=[cats[n],cats[idx]]; setServicesData({...servicesData,categories:cats}); };
 
-  /* ── Price helpers ── */
-  const getPriceItems   = ():PriceItem[] => { try{return servicesData.price_list?.[svcGender]?.[svcCategory]??[];}catch{return[];} };
+    const getPriceItems   = ():PriceItem[] => { try{return servicesData.price_list?.[svcGender]?.[svcCategory]??[];}catch{return[];} };
   const updatePriceItem = (idx:number,field:keyof PriceItem,value:string) => { const items=[...getPriceItems()]; items[idx]={...items[idx],[field]:value}; setServicesData({...servicesData,price_list:{...servicesData.price_list,[svcGender]:{...servicesData.price_list[svcGender],[svcCategory]:items}}}); };
   const addPriceItem    = () => { const items=[...getPriceItems(),{name:'New Service',price1:'0.00'}]; setServicesData({...servicesData,price_list:{...servicesData.price_list,[svcGender]:{...servicesData.price_list[svcGender],[svcCategory]:items}}}); };
   const removePriceItem = (idx:number) => { const items=getPriceItems().filter((_,i)=>i!==idx); setServicesData({...servicesData,price_list:{...servicesData.price_list,[svcGender]:{...servicesData.price_list[svcGender],[svcCategory]:items}}}); };
   const movePriceItem   = (idx:number,dir:-1|1) => { const items=[...getPriceItems()]; const n=idx+dir; if(n<0||n>=items.length)return; [items[idx],items[n]]=[items[n],items[idx]]; setServicesData({...servicesData,price_list:{...servicesData.price_list,[svcGender]:{...servicesData.price_list[svcGender],[svcCategory]:items}}}); };
 
-  /* ── Contact helpers ── */
-  const updateStat   = (idx:number,field:keyof StatItem,value:string) => { const u=[...contactData.stats]; u[idx]={...u[idx],[field]:value}; setContactData({...contactData,stats:u}); };
+    const updateStat   = (idx:number,field:keyof StatItem,value:string) => { const u=[...contactData.stats]; u[idx]={...u[idx],[field]:value}; setContactData({...contactData,stats:u}); };
   const addStat      = () => setContactData({...contactData,stats:[...contactData.stats,{value:'0',label:'New Stat'}]});
   const removeStat   = (idx:number) => setContactData({...contactData,stats:contactData.stats.filter((_,i)=>i!==idx)});
   const moveStat     = (idx:number,dir:-1|1) => { const u=[...contactData.stats]; const n=idx+dir; if(n<0||n>=u.length)return; [u[idx],u[n]]=[u[n],u[idx]]; setContactData({...contactData,stats:u}); };
@@ -1195,8 +1155,7 @@ export default function SayoAdminPage() {
   const removeBranch = (idx:number) => setContactData({...contactData,branches:contactData.branches.filter((_,i)=>i!==idx)});
   const moveBranch   = (idx:number,dir:-1|1) => { const u=[...contactData.branches]; const n=idx+dir; if(n<0||n>=u.length)return; [u[idx],u[n]]=[u[n],u[idx]]; setContactData({...contactData,branches:u}); };
 
-  /* ── Tabs ── */
-  const TABS = [
+    const TABS = [
     { key:'nav'      as const, label:'NAVIGATION', icon:<IconCompass />        },
     { key:'home'     as const, label:'HOME HERO',  icon:<IconHome />           },
     { key:'about'    as const, label:'OUR STORY',  icon:<IconBook />           },
@@ -1221,11 +1180,7 @@ export default function SayoAdminPage() {
     </div>
   );
 
-  /* ══════════════════════════════════════════
-     RENDER  (route is protected by src/middleware.ts —
-     unauthenticated visitors are redirected to /admin-login)
-  ══════════════════════════════════════════ */
-  return (
+    return (
     <div style={{ minHeight:'100vh', backgroundColor:tokens.color.bgDark, color:tokens.color.white, fontFamily:tokens.font.family, paddingBottom:'4rem' }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
@@ -1238,7 +1193,7 @@ export default function SayoAdminPage() {
 
       <LivePreviewPanel open={previewOpen} onClose={() => setPreviewOpen(false)} navData={navData} homeData={homeData} footerData={footerData} activeTab={activeTab} />
 
-      {/* ── Header ── */}
+      {}
       <header style={{ position:'sticky', top:0, zIndex:50, background:'rgba(14,14,18,0.88)', backdropFilter:'blur(12px)', borderBottom:`1px solid ${tokens.color.whiteBorder}`, padding:'0.85rem 2rem', display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:'1rem' }}>
         <div style={{ display:'flex', alignItems:'center', gap:'1rem' }}>
           <AdminLogoIcon size={48} />
@@ -1274,7 +1229,7 @@ export default function SayoAdminPage() {
         </div>
       )}
 
-      {/* ── Tab bar ── */}
+      {}
       <nav style={{ background:'#121216', borderBottom:`1px solid ${tokens.color.whiteBorder}`, padding:'0 2rem', display:'flex', gap:'0.5rem', overflowX:'auto' }}>
         {TABS.map(tab => {
           const isActive = activeTab === tab.key;
@@ -1287,10 +1242,10 @@ export default function SayoAdminPage() {
         })}
       </nav>
 
-      {/* ── Main content ── */}
+      {}
       <main style={{ maxWidth:'1100px', margin:'2rem auto', padding:'0 1.5rem' }}>
 
-        {/* ══ NAVIGATION ══ */}
+        {}
         {activeTab === 'nav' && (
           <section style={sectionCard}>
             <h2 style={sectionTitle}>Navigation Bar</h2>
@@ -1320,7 +1275,7 @@ export default function SayoAdminPage() {
           </section>
         )}
 
-        {/* ══ HOME ══ */}
+        {}
         {activeTab === 'home' && (
           <section style={sectionCard}>
             <h2 style={sectionTitle}>Home Hero Section</h2>
@@ -1344,7 +1299,7 @@ export default function SayoAdminPage() {
           </section>
         )}
 
-        {/* ══ ABOUT ══ */}
+        {}
         {activeTab === 'about' && (
           <div style={{display:'flex',flexDirection:'column',gap:'2rem'}}>
             <section style={sectionCard}>
@@ -1665,7 +1620,7 @@ export default function SayoAdminPage() {
           </div>
         )}
 
-        {/* ══ SERVICES ══ */}
+        {}
         {activeTab === 'services' && (
           <div style={{display:'flex',flexDirection:'column',gap:'2rem'}}>
             <section style={sectionCard}>
@@ -1745,7 +1700,7 @@ export default function SayoAdminPage() {
           </div>
         )}
 
-        {/* ══ CONTACT ══ */}
+        {}
         {activeTab === 'contact' && (
           <div style={{display:'flex',flexDirection:'column',gap:'2rem'}}>
             <section style={sectionCard}>
@@ -1837,7 +1792,7 @@ export default function SayoAdminPage() {
           </div>
         )}
 
-        {/* ══ GALLERY ══ */}
+        {}
         {activeTab === 'gallery' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
             <section style={sectionCard}>
@@ -1966,7 +1921,7 @@ export default function SayoAdminPage() {
           </div>
         )}
 
-        {/* ══ FOOTER ══ */}
+        {}
         {activeTab === 'footer' && (
           <div style={{display:'flex',flexDirection:'column',gap:'2rem'}}>
             <section style={sectionCard}>
@@ -2019,7 +1974,7 @@ export default function SayoAdminPage() {
           </div>
         )}
 
-        {/* ══ FEEDBACK ══ */}
+        {}
         {activeTab === 'feedback' && (
           <section style={sectionCard}>
             <div style={{ display:'flex', alignItems:'center', gap:'0.75rem', marginBottom:'0.4rem' }}>

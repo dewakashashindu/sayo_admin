@@ -1,43 +1,26 @@
-/* ─────────────────────────────────────────────────────────────────────────────
-   TRILINGUAL TRANSLATIONS — English / සිංහල / தமிழ்
-   Covers every user-visible string in:
-     • app/booking/page.tsx
-     • components/ConflictModal.tsx
-
-   HOW TO REVIEW: each line shows all 3 languages side by side  →  en | si | ta
-   HOW TO USE:    t('key')          → translated string
-                  t('key', {vars}) → string with {placeholders} filled in
-                  svc(lang, name)  → translated service name (lookup by English)
-                  role/cat/loc()   → translated role / category / location name
-───────────────────────────────────────────────────────────────────────────── */
 
 export type Lang = 'en' | 'si' | 'ta';
 
 export const translations: Record<string, { en: string; si: string; ta: string }> = {
 
-  /* ─────────── PAGE HEADER ─────────── */
-  'header.onlineBooking':    { en: 'Online Booking',                                  si: 'මාර්ගගත වෙන්කිරීම',                             ta: 'ஆன்லைன் முன்பதிவு' },
+    'header.onlineBooking':    { en: 'Online Booking',                                  si: 'මාර්ගගත වෙන්කිරීම',                             ta: 'ஆன்லைன் முன்பதிவு' },
   'header.title1':           { en: 'Reserve Your',                                    si: 'ඔබේ',                                          ta: 'உங்கள்' },
   'header.title2':           { en: 'Luxury',                                          si: 'සුඛෝපභෝගී',                                    ta: 'சொகுசு' },
   'header.title3':           { en: 'Moment',                                          si: 'මොහොත වෙන්කරගන්න',                            ta: 'தருணத்தை முன்பதிவு செய்யுங்கள்' },
   'header.confirmEmailNote': { en: "✦ We'll confirm your appointment via email.",     si: '✦ අපි ඔබේ වෙන්කිරීම විද්‍යුත් තැපෑල මගින් තහවුරු කරන්නෙමු.', ta: '✦ உங்கள் நியமனத்தை மின்னஞ்சல் வழியாக உறுதிப்படுத்துவோம்.' },
   'header.instantNote':      { en: '✦ Instant registration — no email needed.',       si: '✦ ක්ෂණික ලියාපදිංචිය — විද්‍යුත් තැපෑල අවශ්‍ය නැත.',        ta: '✦ உடனடி பதிவு — மின்னஞ்சல் தேவையில்லை.' },
 
-  /* ─────────── STEP INDICATOR ─────────── */
-  'steps.one':               { en: 'Your Appointment',                                si: 'ඔබේ වෙන්කිරීම',                                ta: 'உங்கள் நியமனம்' },
+    'steps.one':               { en: 'Your Appointment',                                si: 'ඔබේ වෙන්කිරීම',                                ta: 'உங்கள் நியமனம்' },
   'steps.two':               { en: 'Review & Confirm',                                si: 'සමාලෝචනය සහ තහවුරු කිරීම',                    ta: 'மதிப்பாய்வு & உறுதி' },
 
-  /* ─────────── BOOKING MODE ─────────── */
-  'mode.with':               { en: 'With Confirmation',                               si: 'තහවුරු කිරීම සමඟ',                            ta: 'உறுதிப்படுத்தலுடன்' },
+    'mode.with':               { en: 'With Confirmation',                               si: 'තහවුරු කිරීම සමඟ',                            ta: 'உறுதிப்படுத்தலுடன்' },
   'mode.without':            { en: 'Without Confirmation',                            si: 'තහවුරු කිරීමකින් තොරව',                       ta: 'உறுதிப்படுத்தல் இல்லாமல்' },
   'mode.confirmedBadge':     { en: 'Confirmed',                                       si: 'තහවුරු කර ඇත',                                ta: 'உறுதிப்படுத்தப்பட்டது' },
 
-  /* ─────────── BOOKING TYPE TABS (single / multi) ─────────── */
-  'tabs.single':             { en: 'Single Booking',                                  si: 'තනි වෙන්කිරීම',                              ta: 'ஒற்றை முன்பதிவு' },
+    'tabs.single':             { en: 'Single Booking',                                  si: 'තනි වෙන්කිරීම',                              ta: 'ஒற்றை முன்பதிவு' },
   'tabs.multi':              { en: 'Multi Booking',                                   si: 'බහු වෙන්කිරීම',                               ta: 'பல முன்பதிவு' },
 
-  /* ─────────── MULTI BOOKING PANEL ─────────── */
-  'multi.title':             { en: 'Multi Booking',                                   si: 'බහු වෙන්කිරීම',                               ta: 'பல முன்பதிவு' },
+    'multi.title':             { en: 'Multi Booking',                                   si: 'බහු වෙන්කිරීම',                               ta: 'பல முன்பதிவு' },
   'multi.intro':             { en: 'Book for several people at once. Each person gets their own services, provider and time slot.',
                                 si: 'එකවර පුද්ගලයින් කිහිප දෙනෙකු සඳහා වෙන්කරන්න. සෑම පුද්ගලයෙකුටම තමන්ගේම සේවා, සේවා සැපයුම්කරු සහ වේලාව ලැබේ.',
                                 ta: 'ஒரே நேரத்தில் பலருக்கு முன்பதிவு செய்யுங்கள். ஒவ்வொருவருக்கும் அவரவர் சேவைகள், வழங்குநர் மற்றும் நேரம் கிடைக்கும்.' },
@@ -92,8 +75,7 @@ export const translations: Record<string, { en: string; si: string; ta: string }
                                 si: 'සමහර වෙන්කිරීම් සාදන ලදී, නමුත් සියල්ල නොවේ. යොමු:',
                                 ta: 'சில முன்பதிவுகள் உருவாக்கப்பட்டன, ஆனால் அனைத்தும் இல்லை. குறிப்புகள்:' },
 
-  /* ─────────── GENDER + PHONE ─────────── */
-  'gp.gender':               { en: 'Gender',                                          si: 'ස්ත්‍රී පුරුෂ භාවය',                           ta: 'பாலினம்' },
+    'gp.gender':               { en: 'Gender',                                          si: 'ස්ත්‍රී පුරුෂ භාවය',                           ta: 'பாலினம்' },
   'gp.contact':              { en: 'Contact Number',                                  si: 'දුරකථන අංකය',                                 ta: 'தொடர்பு எண்' },
   'gp.required':             { en: 'Required',                                        si: 'අවශ්‍ය වේ',                                     ta: 'தேவை' },
   'gp.selectGender':         { en: 'Select gender…',                                  si: 'ස්ත්‍රී පුරුෂ භාවය තෝරන්න…',                    ta: 'பாலினத்தைத் தேர்வுசெய்க…' },
@@ -103,8 +85,7 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   'gender.prefer_not_to_say':{ en: 'Prefer not to say',                               si: 'පැවසීමට අකමැති',                              ta: 'சொல்ல விரும்பவில்லை' },
   'gender.other':            { en: 'Other',                                           si: 'වෙනත්',                                        ta: 'மற்றது' },
 
-  /* ─────────── STEP 1 — BUILD APPOINTMENT ─────────── */
-  's1.buildYourAppointment': { en: 'Build Your Appointment',                          si: 'ඔබේ වෙන්කිරීම සාදන්න',                         ta: 'உங்கள் நியமனத்தை உருவாக்குங்கள்' },
+    's1.buildYourAppointment': { en: 'Build Your Appointment',                          si: 'ඔබේ වෙන්කිරීම සාදන්න',                         ta: 'உங்கள் நியமனத்தை உருவாக்குங்கள்' },
   's1.intro':                { en: 'Choose your branch, services, provider, date and time.', si: 'ඔබේ ශාඛාව, සේවාවන්, සේවා සැපයුම්කරු, දිනය සහ වේලාව තෝරන්න.', ta: 'உங்கள் கிளை, சேவைகள், வழங்குநர், தேதி மற்றும் நேரத்தைத் தேர்ந்தெடுக்கவும்.' },
   's1.branchLocation':       { en: 'Branch / Location',                               si: 'ශාඛාව / ස්ථානය',                                ta: 'கிளை / இடம்' },
   's1.category':             { en: 'Category',                                        si: 'කාණ්ඩය',                                       ta: 'வகை' },
@@ -130,8 +111,7 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   's1.missingTime':          { en: 'Pick a time slot',                                si: 'වේලාවක් තෝරන්න',                               ta: 'ஒரு நேரத்தைத் தேர்ந்தெடுக்கவும்' },
   's1.reviewBooking':        { en: 'Review Booking',                                  si: 'වෙන්කිරීම සමාලෝචනය',                           ta: 'முன்பதிவை மதிப்பாய்வு செய்' },
 
-  /* ─────────── TIME SECTION ─────────── */
-  'time.preferredTime':      { en: 'Preferred Time',                                  si: 'කැමති වේලාව',                                  ta: 'விரும்பிய நேரம்' },
+    'time.preferredTime':      { en: 'Preferred Time',                                  si: 'කැමති වේලාව',                                  ta: 'விரும்பிய நேரம்' },
   'time.checking':           { en: 'Checking live availability…',                     si: 'සජීවී ලබාගත හැකි බව පරීක්ෂා කරමින්…',             ta: 'நேரடி கிடைக்கும் நிலையைச் சரிபார்க்கிறது…' },
   'time.needProvider':       { en: 'Please select a provider above to see real-time availability.', si: 'සජීවී ලබාගත හැකි බව බැලීමට කරුණාකර ඉහතින් සේවා සැපයුම්කරුවෙකු තෝරන්න.', ta: 'நிகழ்நேர கிடைக்கும் நிலையைப் பார்க்க மேலே ஒரு வழங்குநரைத் தேர்ந்தெடுக்கவும்.' },
   'time.loadError':          { en: 'Could not load live availability.',               si: 'සජීවී ලබාගත හැකි බව ලබාගත නොහැකි විය.',           ta: 'நேரடி கிடைக்கும் நிலையை ஏற்ற முடியவில்லை.' },
@@ -144,8 +124,7 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   'time.yellowHint':         { en: 'Yellow slots: tap for options.',                  si: 'කහ පාට වේලාවන්: විකල්ප සඳහා ඔබන්න.',              ta: 'மஞ்சள் நேரங்கள்: விருப்பங்களுக்குத் தட்டவும்.' },
   'time.swapEquals':         { en: '= swap service order for a seamless visit.',      si: '= බාධාවකින් තොර පැමිණීමක් සඳහා අනුක්‍රමය මාරු කිරීම.', ta: '= தடையற்ற வருகைக்கு சேவை வரிசையை மாற்றுதல்.' },
 
-  /* ─────────── STEP 2 — REVIEW ─────────── */
-  's2.reviewYourBooking':    { en: 'Review Your Booking',                             si: 'ඔබේ වෙන්කිරීම සමාලෝචනය කරන්න',                  ta: 'உங்கள் முன்பதிவை மதிப்பாய்வு செய்யுங்கள்' },
+    's2.reviewYourBooking':    { en: 'Review Your Booking',                             si: 'ඔබේ වෙන්කිරීම සමාලෝචනය කරන්න',                  ta: 'உங்கள் முன்பதிவை மதிப்பாய்வு செய்யுங்கள்' },
   's2.confirmLooksRight':    { en: 'Confirm everything looks right before we lock it in.', si: 'අවසන් කිරීමට පෙර සියල්ල නිවැරදි දැයි තහවුරු කරගන්න.', ta: 'இறுதி செய்வதற்கு முன் எல்லாம் சரியாக உள்ளதா என்று உறுதி செய்யுங்கள்.' },
   's2.walkinBox':            { en: 'Registering without confirmation. No email sent. Please arrive at least 5 minutes early.',
                                si: 'තහවුරු කිරීමකින් තොරව ලියාපදිංචි කෙරේ. විද්‍යුත් තැපෑලක් එවනු නොලැබේ. කරුණාකර අවම වශයෙන් මිනිත්තු 5කට කලින් පැමිණෙන්න.',
@@ -176,8 +155,7 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   's2.confirming':           { en: 'Confirming…',                                     si: 'තහවුරු කරමින්…',                               ta: 'உறுதிப்படுத்துகிறது…' },
   's2.registering':          { en: 'Registering…',                                    si: 'ලියාපදිංචි කරමින්…',                           ta: 'பதிவு செய்கிறது…' },
 
-  /* ─────────── SUCCESS SCREEN ─────────── */
-  'ok.bookingId':            { en: 'Booking ID',                                      si: 'වෙන්කිරීමේ අංකය',                              ta: 'முன்பதிவு எண்' },
+    'ok.bookingId':            { en: 'Booking ID',                                      si: 'වෙන්කිරීමේ අංකය',                              ta: 'முன்பதிவு எண்' },
   'ok.bookingWord':          { en: 'Booking',                                         si: 'වෙන්කිරීම',                                    ta: 'முன்பதிவு' },
   'ok.confirmedWord':        { en: 'Confirmed',                                       si: 'තහවුරු කරන ලදී',                               ta: 'உறுதிப்படுத்தப்பட்டது' },
   'ok.registeredWord':       { en: 'Registered',                                      si: 'ලියාපදිංචි කරන ලදී',                           ta: 'பதிவு செய்யப்பட்டது' },
@@ -190,8 +168,7 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   'ok.confirmationSentTo':   { en: 'Confirmation sent to {email}',                    si: 'තහවුරු කිරීම {email} වෙත යවන ලදි',               ta: 'உறுதிப்படுத்தல் {email} க்கு அனுப்பப்பட்டது' },
   'ok.bookAnother':          { en: 'Book Another Appointment',                        si: 'තවත් වෙන්කිරීමක් කරන්න',                        ta: 'மற்றொரு நியமனத்தை முன்பதிவு செய்' },
 
-  /* ─────────── CALENDAR ─────────── */
-  'cal.today':               { en: 'Today',                                           si: 'අද',                                           ta: 'இன்று' },
+    'cal.today':               { en: 'Today',                                           si: 'අද',                                           ta: 'இன்று' },
   'cal.clear':               { en: 'Clear',                                           si: 'මකන්න',                                        ta: 'அழி' },
   'cal.clearDate':           { en: 'Clear date',                                      si: 'දිනය මකන්න',                                   ta: 'தேதியை அழி' },
   'cal.close':               { en: 'Close',                                           si: 'වසන්න',                                        ta: 'மூடு' },
@@ -199,13 +176,11 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   'cal.prevMonth':           { en: 'Previous month',                                  si: 'පෙර මාසය',                                     ta: 'முந்தைய மாதம்' },
   'cal.nextMonth':           { en: 'Next month',                                      si: 'මීළඟ මාසය',                                    ta: 'அடுத்த மாதம்' },
 
-  /* ─────────── ERRORS ─────────── */
-  'err.generic':             { en: 'Something went wrong.',                           si: 'යම් වරදක් සිදු විය.',                          ta: 'ஏதோ தவறு நடந்துவிட்டது.' },
+    'err.generic':             { en: 'Something went wrong.',                           si: 'යම් වරදක් සිදු විය.',                          ta: 'ஏதோ தவறு நடந்துவிட்டது.' },
   'err.network':             { en: 'Network error — please check your connection.',   si: 'ජාල දෝෂයකි — කරුණාකර ඔබේ සම්බන්ධතාවය පරීක්ෂා කරන්න.', ta: 'வலைப்பின்னல் பிழை — உங்கள் இணைப்பைச் சரிபார்க்கவும்.' },
   'err.slotTaken':           { en: '{slot} was just taken. Please pick another slot.', si: '{slot} වේලාව දැන්ම වෙන් කරගෙන ඇත. කරුණාකර වෙනත් වේලාවක් තෝරන්න.', ta: '{slot} நேரம் இப்போதுதான் முன்பதிவு செய்யப்பட்டுவிட்டது. வேறொரு நேரத்தைத் தேர்ந்தெடுக்கவும்.' },
 
-  /* ═══════════════ CONFLICT MODAL ═══════════════ */
-  'cm.partialAvailability':  { en: 'Partial Availability',                            si: 'අර්ධ ලබාගත හැකි බව',                           ta: 'பகுதி கிடைக்கும் நிலை' },
+    'cm.partialAvailability':  { en: 'Partial Availability',                            si: 'අර්ධ ලබාගත හැකි බව',                           ta: 'பகுதி கிடைக்கும் நிலை' },
   'cm.notFullyFreeA':        { en: 'Not fully free at',                               si: '',                                             ta: '' },
   'cm.notFullyFreeB':        { en: '',                                                si: 'වෙලාවට සම්පූර්ණයෙන් නිදහස් නොවේ',                ta: 'இல் முழுமையாக இலவசம் இல்லை' },
   'cm.closeAria':            { en: 'Close',                                           si: 'වසන්න',                                        ta: 'மூடு' },
@@ -283,9 +258,6 @@ export const translations: Record<string, { en: string; si: string; ta: string }
                                ta: 'மாறாக, உங்கள் அசல் வரிசையை வைத்திருக்க {time} இல் தொடங்கலாம்.' },
 };
 
-/* ─────────────────────────────────────────────────────────────
-   SERVICE NAMES  (57 services — transliterated Sinhala)
-───────────────────────────────────────────────────────────── */
 const serviceNames: Record<string, { si: string; ta: string }> = {
   /* WAX */
   'Full Arms Wax':            { si: 'ෆුල් ආම්ස් වැක්ස්',                         ta: 'முழு கை வேக்ஸிங்' },
@@ -350,9 +322,6 @@ const serviceNames: Record<string, { si: string; ta: string }> = {
   'Groom Grooming':           { si: 'ග්‍රූම් ග්‍රූමිං',                          ta: 'மணமகன் குரூமிங்' },
 };
 
-/* ─────────────────────────────────────────────────────────────
-   PROVIDER ROLES (lookup by English role)
-───────────────────────────────────────────────────────────── */
 const roleNames: Record<string, { si: string; ta: string }> = {
   'Senior Hair Stylist':    { si: 'ජ්‍යේෂ්ඨ කොණ්ඩා සැකසුම්කරු',   ta: 'மூத்த ஹேர் ஸ்டைலிஸ்ட்' },
   'Beauty Therapist':       { si: 'රූපලාවණ්‍ය චිකිත්සක',          ta: 'அழகு சிகிச்சை நிபுணர்' },
@@ -371,7 +340,6 @@ const roleNames: Record<string, { si: string; ta: string }> = {
   'Wax Therapist':          { si: 'වැක්ස් චිකිත්සක',            ta: 'வேக்ஸ் சிகிச்சை நிபுணர்' },
 };
 
-/* ─── CATEGORIES ─── */
 const categoryNames: Record<string, { si: string; ta: string }> = {
   WAX:    { si: 'වැක්ස්',   ta: 'வேக்ஸ்' },
   HAIR:   { si: 'කොණ්ඩය',  ta: 'முடி' },
@@ -381,14 +349,12 @@ const categoryNames: Record<string, { si: string; ta: string }> = {
   BRIDAL: { si: 'මනාල',   ta: 'மணமகள்' },
 };
 
-/* ─── LOCATIONS ─── */
 const locationNames: Record<string, { si: string; ta: string }> = {
   Colombo:      { si: 'කොළඹ',       ta: 'கொழும்பு' },
   Negombo:      { si: 'මීගමුව',     ta: 'நீர்கொழும்பு' },
   Kiribathgoda: { si: 'කිරිබත්ගොඩ', ta: 'கிரிபத்கொட' },
 };
 
-/* ─── MONTH / DAY NAMES (for InlineCalendar) ─── */
 const MONTHS: Record<Lang, string[]> = {
   en: ['January','February','March','April','May','June','July','August','September','October','November','December'],
   si: ['ජනවාරි','පෙබරවාරි','මාර්තු','අප්‍රේල්','මැයි','ජූනි','ජූලි','අගෝස්තු','සැප්තැම්බර්','ඔක්තෝබර්','නොවැම්බර්','දෙසැම්බර්'],
@@ -405,10 +371,6 @@ const WEEKDAYS: Record<Lang, string[]> = {
   si: ['ඉරිදා','සඳුදා','අඟහරුවාදා','බදාදා','බ්‍රහස්පතින්දා','සිකුරාදා','සෙනසුරාදා'],
   ta: ['ஞாயிறு','திங்கள்','செவ்வாய்','புதன்','வியாழன்','வெள்ளி','சனி'],
 };
-
-/* ─────────────────────────────────────────────────────────────
-   HELPERS
-───────────────────────────────────────────────────────────── */
 
 /** t('key') / t('key', { mins: 15 }) — fill {placeholders} */
 export function t(lang: Lang, key: string, vars?: Record<string, string | number>): string {

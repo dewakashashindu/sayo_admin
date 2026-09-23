@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
-const prisma = globalForPrisma.prisma || new PrismaClient();
+const prisma = globalForPrisma.prisma || newRobustPrisma();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ level: string; catCode: string }> };
@@ -44,13 +45,26 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   }
 }
 
-/* DELETE */
+/* DELETE — blocked while any item still uses the category */
 export async function DELETE(_: NextRequest, { params }: Ctx) {
   try {
     
     const resolvedParams = await params;
     const catCode = decodeURIComponent(resolvedParams.catCode).trim();
     const model   = getModel(resolvedParams.level);
+    const levelNum = ['1', '2', '3', '4'].includes(resolvedParams.level) ? resolvedParams.level : '1';
+
+    const usageWhere = { [`Category${levelNum}`]: catCode } as unknown as Prisma.Tbl_ItemMasterWhereInput;
+    const used = await prisma.tbl_ItemMaster.count({ where: usageWhere });
+    if (used > 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `"${catCode}" is used by ${used} item(s) in the Item Master — it cannot be deleted.`,
+        },
+        { status: 409 },
+      );
+    }
 
     await (model as typeof prisma.tbl_ItemCategory1).delete({ where: { CatCode: catCode } });
     return NextResponse.json({ success: true, message: 'Deleted successfully' });

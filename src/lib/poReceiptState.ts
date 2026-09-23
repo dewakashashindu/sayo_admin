@@ -1,24 +1,3 @@
-// src/lib/poReceiptState.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// IS THIS PURCHASE ORDER FULLY RECEIVED?
-//
-// The old desktop program finished its GRN save with
-//
-//     UPDATE Tbl_POHeader SET GRNed = 'Y'  WHERE LocCode = … AND PONO = …
-//
-// — a flag on the purchase order saying “the goods came”. The new GRN screen
-// has to leave the same mark, or an old report that reads that column shows
-// every order as still outstanding.
-//
-// One deliberate difference: the old program set it the moment ANY receipt was
-// saved against the order. The new screen supports receiving a delivery in
-// several parts (that is the whole point of the open/closed quantities), so the
-// flag is set only when EVERY line has arrived — `GRNQty >= POQty`. A part
-// delivery leaves the order open, which is the truth.
-//
-// Pure functions on purpose: no database, no Prisma — so the arithmetic is
-// covered by tests without a server.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /** Anything closer than this counts as “the same quantity”. */
 const EPSILON = 0.0001;

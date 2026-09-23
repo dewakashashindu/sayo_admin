@@ -1,7 +1,9 @@
 // src/app/api/services/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { ITEM_CODE_LENGTH } from "@/lib/itemCode";
+import { readJsonWithLimit, isPayloadTooLarge } from "@/lib/bodyLimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +12,7 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
 };
 
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;
@@ -66,8 +68,49 @@ export async function GET() {
   try {
     const [items, locations, units, suppliers, cat1, cat2, cat3, cat4] =
       await Promise.all([
+        // ItemPic (image blob) is not selected — the picture of the selected
+        // item loads on demand through /image. Skiping the blobs keeps this
+        // list light even on a slow database connection.
         prisma.tbl_ItemMaster.findMany({
           orderBy: { ItemCode: "asc" },
+          select: {
+            LocCode: true,
+            ItemCode: true,
+            ServiceItem: true,
+            MOF: true,
+            ItemDes: true,
+            ItemPrintDes: true,
+            MasterUnitID: true,
+            Category1: true,
+            Category2: true,
+            Category3: true,
+            Category4: true,
+            SupID: true,
+            ROL: true,
+            ROQ: true,
+            MinQty: true,
+            MaxQty: true,
+            RawCost: true,
+            CostMarkup: true,
+            OverallCost: true,
+            SalesMargin: true,
+            Retailprice: true,
+            WSApp: true,
+            WSQty: true,
+            WSPrice: true,
+            StockBalance: true,
+            ExpiryItem: true,
+            PackedItem: true,
+            PackSize: true,
+            PackPrice: true,
+            SemiFinishedProd: true,
+            SerDuration: true,
+            CreateDate: true,
+            CreateBy: true,
+            UpdDate: true,
+            UpdBy: true,
+            Enable: true,
+          },
         }),
         prisma.tbl_LocationMaster.findMany({
           where: { Enable: true },
@@ -103,9 +146,9 @@ export async function GET() {
         FROM tbl_itemdetail
         GROUP BY LocCode, ItemCode
       `;
-    } catch {
-      // If the stock table is unavailable, show zero stock rather than
-      // blocking the Item Master screen.
+    } catch (stockErr) {
+      // If the stock table query fails, fall back to StockBalance below.
+      console.error("GET /api/services: tbl_itemdetail query failed:", stockErr);
       itemDetails = [];
     }
 
@@ -152,12 +195,16 @@ export async function GET() {
           (candidate) => candidate.LocCode.trim() === locCode,
         );
         const stockKey = `${locCode}|${itemCode}`;
+        // Batch rows win where they exist; otherwise the item-main StockBalance
+        // (the ledger's authority) is shown, so old data without batch rows
+        // does not display as zero.
+        const batchSum = detailMap.get(stockKey);
 
         return {
           locCode,
           locName: location.LocDes,
           enable: row?.Enable ?? false,
-          locStockBalance: detailMap.get(stockKey) ?? 0,
+          locStockBalance: batchSum ?? num(row?.StockBalance),
           salesMargin: num(row?.SalesMargin ?? item.SalesMargin),
           retailPrice: num(row?.Retailprice ?? item.Retailprice),
           wsPrice: num(row?.WSPrice ?? item.WSPrice),
@@ -199,7 +246,9 @@ export async function GET() {
         packSize: num(item.PackSize),
         packPrice: num(item.PackPrice),
         semiFinishedProd: item.SemiFinishedProd,
-        itemPic: bufferToDataUrl(item.ItemPic),
+        // Pictures are not sent in the list — the picture of the selected
+        // item loads on demand through /image so the list stays light.
+        itemPic: null,
         createDate: item.CreateDate.toISOString().slice(0, 10),
         createBy: item.CreateBy.trim(),
         updDate: item.UpdDate.toISOString().slice(0, 10),
@@ -255,7 +304,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = (await readJsonWithLimit(req, 4 * 1024 * 1024)) as Record<string, any>;
 
     if (
       !body.locCode?.trim() ||
@@ -342,6 +391,12 @@ export async function POST(req: NextRequest) {
       body.itemPic.startsWith("data:image")
     ) {
       picBuffer = Buffer.from(body.itemPic.split(",")[1], "base64");
+      if (picBuffer.byteLength > 1_500_000) {
+        return NextResponse.json(
+          { success: false, message: "Item picture is too large (max 1.5 MB). Choose a smaller image." },
+          { status: 413 },
+        );
+      }
     }
 
     const created = await prisma.$transaction(
@@ -426,6 +481,9 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     );
   } catch (err: any) {
+    if (isPayloadTooLarge(err)) {
+      return NextResponse.json({ success: false, message: err.message }, { status: 413 });
+    }
     console.error("POST /api/services error:", err);
 
     if (err?.code === "P2002") {

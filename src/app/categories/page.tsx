@@ -4,9 +4,6 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 
-/* ─────────────────────────────────────────
-   TYPES
-───────────────────────────────────────── */
 interface Category {
   catCode: string;
   catDes:  string;
@@ -19,9 +16,6 @@ function emptyCategory(): Category {
   return { catCode: '', catDes: '', enable: true };
 }
 
-/* ─────────────────────────────────────────
-   CSS
-───────────────────────────────────────── */
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -163,15 +157,21 @@ const PAGE_CSS = `
     border-radius:12px; padding:16px 20px;
   }
 
+  /* The Print button prints ONLY this hidden report, never the app shell */
+  #cat-print-area { display:none; }
+  @media print {
+    html, body { overflow:visible !important; height:auto !important; }
+    body * { visibility:hidden !important; }
+    #cat-print-area, #cat-print-area * { visibility:visible !important; }
+    #cat-print-area { display:block !important; position:absolute; inset:0 0 auto 0; }
+  }
+
   @media(max-width:767px) {
     .left-panel { display:none !important; }
     .main-body  { padding-bottom:72px !important; }
   }
 `;
 
-/* ─────────────────────────────────────────
-   ICONS — proper React components
-───────────────────────────────────────── */
 function IBell({ s = 21 }: { s?: number }): React.ReactElement {
   return (
     <svg width={s} height={s} viewBox="0 0 24 24" fill="none"
@@ -277,9 +277,6 @@ function IGrid({ s = 18 }: { s?: number }): React.ReactElement {
   );
 }
 
-/* ─────────────────────────────────────────
-   TOAST HOOK
-───────────────────────────────────────── */
 function useToast() {
   const [toast, setToast] = useState<{ msg: string; err: boolean } | null>(null);
   const ref = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -291,19 +288,13 @@ function useToast() {
   return { toast, show };
 }
 
-/* ─────────────────────────────────────────
-   TAB CONFIG
-───────────────────────────────────────── */
 const TABS: { level: Level; label: string; title: string }[] = [
-  { level: '1', label: 'Category 1',     title: 'CATEGORY MASTER DETAIL'        },
+  { level: '1', label: 'Main Category',  title: 'CATEGORY MASTER DETAIL'        },
   { level: '2', label: 'Sub Category 1', title: 'SUB CATEGORY DETAIL — Level 1' },
   { level: '3', label: 'Sub Category 2', title: 'SUB CATEGORY DETAIL — Level 2' },
   { level: '4', label: 'Sub Category 3', title: 'SUB CATEGORY DETAIL — Level 3' },
 ];
 
-/* ─────────────────────────────────────────
-   MAIN PAGE
-───────────────────────────────────────── */
 export default function CategoriesPage() {
   const router = useRouter();
   const [navKey, setNavKey] = useState('categories');
@@ -319,8 +310,7 @@ export default function CategoriesPage() {
 
   const { toast, show: showToast } = useToast();
 
-  /* ── Load categories for a given level ── */
-  const loadLevel = useCallback(async (lv: Level, selectCode?: string) => {
+    const loadLevel = useCallback(async (lv: Level, selectCode?: string) => {
     setLoading(true);
     try {
       const res  = await fetch(`/api/categories?level=${lv}`);
@@ -470,6 +460,27 @@ export default function CategoriesPage() {
     setNavKey(key);
     router.push(path);
   }
+
+  /* Enter walks through the form fields and finishes on the Save button. */
+  function enterNext(e: React.KeyboardEvent<HTMLElement>) {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    e.preventDefault();
+    const order = ['cat-code', 'cat-des', 'cat-enable', 'btn-save-cat'];
+    const cur = (e.currentTarget as HTMLElement).id;
+    const idx = order.indexOf(cur);
+    for (let i = idx + 1; i < order.length; i++) {
+      const el = document.getElementById(order[i]);
+      if (el) { el.focus(); return; }
+    }
+  }
+
+  function handlePrint() {
+    if (isNew || !current.catCode) {
+      showToast('Select a category to print', true);
+      return;
+    }
+    window.print();
+  }
   function handleLogout() {
     if (!confirmDiscard('Leave without saving?')) return;
     router.push('/admin/login');
@@ -482,10 +493,7 @@ export default function CategoriesPage() {
   const totalActive  = currentList.filter(c =>  c.enable).length;
   const totalInactive= currentList.filter(c => !c.enable).length;
 
-  /* ════════════════════════════════════════
-     RENDER
-  ════════════════════════════════════════ */
-  return (
+    return (
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
@@ -497,12 +505,12 @@ export default function CategoriesPage() {
 
       <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: PAGE }}>
 
-        {/* ── SIDEBAR ── */}
+        {}
         <AdminSidebar active={navKey} onNav={handleNavigate} onLogout={handleLogout} />
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
 
-          {/* ── HEADER ── */}
+          {}
           <header style={{
             background: HDR, height: 56, flexShrink: 0,
             display: 'flex', alignItems: 'center', padding: '0 18px', gap: 12,
@@ -536,10 +544,10 @@ export default function CategoriesPage() {
             </div>
           </header>
 
-          {/* ── BODY ── */}
+          {}
           <div className="main-body" style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', gap: 13 }}>
 
-            {/* ══ LEFT PANEL ══ */}
+            {}
             <div
               className="left-panel"
               style={{ width: 248, flexShrink: 0, background: '#deeaea', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 1px 5px rgba(0,0,0,0.08)' }}
@@ -599,7 +607,7 @@ export default function CategoriesPage() {
               </div>
             </div>
 
-            {/* ══ RIGHT PANEL ══ */}
+            {}
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
               {/* Form header bar */}
@@ -651,7 +659,7 @@ export default function CategoriesPage() {
                 {!loading && (
                   <div className="fade-up" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-                    {/* ── Category Details Section ── */}
+                    {}
                     <div className="sect-box">
                       <div className="sect-hdr">
                         <span style={{ color: 'rgba(255,255,255,0.7)' }}>
@@ -672,6 +680,7 @@ export default function CategoriesPage() {
                             value={current.catCode}
                             readOnly={!isNew}
                             onChange={e => upd('catCode', e.target.value.toUpperCase())}
+                            onKeyDown={enterNext}
                             placeholder={isNew ? 'e.g. CAT101' : ''}
                             maxLength={10}
                             style={{ maxWidth: 240 }}
@@ -686,6 +695,7 @@ export default function CategoriesPage() {
                             className="frm-input"
                             value={current.catDes}
                             onChange={e => upd('catDes', e.target.value)}
+                            onKeyDown={enterNext}
                             placeholder="e.g. Hair Care"
                             maxLength={50}
                           />
@@ -694,14 +704,18 @@ export default function CategoriesPage() {
                         {/* Enable Checkbox */}
                         <div
                           className="chk-row"
+                          id="cat-enable"
                           onClick={() => upd('enable', !current.enable)}
                           role="checkbox"
                           aria-checked={current.enable}
                           tabIndex={0}
                           onKeyDown={e => {
-                            if (e.key === 'Enter' || e.key === ' ') {
+                            if (e.key === ' ') {
                               e.preventDefault();
                               upd('enable', !current.enable);
+                            } else if (e.key === 'Enter') {
+                              e.preventDefault();
+                              document.getElementById('btn-save-cat')?.focus();
                             }
                           }}
                         >
@@ -714,7 +728,7 @@ export default function CategoriesPage() {
                       </div>
                     </div>
 
-                    {/* ── Summary Card ── */}
+                    {}
                     <div className="summary-card">
                       <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 12 }}>
                         Level {level} Summary
@@ -737,7 +751,7 @@ export default function CategoriesPage() {
                       </div>
                     </div>
 
-                    {/* ── Quick view chips ── */}
+                    {}
                     {currentList.length > 0 && (
                       <div className="sect-box">
                         <div className="sect-hdr">
@@ -773,7 +787,7 @@ export default function CategoriesPage() {
                 )}
               </div>
 
-              {/* ── ACTION BAR ── */}
+              {}
               <div style={{
                 background: '#dce8e8',
                 borderTop: '1.5px solid rgba(30,58,64,0.12)',
@@ -783,7 +797,7 @@ export default function CategoriesPage() {
                 <button className="btn-clear" onClick={handleClear} disabled={busy}>
                   <IRefresh s={14} /> Clear
                 </button>
-                <button className="btn-print" onClick={() => window.print()} disabled={busy}>
+                <button className="btn-print" onClick={handlePrint} disabled={busy}>
                   <IPrint s={14} /> Print
                 </button>
                 <div style={{ flex: 1 }} />
@@ -794,7 +808,7 @@ export default function CategoriesPage() {
                       : <><ITrash s={14} /> Delete</>}
                   </button>
                 )}
-                <button className="btn-save" onClick={handleSave} disabled={busy}>
+                <button className="btn-save" id="btn-save-cat" onClick={handleSave} disabled={busy}>
                   {saving
                     ? <><span className="spinner" /> Saving…</>
                     : <><ISave s={14} /> Save</>}
@@ -804,6 +818,43 @@ export default function CategoriesPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      {}
+      <div id="cat-print-area" aria-hidden="true">
+        {(() => {
+          const now = new Date();
+          const levelName = activeTabCfg.label;
+          const R = ({ k, children }: { k: string; children: React.ReactNode }) => (
+            <tr>
+              <td style={{ border: '1px solid #94a3b8', padding: '6px 10px', fontSize: 12, fontWeight: 700, background: '#eef4f5', width: 220 }}>{k}</td>
+              <td style={{ border: '1px solid #94a3b8', padding: '6px 10px', fontSize: 12 }}>{children}</td>
+            </tr>
+          );
+          return (
+            <div style={{ padding: '18mm 14mm', background: '#fff', color: '#111827', fontFamily: "'Inter',sans-serif" }}>
+              <p style={{ textAlign: 'center', fontSize: 16, fontWeight: 800, letterSpacing: '0.12em' }}>SAYO</p>
+              <p style={{ textAlign: 'center', fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', marginTop: 3 }}>
+                CATEGORY DETAIL REPORT — {levelName.toUpperCase()}
+              </p>
+              <p style={{ textAlign: 'center', fontSize: 10.5, color: '#6b7280', marginTop: 3 }}>
+                Printed on {now.toLocaleDateString('en-GB')} at {now.toLocaleTimeString('en-GB')}
+              </p>
+              <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 620, margin: '18px auto 0' }}>
+                <tbody>
+                  <R k="Category Level">{levelName}</R>
+                  <R k="Category Code">{current.catCode || '—'}</R>
+                  <R k="Category Description">{current.catDes || '—'}</R>
+                  <R k="Status">{current.enable ? 'Active / Enabled' : 'Disabled'}</R>
+                  <R k="Total in this Level">{`${currentList.length} (Active ${totalActive} / Inactive ${totalInactive})`}</R>
+                </tbody>
+              </table>
+              <p style={{ fontSize: 11, color: '#374151', textAlign: 'left', maxWidth: 620, margin: '28px auto 0' }}>
+                Printed by: Admin&emsp;Signature: __________________
+              </p>
+            </div>
+          );
+        })()}
       </div>
     </>
   );

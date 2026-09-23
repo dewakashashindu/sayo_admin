@@ -3,14 +3,16 @@
 // writes Tbl_TxnMovement. Multiple returns against same GRN are allowed — remaining is GRNQty-RETQTY.
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invActor, invFail, invId, InvError, keySql, keyVal, invChar } from '@/lib/inventoryServer';
 import { stockAsItIs } from '@/lib/stockAsItIs';
+import { reduceBatchesFIFO } from '@/lib/itemDetailBatches';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 type Ctx = { params: Promise<{ srnNo: string }> };
 
@@ -28,10 +30,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       if (head[0].Confirmed === 'Y') throw new InvError(`SRN ${srnNo} is already confirmed.`, 409);
       const lines = await tx.$queryRaw<{ ItemCode: string; SRNQty: number; ItemValue: number; CostPrice: number; GRNQty: number; UnitID: string }[]>`SELECT RTRIM(ItemCode) AS ItemCode, SRNQty, ItemValue, CostPrice, GRNQty, RTRIM(UnitID) AS UnitID FROM tbl_srndetails WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('SRNNo')}=${keyVal(srnNo)}`;
       if (!lines.length) throw new InvError(`SRN ${srnNo} has no lines.`, 400);
-      // need GRN No — stored per detail? Use first line's GRN? Header doesn't have GRN column in legacy, but we can infer from GRN that matches supplier? Instead, look up which GRN this SRN references: we stored GRNQty but not GRNNo. Need to find GRNNo via tbl_grndetails join? The legacy Tbl_SRNDetails has DirectSRNConfNo etc but not GRNNo explicitly. We'll infer by finding the GRN that contains all items with enough remaining. Simpler: look for any confirmed GRN at loc with same supplier that contains these items.
-      // For robust multi-return, we expect client to have sent grnNo in header? Our header SupID is grn's supID, but not grnNo itself. To know which GRN to credit, we search GRNs that have the item and were the source of the SRN's GRNQty.
-      // We will match by finding a GRN where GRNQty == lines[0].GRNQty and ItemCode matches. For each line individually:
-      const now = new Date();
+                        const now = new Date();
       const sysSer = Number(srnNo.replace(/\D/g, '')) || 0;
       for (const l of lines) {
         const code = String(l.ItemCode).trim();
@@ -67,7 +66,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           const oldBal = Number(item[0].StockBalance || 0);
           const newBal = oldBal - Number(l.SRNQty);
           await stockAsItIs(tx, { locCode, rowItemCode: code, txnNo: srnNo, txnType: 'SR', txnQty: newBal, sysSerialId: sysSer, userId: actor.userId, remarks: `Supplier Return ${srnNo} vs ${grnNo}`.slice(0,200), addDeduct: '-', txnDate: now, txnDateTimeManual: now });
-          try { await tx.$executeRaw`UPDATE tbl_itemdetail SET ItemQty = ItemQty - ${Number(l.SRNQty)} WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('ItemCode')}=${keyVal(code)}`; } catch {}
+          try { await reduceBatchesFIFO(tx, locCode, code, Number(l.SRNQty)); } catch {}
           try { await tx.$executeRaw`INSERT INTO tbl_stocktxn (LocCode, ItemCode, TxnType, RefNo, TxnDate, QtyIn, QtyOut, Balance, CostPrice, UserID, Remarks) VALUES (${invChar(locCode, 10)}, ${invChar(code, 15)}, ${'SR'}, ${srnNo.slice(0, 20)}, ${now}, 0, ${Number(l.SRNQty)}, ${newBal}, ${Number(l.CostPrice) || 0}, ${invChar(actor.userId, 10)}, ${`Return ${srnNo}`.slice(0, 200)})`; } catch {}
         }
       }

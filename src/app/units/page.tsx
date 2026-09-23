@@ -5,9 +5,6 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 
-/* ─────────────────────────────────────────
-   TYPES — matches DB tables exactly
-───────────────────────────────────────── */
 interface MasterUnit {
   MasterUnitID: string;
   UnitDes: string;
@@ -29,9 +26,6 @@ interface UnitConversion {
 
 type Section = 'master' | 'sub' | 'conversion';
 
-/* ─────────────────────────────────────────
-   API HELPERS — single consolidated route
-───────────────────────────────────────── */
 const API_BASE   = '/api/units';
 const API_MASTER = `${API_BASE}?type=master`;
 const API_SUB    = `${API_BASE}?type=sub`;
@@ -53,9 +47,6 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<ApiRespo
   }
 }
 
-/* ─────────────────────────────────────────
-   PAGE CSS
-───────────────────────────────────────── */
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -240,9 +231,6 @@ const PAGE_CSS = `
   }
 `;
 
-/* ─────────────────────────────────────────
-   ICONS
-───────────────────────────────────────── */
 function IBell({ s=21 }: { s?: number })    { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>; }
 function ISearch({ s=15 }: { s?: number }) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>; }
 function IChevD({ s=13 }: { s?: number })  { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>; }
@@ -257,9 +245,6 @@ function ILayers({ s=13 }: { s?: number }) { return <svg width={s} height={s} vi
 function IArrows({ s=13 }: { s?: number }) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>; }
 function IAlertCircle({ s=32 }: { s?: number }) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>; }
 
-/* ─────────────────────────────────────────
-   TOAST HOOK
-───────────────────────────────────────── */
 function useToast() {
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const show = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
@@ -269,9 +254,6 @@ function useToast() {
   return { toast, show };
 }
 
-/* ─────────────────────────────────────────
-   REUSABLE COMPONENTS
-───────────────────────────────────────── */
 function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <div className="chk-row" onClick={() => onChange(!checked)} role="checkbox" aria-checked={checked} tabIndex={0}
@@ -307,9 +289,6 @@ function EnableBadge({ v }: { v: boolean }) {
   return <span className={v ? 'badge-active' : 'badge-inactive'}>{v ? 'Active' : 'Inactive'}</span>;
 }
 
-/* ─────────────────────────────────────────
-   MAIN PAGE
-───────────────────────────────────────── */
 export default function UnitsPage() {
   const router  = useRouter();
   const [navKey,  setNavKey]  = useState('units');
@@ -319,8 +298,7 @@ export default function UnitsPage() {
 
   const MAX_DES = 50;
 
-  /* ══ MASTER UNIT state ══ */
-  const [masters,    setMasters]    = useState<MasterUnit[]>([]);
+    const [masters,    setMasters]    = useState<MasterUnit[]>([]);
   const [selMaster,  setSelMaster]  = useState<MasterUnit | null>(null);
   const [isNewM,     setIsNewM]     = useState(true);   // blank form until a row is picked
   const [loadingM,   setLoadingM]   = useState(true);
@@ -331,8 +309,7 @@ export default function UnitsPage() {
   const [fUnitDes,   setFUnitDes]   = useState('');
   const [fMEnable,   setFMEnable]   = useState(true);
 
-  /* ══ SUB UNIT state ══ */
-  const [subs,      setSubs]      = useState<SubUnit[]>([]);
+    const [subs,      setSubs]      = useState<SubUnit[]>([]);
   const [selSub,    setSelSub]    = useState<SubUnit | null>(null);
   const [isNewS,    setIsNewS]    = useState(true);    // blank form until a row is picked
   const [loadingS,  setLoadingS]  = useState(true);
@@ -343,8 +320,7 @@ export default function UnitsPage() {
   const [fSubDes,   setFSubDes]   = useState('');
   const [fSEnable,  setFSEnable]  = useState(true);
 
-  /* ══ CONVERSION state ══ */
-  const [convs,      setConvs]      = useState<UnitConversion[]>([]);
+    const [convs,      setConvs]      = useState<UnitConversion[]>([]);
   const [selConv,    setSelConv]    = useState<UnitConversion | null>(null);
   const [isNewC,     setIsNewC]     = useState(true);   // blank form until a row is picked
   const [loadingC,   setLoadingC]   = useState(true);
@@ -356,14 +332,10 @@ export default function UnitsPage() {
   const [fCUnits,    setFCUnits]    = useState(0);
   const [fCEnable,   setFCEnable]   = useState(true);
 
-  /* ── helpers ── */
-  const masterDes = (id: string) => masters.find((m) => m.MasterUnitID === id)?.UnitDes ?? id;
+    const masterDes = (id: string) => masters.find((m) => m.MasterUnitID === id)?.UnitDes ?? id;
   const subDes    = (id: string) => subs.find((s) => s.SubUnitID === id)?.SubUnitDes ?? id;
 
-  /* ════════════════════════════════════════
-     FETCH — real data on mount
-  ════════════════════════════════════════ */
-  const fetchMasters = useCallback(async () => {
+    const fetchMasters = useCallback(async () => {
     setLoadingM(true); setErrorM(null);
     const res = await apiFetch<MasterUnit[]>(API_MASTER);
     if (res.success && res.data) {
@@ -414,8 +386,7 @@ export default function UnitsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── filtered lists ── */
-  const filteredMasters = useMemo(() =>
+    const filteredMasters = useMemo(() =>
     masters.filter((m) =>
       m.UnitDes.toLowerCase().includes(search.toLowerCase()) ||
       m.MasterUnitID.toLowerCase().includes(search.toLowerCase())
@@ -435,10 +406,7 @@ export default function UnitsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [convs, search, masters, subs]);
 
-  /* ═══════════════════════════════════════
-     MASTER UNIT HANDLERS
-  ═══════════════════════════════════════ */
-  function loadMasterForm(m: MasterUnit) {
+    function loadMasterForm(m: MasterUnit) {
     setSelMaster(m); setIsNewM(false);
     setFMasterID(m.MasterUnitID);
     setFUnitDes(m.UnitDes);
@@ -450,15 +418,7 @@ export default function UnitsPage() {
     setFUnitDes(''); setFMEnable(true);
     setSelMaster(null); setIsNewM(true);
   }
-  /* ═══════════════════════════════════════
-     SAVE CLEARS THE FORM  (asked for in this round)
-     ----------------------------------------------
-     After a successful save the panel goes straight back to a BLANK “new”
-     form, so the next unit can be typed without hunting for a New button.
-     The saved row stays in the list on the left, and the toast says which
-     record was written.
-  ═══════════════════════════════════════ */
-
+  
   async function handleSaveMaster() {
     const trimmed = fUnitDes.trim();
     if (!trimmed) { showToast('Unit Description is required', 'error'); return; }
@@ -513,10 +473,7 @@ export default function UnitsPage() {
     else if (selMaster) { setFUnitDes(selMaster.UnitDes); setFMEnable(selMaster.Enable); }
   }
 
-  /* ═══════════════════════════════════════
-     SUB UNIT HANDLERS
-  ═══════════════════════════════════════ */
-  function loadSubForm(s: SubUnit) {
+    function loadSubForm(s: SubUnit) {
     setSelSub(s); setIsNewS(false);
     setFSubID(s.SubUnitID); setFSubDes(s.SubUnitDes); setFSEnable(s.Enable);
   }
@@ -579,10 +536,7 @@ export default function UnitsPage() {
     else if (selSub) { setFSubDes(selSub.SubUnitDes); setFSEnable(selSub.Enable); }
   }
 
-  /* ═══════════════════════════════════════
-     CONVERSION HANDLERS
-  ═══════════════════════════════════════ */
-  function loadConvForm(c: UnitConversion) {
+    function loadConvForm(c: UnitConversion) {
     setSelConv(c); setIsNewC(false);
     setFCMasterID(c.MasterUnitID); setFCSubID(c.SubUnitID);
     setFCUnits(c.NoOfUnits); setFCEnable(c.Enable);
@@ -668,8 +622,7 @@ export default function UnitsPage() {
     }
   }
 
-  /* ── Navigation ── */
-  function handleNavigate(key: string, path: string) { setNavKey(key); router.push(path); }
+    function handleNavigate(key: string, path: string) { setNavKey(key); router.push(path); }
   function handleLogout() { router.push('/admin/login'); }
 
   function switchSection(next: Section) {
@@ -679,8 +632,7 @@ export default function UnitsPage() {
 
   const HDR = '#dae6e6';
 
-  /* ── Shared ActionBar ── */
-  function ActionBar({
+    function ActionBar({
     onClear, onDelete, onSave, isNew, saving, deleting, canAct,
   }: {
     onClear: () => void; onDelete: () => void; onSave: () => void;
@@ -703,8 +655,7 @@ export default function UnitsPage() {
     );
   }
 
-  /* ── Loading/Error state for left list ── */
-  function ListState({ loading, error, onRetry, empty }: { loading: boolean; error: string | null; onRetry: () => void; empty: boolean }) {
+    function ListState({ loading, error, onRetry, empty }: { loading: boolean; error: string | null; onRetry: () => void; empty: boolean }) {
     if (loading) {
       return <div style={{ display:'flex', justifyContent:'center', paddingTop:40 }}><div className="spinner" /></div>;
     }
@@ -723,10 +674,7 @@ export default function UnitsPage() {
     return null;
   }
 
-  /* ════════════════════════════════════════
-     RENDER
-  ════════════════════════════════════════ */
-  return (
+    return (
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
@@ -777,9 +725,7 @@ export default function UnitsPage() {
           {/* BODY */}
           <div className="main-body" style={{ flex:1, overflow:'hidden', padding:'13px 15px', display:'flex', gap:13 }}>
 
-            {/* ══════════════════════════════════
-                MASTER UNIT
-            ══════════════════════════════════ */}
+            {}
             {section === 'master' && (
               <>
                 <div className="left-panel" style={{ width:250, flexShrink:0, background:'#deeaea', borderRadius:12, display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:'0 1px 5px rgba(0,0,0,0.08)' }}>
@@ -910,9 +856,7 @@ export default function UnitsPage() {
               </>
             )}
 
-            {/* ══════════════════════════════════
-                SUB UNIT
-            ══════════════════════════════════ */}
+            {}
             {section === 'sub' && (
               <>
                 <div className="left-panel" style={{ width:250, flexShrink:0, background:'#deeaea', borderRadius:12, display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:'0 1px 5px rgba(0,0,0,0.08)' }}>
@@ -1043,9 +987,7 @@ export default function UnitsPage() {
               </>
             )}
 
-            {/* ══════════════════════════════════
-                UNIT CONVERSION
-            ══════════════════════════════════ */}
+            {}
             {section === 'conversion' && (
               <>
                 <div className="left-panel" style={{ width:280, flexShrink:0, background:'#deeaea', borderRadius:12, display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:'0 1px 5px rgba(0,0,0,0.08)' }}>

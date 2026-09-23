@@ -1,15 +1,4 @@
 'use client';
-// src/app/inventory/damage/page.tsx
-// ─────────────────────────────────────────────────────────────────────────────
-// DAMAGE NOTE — legacy screen (SCR_BILLING_18SEP.pdf pages 12-13)
-// Same shell / CSS as PO & GRN so the 3 new screens feel galapenna.
-//
-//   Details  Location · Date · Damage Note No (D000000 auto) · Item grid
-//            Item Code/Name (search) · Unit · Cost Price · Damage Qty (pink)
-//            · Item Value (cost*damage) · Remarks · Net Value
-//   Find     LocCode · LocDes · DamNo · TxnDate · UserName · NetTotal
-//            · Confirmed Dmg / Pending Dmg
-// ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
@@ -123,56 +112,96 @@ export default function DamageNotePage(){
       const res=await fetch(`/api/inventory/damage?status=${findStatus}&q=${encodeURIComponent(findQ)}`,{cache:'no-store'});
       const j=await res.json() as any;
       if(res.ok && j?.success){ setList(j.data??[]); return; }
-      throw new Error('no api');
-    }catch{
-      setList([
-        {locCode:'01',locDes:'MILLA MIRISSA',damNo:'D000000',txnDate:'2026-09-09 00:00:00',userName:'aura',netTotal:255,confirmed:true},
-        {locCode:'01',locDes:'MILLA MIRISSA',damNo:'D000002',txnDate:'2026-08-03 00:00:00',userName:'aura',netTotal:9999999,confirmed:false},
-      ].filter(r=> findStatus==='all'?true: findStatus==='confirmed'?r.confirmed:!r.confirmed)
-       .filter(r=> !findQ || r.damNo.includes(findQ) || r.locDes.toLowerCase().includes(findQ.toLowerCase())));
+      throw new Error(j?.message || 'Could not load damage notes');
+    }catch(e:any){
+      setList([]);
+      showToast(e?.message||'Could not load damage notes',true);
     }finally{setListBusy(false);}
-  },[findQ,findStatus]);
+  },[findQ,findStatus,showToast]);
   useEffect(()=>{ if(tab==='find') void loadList();},[tab,loadList]);
 
   async function openDmg(row:DmgListRow){
-    setLocCode(row.locCode); setDamNo(row.damNo); setDamDate(dayOf(row.txnDate)); setConfirmed(row.confirmed);
-    // demo line for D000000
-    if(row.damNo==='D000000'){
-      setLines([{key:`D${++lineSeq}`,itemCode:'038',itemName:'SPINACH',unitID:'KILOGRAM',costPrice:'510',damageQty:'0.5',itemValue:255}]);
-    } else {
-      setLines([{key:`D${++lineSeq}`,itemCode:'002',itemName:'RED CABBAGE',unitID:'KILOGRAM',costPrice:'246.67',damageQty:'1',itemValue:246.67}]);
-    }
-    setDirty(false); setTab('details'); showToast(`Damage ${row.damNo} loaded`);
+    try{
+      const res=await fetch(`/api/inventory/damage/${encodeURIComponent(row.damNo)}?locCode=${encodeURIComponent(row.locCode)}`,{cache:'no-store'});
+      const j=await res.json() as any;
+      if(!res.ok||!j?.success) throw new Error(j?.message||'Could not open damage note');
+      const d=j.data;
+      setLocCode(row.locCode); setDamNo(row.damNo); setDamDate(d.txnDate||dayOf(row.txnDate)); setConfirmed(d.confirmed===true);
+      setRemarks(d.remarks||'');
+      setLines(
+        (Array.isArray(d.lines)&&d.lines.length? d.lines : [{itemCode:'',itemName:'',unitID:'',costPrice:0,damageQty:0,itemValue:0}])
+          .map((l:any)=>({
+            key:`D${++lineSeq}`,
+            itemCode:String(l.itemCode||''),
+            itemName:String(l.itemName||''),
+            unitID:String(l.unitID||''),
+            costPrice:String(l.costPrice||0),
+            damageQty:String(l.damageQty||0),
+            itemValue:(Number(l.costPrice)||0)*(Number(l.damageQty)||0),
+          })),
+      );
+      setDirty(false); setTab('details'); showToast(`Damage ${row.damNo} loaded`);
+    }catch(e:any){ showToast(e?.message||'Could not open damage note',true); }
+  }
+
+  function bodyLinesOf(){
+    return lines.filter(l=> l.itemCode || l.itemName.trim()).map(l=>({
+      itemCode:l.itemCode, unitID:l.unitID, costPrice:Number(l.costPrice)||0, damageQty:Number(l.damageQty)||0,
+    }));
   }
 
   async function handleSave(): Promise<boolean>{
     if(!locCode){ showToast('Choose a location first',true); return false; }
-    const bodyLines=lines.filter(l=> l.itemCode || l.itemName.trim());
+    if(confirmed){ showToast('Confirmed notes cannot be edited',true); return false; }
+    const bodyLines=bodyLinesOf();
     if(bodyLines.length===0){ showToast('Add at least one item',true); return false; }
-    if(bodyLines.some(l=> !(Number(l.damageQty)>0))){ showToast('Enter damage quantity for each line',true); return false; }
-    setSaving(true); await new Promise(r=>setTimeout(r,600));
-    if(!damNo) setDamNo(`D${String(Math.floor(Math.random()*900000)+100000).padStart(6,'0')}`);
-    setSaving(false); setDirty(false); showToast('Saved ✓ — Damage note stored (demo)');
-    return true;
+    if(bodyLines.some(l=> !(l.damageQty>0))){ showToast('Enter damage quantity for each line',true); return false; }
+    setSaving(true);
+    try{
+      const payload={ locCode, remarks, txnDate:damDate, lines:bodyLines };
+      const res= damNo
+        ? await fetch(`/api/inventory/damage/${encodeURIComponent(damNo)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+        : await fetch('/api/inventory/damage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const j=await res.json() as any;
+      if(!res.ok||!j?.success) throw new Error(j?.message||'Save failed');
+      if(!damNo && j?.data?.damNo) setDamNo(String(j.data.damNo));
+      setSaving(false); setDirty(false); showToast(j.message||'Saved ✓');
+      return true;
+    }catch(e:any){ setSaving(false); showToast(e?.message||'Save failed',true); return false; }
   }
   async function handleConfirm(){
     if(!damNo){ const ok=await handleSave(); if(!ok) return; }
     if(confirmed){ showToast('Already confirmed'); return; }
-    if(!confirm(`Confirm Damage Note ${damNo||'(new)'}? Stock will be reduced. Cannot be edited after.`)) return;
-    setConfirming(true); await new Promise(r=>setTimeout(r,700)); setConfirming(false); setConfirmed(true); showToast('Confirmed ✓ — stock moved');
+    const no= damNo || '';
+    if(!no){ showToast('Save the damage note first',true); return; }
+    if(!confirm(`Confirm Damage Note ${no}? Stock will be reduced. Cannot be edited after.`)) return;
+    setConfirming(true);
+    try{
+      const res=await fetch(`/api/inventory/damage/${encodeURIComponent(no)}/confirm?locCode=${encodeURIComponent(locCode)}`,{method:'POST'});
+      const j=await res.json() as any;
+      if(!res.ok||!j?.success) throw new Error(j?.message||'Confirm failed');
+      setConfirmed(true); setDirty(false); showToast(j.message||'Confirmed ✓ — stock reduced');
+    }catch(e:any){ showToast(e?.message||'Confirm failed',true); }
+    finally{ setConfirming(false); }
   }
   async function handleDelete(){
     if(!damNo){ showToast('Nothing to delete'); return; }
     if(confirmed){ showToast('Confirmed notes cannot be deleted',true); return; }
     if(!confirm(`Delete Damage Note ${damNo}?`)) return;
-    setDeleting(true); await new Promise(r=>setTimeout(r,500)); setDeleting(false); handleClear(); showToast('Deleted');
+    setDeleting(true);
+    try{
+      const res=await fetch(`/api/inventory/damage/${encodeURIComponent(damNo)}?locCode=${encodeURIComponent(locCode)}`,{method:'DELETE'});
+      const j=await res.json() as any;
+      if(!res.ok||!j?.success) throw new Error(j?.message||'Delete failed');
+      handleClear(); showToast(j.message||'Deleted');
+    }catch(e:any){ showToast(e?.message||'Delete failed',true); }
+    finally{ setDeleting(false); }
   }
   function handleClear(){ setLines([newLine()]); setDamNo(''); setConfirmed(false); setDirty(false); setRemarks(''); }
   function handleCancel(){ if(dirty && !confirm('Discard changes?')) return; handleClear(); showToast('Cleared'); }
   function handleNav(k:string,p:string){ if(dirty && !confirm('Leave without saving?')) return; router.push(p); }
 
-  /* ── printing — internal note: supplier copy na (standard only), PO/GRN wage ── */
-  const printableLines = lines.filter(l=> (l.itemCode||'').trim() || (l.itemName||'').trim());
+    const printableLines = lines.filter(l=> (l.itemCode||'').trim() || (l.itemName||'').trim());
   function handlePrint(){
     if(printableLines.length===0){ showToast('Add at least one item before printing',true); return; }
     if(!damNo.trim()){ showToast('Save first, then print',true); return; }
@@ -181,8 +210,7 @@ export default function DamageNotePage(){
   function startPrint(copy:PoPrintCopy){ setPrintAsk(false); setPrintJob({copy, at:new Date()}); }
   React.useEffect(()=>{ if(!printJob) return; const id=window.setTimeout(()=>window.print(),60); return()=>window.clearTimeout(id); },[printJob as any]);
 
-  /* ── email (PDF like PO) ──────────────────────────── */
-  function openMailDialog(){
+    function openMailDialog(){
     if(printableLines.length===0){ showToast('Add at least one item before emailing',true); return; }
     if(!damNo.trim()){ showToast('Save the Damage Note first, then it can be emailed',true); return; }
     setMailTo(prev=> prev||'');
@@ -450,8 +478,7 @@ const PAGE_CSS = `
   .pp-table th{background:#dbe9ff;padding:5px 6px;text-align:left;font-size:10.5px}
   .pp-table td{padding:4px 6px;border-bottom:1px solid #eee}
   
-  /* ── "which copy?" + email dialogs (like PO) ─────────────────────────── */
-  .ask-back{position:fixed;inset:0;background:rgba(16,32,36,0.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px}
+    .ask-back{position:fixed;inset:0;background:rgba(16,32,36,0.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px}
   .ask-card{background:#fff;color:#1f2937;border-radius:14px;padding:20px 22px;width:min(680px,94vw);box-shadow:0 18px 50px rgba(0,0,0,0.32);display:flex;flex-direction:column;gap:12px}
   .ask-card h2{font-size:15px;font-weight:800;color:#16333a;letter-spacing:0.02em}
   .ask-card p{font-size:12.5px;color:#42585e}

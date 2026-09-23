@@ -1,21 +1,13 @@
-// src/app/api/payment-modes/route.ts
-// Payment modes from the salon's MSSQL legacy schema:
-//   CREATE VIEW dbo.Vw_PaymentModes AS
-//   SELECT PayCode,PayDes,ZeroVal,Cash,CreditCard,CREDIT,RmksNeed,Enable,Other,AdvPay,COMPLEMENTRY,DoNotShowInSales,OneOff,ADDDIDUCTTOSALES,Voucher,PayGroupID,PayGroup
-//   FROM Tbl_PaymentModes LEFT JOIN Tbl_PaymentGroup ON Tbl_PaymentModes.PayGroupID = Tbl_PaymentGroup.PaygroupID
-//
-// This API exposes that view (portable to MySQL) so the billing screen's
-// quick-buttons and the payment-method dropdown are never hard-coded.
-// Falls back to Tbl_PaymentModes when the view does not exist (older DB copies).
 import { NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type PayModeRow = {

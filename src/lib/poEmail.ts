@@ -1,36 +1,5 @@
-// src/lib/poEmail.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// EMAILING A PURCHASE ORDER — the rules, kept out of the route and the screen so
-// they can be tested on their own (section 12 of scripts/billing-tests.js).
-//
-// The printed sheet becomes a PDF and goes to the supplier the order is
-// addressed to. Everything that is a *decision* lives here:
-//
-//   supplierEmails()      which address(es) are really on the supplier row
-//                         (tbl_suppliermaster.Emails may hold one address, or
-//                         several separated by ; or , — and may hold junk)
-//   poPdfFileName()       the name of the attachment
-//   poEmailSubject()      the subject line
-//   poEmailBody()         the covering note
-//   smtpMissingEnv()      which SMTP_* settings are not filled in yet
-//   smtpSetupMessage()    what to tell the operator when they are not
-//
-// SMTP credentials are NOT here: they are read from the environment
-// (SMTP_HOST / SMTP_PORT / SMTP_SECURE / SMTP_USER / SMTP_PASS / SMTP_FROM), the
-// same variables the rest of this project already mails with.
-// ─────────────────────────────────────────────────────────────────────────────
 import type { PoPrintCopy } from "./poPrint";
 
-/* ── the supplier's address ──────────────────────────────────────────────── */
-
-/**
- * The e-mail addresses really on a supplier row.
- *
- * `Emails` is a free-text column from the old desktop system: it can hold one
- * address, several separated by `;` or `,` (or a space), and often holds a
- * telephone number or nothing at all. Anything that is not shaped like an
- * address is dropped instead of being handed to the mail server.
- */
 export function supplierEmails(value: unknown): string[] {
   const raw = String(value ?? "");
   return Array.from(
@@ -108,8 +77,6 @@ export function poEmailBody(ctx: PoEmailContext): string {
   lines.push(company || "Thank you,");
   return lines.join("\n");
 }
-
-/* ── the mail server ─────────────────────────────────────────────────────── */
 
 /** The environment variables this feature needs, in the order they matter. */
 export const SMTP_ENV_KEYS = [

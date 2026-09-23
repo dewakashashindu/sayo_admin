@@ -1,14 +1,6 @@
-// src/app/api/inventory/transfer/return/[trtnNo]/route.ts
-// ─────────────────────────────────────────────────────────────────────────────
-// GET    /api/inventory/transfer/return/:trtnNo?fromLoc=&toLoc=  → header + lines
-// PUT    /api/inventory/transfer/return/:trtnNo?fromLoc=&toLoc=  → replace a PENDING return
-// DELETE /api/inventory/transfer/return/:trtnNo?fromLoc=&toLoc=  → delete a PENDING return
-//
-// Same key and the same pending/confirmed rules as the transfer note
-// (mirrors the purchase-order route).
-// ─────────────────────────────────────────────────────────────────────────────
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import {
   findLocation,
@@ -30,13 +22,12 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-const prisma = globalForPrisma.prisma ?? new PrismaClient();
+const prisma = globalForPrisma.prisma ?? newRobustPrisma();
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 
 type Ctx = { params: Promise<{ trtnNo: string }> };
 const trim = (v: unknown) => String(v ?? "").trim();
 
-/* ── GET — one return with its lines ─────────────────────────────────────── */
 export async function GET(req: NextRequest, ctx: Ctx) {
   try {
     const { trtnNo: raw } = await ctx.params;
@@ -127,7 +118,6 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   }
 }
 
-/* ── PUT — replace a PENDING return ──────────────────────────────────────── */
 export async function PUT(req: NextRequest, ctx: Ctx) {
   const tag = "PUT /api/inventory/transfer/return/[trtnNo]";
   try {
@@ -211,7 +201,6 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   }
 }
 
-/* ── DELETE — only while PENDING ─────────────────────────────────────────── */
 export async function DELETE(req: NextRequest, ctx: Ctx) {
   const tag = "DELETE /api/inventory/transfer/return/[trtnNo]";
   try {
