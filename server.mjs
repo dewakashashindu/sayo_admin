@@ -1,5 +1,38 @@
 // server.mjs
-
+// ─────────────────────────────────────────────────────────────────────────────
+// The production server (this is what `npm start` runs now).
+//
+// WHY THIS FILE EXISTS
+//   On a plain `next start`, the only address the application can see is the
+//   `x-forwarded-for` HEADER — and a header is whatever the caller typed. A
+//   script can send a new value on every try, which makes “8 attempts per IP”
+//   meaningless.
+//   The address on the TCP socket cannot be faked. This server reads it and
+//   passes it to the app in a header of its own (`x-sayo-ip`), after DELETING
+//   any copy the caller sent. Every rate limit in the application is built on
+//   that value (see src/lib/clientIp.ts).
+//
+// BEHIND A REVERSE PROXY (nginx / IIS / Cloudflare)
+//   * if the proxy is on THIS machine (the IIS / HttpPlatformHandler setup of
+//     the hosted Windows account, or nginx on localhost) nothing has to be set:
+//     the application sees a loopback address, knows the local web server is the
+//     one talking, and reads the real visitor from the end of
+//     `x-forwarded-for` — the entry that web server appended itself.
+//   * if the proxy is somewhere else, set
+//       TRUST_PROXY=1
+//     (one proxy) in the .env / environment.
+//   * if your proxy is set up to pass `x-forwarded-for` through WITHOUT
+//     appending the caller, set
+//       SAYO_IP_SOCKET_ONLY=1
+//     so only the address on the socket is ever counted.
+//   Either way a copy of the header the CALLER sent never wins: this server
+//   deletes the headers below before the application gets to look at them.
+//
+// PLAIN LAN USE (no proxy) — nothing to set. The socket address is the client.
+//
+// Nothing else changes: this server hands every request straight to Next.js.
+// `npm run dev` still uses `next dev` as before.
+// ─────────────────────────────────────────────────────────────────────────────
 import { createServer } from "node:http";
 import { parse } from "node:url";
 import crypto from "node:crypto";

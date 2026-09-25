@@ -161,7 +161,7 @@ export default function PurchaseOrderPage() {
         if (json.company?.name) setCompany(json.company);
         setLookupErrors(json.errors ?? {});
         setLookupsReady(true);
-        setLookupNote(`${locs.length} location(s) · ${sups.length} supplier(s) loaded from the database`);
+        setLookupNote(`${locs.length} location(s) · ${sups.length} supplier(s) loaded`);
         setLocCode((prev) => prev || locs[0]?.code || '');
         setSupID((prev) => prev || sups[0]?.supID || '');
       } catch (err) {

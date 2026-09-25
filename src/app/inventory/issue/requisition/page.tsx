@@ -15,32 +15,27 @@ import {
 } from '@/lib/poPrint';
 import { TRANSFER_PRINT_COPY_CHOICES } from '@/lib/transferPrint';
 
-interface LookupLocation { code: string; des: string; address: string; enable: boolean }
+interface LookupLocation { code: string; des: string; address: string; enable: boolean; mainLoc?: boolean; subLoc?: boolean; mainLocCode?: string }
 interface LookupUnit { id: string; des: string; enable: boolean }
 interface LookupCompany { name: string; address: string; phone: string }
 
-interface TrLine {
+interface IrLine {
   key: string;
   itemCode: string;
   name: string;
   unitID: string;
   costPrice: string;
-  trQty: string;
-  transQty: string;
+  irQty: string;
 }
 
 interface FindRow {
-  tranNo: string; fromLocCode: string; fromLocDes: string; toLoc: string; toLocDes: string;
-  traDate: string; tReqNo: string; netTotal: number; confirmed: boolean;
-}
-
-interface ReqOption {
-  trNo: string; fromLocCode: string; fromLocDes: string; toLoc: string; toLocDes: string;
+  irNo: string; fromLocCode: string; fromLocDes: string; toLoc: string; toLocDes: string;
+  irDate: string; netTotal: number; confirmed: boolean;
 }
 
 let lineSeq = 0;
-const newLine = (): TrLine => ({
-  key: `N${++lineSeq}`, itemCode: '', name: '', unitID: '', costPrice: '', trQty: '', transQty: '',
+const newLine = (): IrLine => ({
+  key: `R${++lineSeq}`, itemCode: '', name: '', unitID: '', costPrice: '', irQty: '',
 });
 
 const money = (n: number) =>
@@ -57,7 +52,7 @@ function useToast() {
   return { toast, show };
 }
 
-export default function TransferNotePage() {
+export default function IssueRequisitionPage() {
   const router = useRouter();
   const { toast, show: showToast } = useToast();
 
@@ -76,22 +71,15 @@ export default function TransferNotePage() {
   const printNonce = React.useRef(0);
   const [actor, setActor] = useState('');
 
-  /* emailing the sheet */
-  const [mailAsk, setMailAsk] = useState(false);
-  const [mailTo, setMailTo] = useState('');
-  const [mailCopy, setMailCopy] = useState<PoPrintCopy>('standard');
-  const [mailSubject, setMailSubject] = useState('');
-  const [mailMessage, setMailMessage] = useState('');
-  const [sending, setSending] = useState(false);
 
   /* the document */
-  const [issueReq, setIssueReq] = useState('');
   const [fromLoc, setFromLoc] = useState('');
   const [toLoc, setToLoc] = useState('');
-  const [trDate, setTrDate] = useState(dayOf(new Date().toISOString()));
+  const [irDate, setIrDate] = useState(dayOf(new Date().toISOString()));
+  const [irDueDate, setIrDueDate] = useState(dayOf(new Date().toISOString()));
   const [remarks, setRemarks] = useState('');
-  const [lines, setLines] = useState<TrLine[]>([newLine()]);
-  const [transferNo, setTransferNo] = useState('');
+  const [lines, setLines] = useState<IrLine[]>([newLine()]);
+  const [reqNo, setReqNo] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [dirty, setDirty] = useState(false);
 
@@ -105,10 +93,6 @@ export default function TransferNotePage() {
   const [findStatus, setFindStatus] = useState<'all' | 'confirmed' | 'pending'>('all');
   const [list, setList] = useState<FindRow[]>([]);
   const [listBusy, setListBusy] = useState(false);
-
-  /* confirmed requisitions the note can be issued against */
-  const [reqOptions, setReqOptions] = useState<ReqOption[]>([]);
-  const [reqLoading, setReqLoading] = useState(false);
 
     useEffect(() => {
     let active = true;
@@ -127,7 +111,13 @@ export default function TransferNotePage() {
         if (json.company?.name) setCompany(json.company);
         setLookupErrors(json.errors ?? {});
         setLookupNote(`${locs.length} location(s) · ${(json.units ?? []).length} unit(s) loaded`);
-        setFromLoc((prev) => prev || locs[0]?.code || '');
+        // issue requisitions run between MAIN locations — subs are not listed here
+        setFromLoc((prev) => {
+          if (prev) return prev;
+          const mains = locs.filter((l) => l.enable && l.mainLoc);
+          setToLoc((t) => t || (mains.find((l) => l.code !== mains[0]?.code)?.code ?? ''));
+          return mains[0]?.code || '';
+        });
       } catch (err) {
         if (!active) return;
         setLookupNote('');
@@ -154,46 +144,26 @@ export default function TransferNotePage() {
     return () => { active = false; };
   }, []);
 
-    const loadReqOptions = useCallback(async () => {
-    try {
-      const res = await fetch('/api/inventory/transfer/requisition?status=confirmed&limit=200', { cache: 'no-store' });
-      const json = await res.json() as { success?: boolean; data?: any[]; message?: string };
-      if (!res.ok || !json?.success) throw new Error(json?.message || 'Could not load requisitions');
-      setReqOptions((json.data ?? []).map((r: any) => ({
-        trNo: String(r.trNo ?? '').trim(),
-        fromLocCode: String(r.fromLocCode ?? '').trim(),
-        fromLocDes: String(r.fromLocDes ?? r.fromLocCode ?? '').trim(),
-        toLoc: String(r.toLoc ?? '').trim(),
-        toLocDes: String(r.toLocDes ?? r.toLoc ?? '').trim(),
-      })).filter((r) => r.trNo));
-    } catch {
-      /* the dropdown simply stays empty — typing the note by hand still works */
-    }
-  }, []);
-
-  useEffect(() => { void loadReqOptions(); }, [loadReqOptions]);
-
     const loadList = useCallback(async () => {
     setListBusy(true);
     try {
       const params = new URLSearchParams({ status: findStatus });
       if (findQ.trim()) params.set('q', findQ.trim());
-      const res = await fetch(`/api/inventory/transfer/note?${params.toString()}`, { cache: 'no-store' });
+      const res = await fetch(`/api/inventory/issue/requisition?${params.toString()}`, { cache: 'no-store' });
       const json = await res.json() as { success?: boolean; data?: any[]; message?: string };
-      if (!res.ok || !json?.success) throw new Error(json?.message || 'Could not load the transfer notes');
+      if (!res.ok || !json?.success) throw new Error(json?.message || 'Could not load the requisitions');
       setList((json.data ?? []).map((r: any) => ({
-        tranNo: String(r.tranNo ?? ''),
+        irNo: String(r.irNo ?? ''),
         fromLocCode: String(r.fromLocCode ?? ''),
         fromLocDes: String(r.fromLocDes ?? r.fromLocCode ?? ''),
         toLoc: String(r.toLoc ?? ''),
         toLocDes: String(r.toLocDes ?? r.toLoc ?? ''),
-        traDate: dayOf(r.traDate),
-        tReqNo: String(r.tReqNo ?? ''),
+        irDate: dayOf(r.irDate),
         netTotal: Number(r.netTotal || 0),
         confirmed: Boolean(r.confirmed),
       })));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Could not load the transfer notes', true);
+      showToast(err instanceof Error ? err.message : 'Could not load the requisitions', true);
       setList([]);
     } finally {
       setListBusy(false);
@@ -202,7 +172,7 @@ export default function TransferNotePage() {
 
   useEffect(() => { if (tab === 'find') void loadList(); }, [tab, loadList]);
 
-    function patchLine(key: string, patch: Partial<TrLine>) {
+    function patchLine(key: string, patch: Partial<IrLine>) {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
     setDirty(true);
   }
@@ -213,8 +183,7 @@ export default function TransferNotePage() {
       name: item.des,
       unitID: item.masterUnitID || '',
       costPrice: item.costPrice ? String(item.costPrice) : '',
-      trQty: lines.find((l) => l.key === key)?.trQty || '1',
-      transQty: lines.find((l) => l.key === key)?.transQty || '1',
+      irQty: lines.find((l) => l.key === key)?.irQty || '1',
     });
   }
 
@@ -229,7 +198,7 @@ export default function TransferNotePage() {
   }
 
     const netValue = useMemo(
-    () => lines.reduce((sum, l) => sum + lineValue(l.costPrice, l.transQty), 0),
+    () => lines.reduce((sum, l) => sum + lineValue(l.costPrice, l.irQty), 0),
     [lines],
   );
 
@@ -238,107 +207,53 @@ export default function TransferNotePage() {
     [units],
   );
 
-    /* Same idea as the PO page's "Add selected to PO": the requisition's items
-     become the note's lines and the From/To locations fill themselves in.     */
-  async function loadFromRequisition(trNo: string) {
-    setIssueReq(trNo);
-    if (!trNo) return;
-    if (confirmed) {
-      showToast(`${transferNo || 'This note'} is already confirmed — Clear to start a new note first`, true);
-      return;
-    }
-    const opt = reqOptions.find((r) => r.trNo === trNo);
-    const typed = lines.filter((l) => l.itemCode || l.name.trim());
-    if (typed.length > 0) {
-      if (!confirm(`Loading requisition ${trNo} will replace the ${typed.length} line(s) on the form. Continue?`)) return;
-    }
-    setReqLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (opt?.fromLocCode) params.set('fromLoc', opt.fromLocCode);
-      if (opt?.toLoc) params.set('toLoc', opt.toLoc);
-      const res = await fetch(`/api/inventory/transfer/requisition/${encodeURIComponent(trNo)}${params.toString() ? `?${params.toString()}` : ''}`, { cache: 'no-store' });
-      const json = await res.json() as {
-        success?: boolean; message?: string;
-        data?: {
-          header: { fromLocCode: string; toLoc: string };
-          lines: { itemCode: string; itemName: string; unitID: string; costPrice: number; trQty: number }[];
-        };
-      };
-      if (!res.ok || !json?.success || !json.data) throw new Error(json?.message || 'Could not load the requisition');
-      const h = json.data.header;
-            // transfer note runs the other way (the supply ISSUES the goods), so the
-      // locations flip when the note is filled from the requisition.
-      setFromLoc(h.toLoc);
-      setToLoc(h.fromLocCode);
-      setLines(json.data.lines.length
-        ? json.data.lines.map((l) => ({
-            key: `N${++lineSeq}`,
-            itemCode: l.itemCode,
-            name: l.itemName,
-            unitID: l.unitID,
-            costPrice: String(l.costPrice ?? ''),
-            trQty: String(l.trQty ?? ''),
-            transQty: String(l.trQty ?? ''),
-          }))
-        : [newLine()]);
-      setDirty(true);
-      showToast(`Requisition ${trNo} — ${json.data.lines.length} item(s) put on the note; locations filled in`);
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Could not load the requisition', true);
-    } finally {
-      setReqLoading(false);
-    }
-  }
-
-    async function openNote(row: FindRow) {
+    async function openReq(row: FindRow) {
     try {
       const res = await fetch(
-        `/api/inventory/transfer/note/${encodeURIComponent(row.tranNo)}?fromLoc=${encodeURIComponent(row.fromLocCode)}&toLoc=${encodeURIComponent(row.toLoc)}`,
+        `/api/inventory/issue/requisition/${encodeURIComponent(row.irNo)}?fromLoc=${encodeURIComponent(row.fromLocCode)}&toLoc=${encodeURIComponent(row.toLoc)}`,
         { cache: 'no-store' },
       );
       const json = await res.json() as {
         success?: boolean; message?: string;
         data?: {
-          header: { tranNo: string; fromLocCode: string; toLoc: string; traDate: string; tReqNo: string; remarks: string; confirmed: boolean };
-          lines: { itemCode: string; itemName: string; unitID: string; costPrice: number; trQty: number; tranQty: number }[];
+          header: { irNo: string; fromLocCode: string; toLoc: string; irDate: string; irDueDate: string; remarks: string; confirmed: boolean };
+          lines: { itemCode: string; itemName: string; unitID: string; costPrice: number; irQty: number }[];
         };
       };
-      if (!res.ok || !json?.success || !json.data) throw new Error(json?.message || 'Could not open the transfer note');
+      if (!res.ok || !json?.success || !json.data) throw new Error(json?.message || 'Could not open the requisition');
       const h = json.data.header;
-      setIssueReq(h.tReqNo || '');
       setFromLoc(h.fromLocCode);
       setToLoc(h.toLoc);
-      setTrDate(dayOf(h.traDate));
+      setIrDate(dayOf(h.irDate));
+      setIrDueDate(dayOf(h.irDueDate));
       setRemarks(h.remarks || '');
-      setTransferNo(h.tranNo);
+      setReqNo(h.irNo);
       setConfirmed(Boolean(h.confirmed));
       setLines(json.data.lines.length
         ? json.data.lines.map((l) => ({
-            key: `N${++lineSeq}`,
+            key: `R${++lineSeq}`,
             itemCode: l.itemCode,
             name: l.itemName,
             unitID: l.unitID,
             costPrice: String(l.costPrice ?? ''),
-            trQty: String(l.trQty ?? ''),
-            transQty: String(l.tranQty ?? ''),
+            irQty: String(l.irQty ?? ''),
           }))
         : [newLine()]);
       setDirty(false);
       setLastResult('');
       setTab('details');
-      showToast(`Transfer Note ${h.tranNo} loaded`);
+      showToast(`Issue requisition ${h.irNo} loaded`);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Could not open the transfer note', true);
+      showToast(err instanceof Error ? err.message : 'Could not open the requisition', true);
     }
   }
 
     function payload() {
     return {
-      tReqNo: issueReq,
       fromLocCode: fromLoc,
       toLoc,
-      traDate: trDate,
+      irDate,
+      irDueDate,
       remarks,
       lines: lines
         .filter((l) => l.itemCode || l.name.trim())
@@ -346,39 +261,39 @@ export default function TransferNotePage() {
           itemCode: l.itemCode || l.name.trim(),
           unitID: l.unitID,
           costPrice: l.costPrice === '' ? '' : Number(l.costPrice),
-          trQty: l.trQty === '' ? 0 : Number(l.trQty),
-          tranQty: l.transQty === '' ? 0 : Number(l.transQty),
+          irQty: l.irQty === '' ? 0 : Number(l.irQty),
         })),
     };
   }
 
   async function handleSave(): Promise<boolean> {
-    if (!issueReq) { showToast('Choose the Issue Requisition No first', true); return false; }
-    if (!fromLoc || !toLoc) { showToast('Choose From and To locations first', true); return false; }
+    if (!fromLoc || !toLoc) { showToast('Choose the From and To locations first', true); return false; }
     if (fromLoc === toLoc) { showToast('From and To locations must be different', true); return false; }
+    // the issue module works between MAIN locations only
+    const fromIsMain = locations.find((l) => l.code === fromLoc)?.mainLoc;
+    const toIsMain = locations.find((l) => l.code === toLoc)?.mainLoc;
+    if (fromIsMain === false || toIsMain === false) { showToast('Issue requisitions run between main locations only', true); return false; }
     const body = payload();
     if (body.lines.length === 0) { showToast('Add at least one item line', true); return false; }
-    if (body.lines.some((l) => !(Number(l.trQty) > 0))) { showToast('Enter TR QTY for each line', true); return false; }
-    if (body.lines.some((l) => !(Number(l.tranQty) > 0))) { showToast('Enter Transferred QTY for each line', true); return false; }
+    if (body.lines.some((l) => !(Number(l.irQty) > 0))) { showToast('Enter IR QTY for each line', true); return false; }
 
     setSaving(true);
     try {
-      const res = transferNo
-        ? await fetch(`/api/inventory/transfer/note/${encodeURIComponent(transferNo)}?fromLoc=${encodeURIComponent(fromLoc)}&toLoc=${encodeURIComponent(toLoc)}`, {
-            method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tReqNo: body.tReqNo, traDate: body.traDate, remarks: body.remarks, lines: body.lines }),
+      const res = reqNo
+        ? await fetch(`/api/inventory/issue/requisition/${encodeURIComponent(reqNo)}?fromLoc=${encodeURIComponent(fromLoc)}&toLoc=${encodeURIComponent(toLoc)}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
           })
-        : await fetch('/api/inventory/transfer/note', {
+        : await fetch('/api/inventory/issue/requisition', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...body, confirm: false }),
           });
       const json = await res.json() as {
-        success?: boolean; message?: string; hint?: string; data?: { tranNo: string; netTotal: number };
+        success?: boolean; message?: string; hint?: string; data?: { irNo: string; netTotal: number };
       };
       if (!res.ok || !json?.success) {
         throw new Error(json?.hint ? `${json.message} — ${json.hint}` : (json?.message || 'Save failed'));
       }
-      if (json.data?.tranNo) setTransferNo(json.data.tranNo);
+      if (json.data?.irNo) setReqNo(json.data.irNo);
       setDirty(false);
       showToast(json.message || 'Saved ✓');
       return true;
@@ -391,19 +306,19 @@ export default function TransferNotePage() {
   }
 
     async function handleConfirm() {
-    if (confirmed) { showToast('This transfer note is already confirmed'); return; }
+    if (confirmed) { showToast('This requisition is already confirmed'); return; }
     setConfirming(true);
     try {
       /* Confirmation confirms what is on the screen: save first when needed. */
-      if (dirty || !transferNo) {
+      if (dirty || !reqNo) {
         const ok = await handleSave();
         if (!ok) return;
       }
-      const number = transferNo || '';
-      if (!number) { showToast('Save the transfer note before confirming it', true); return; }
-      if (!confirm(`Confirm transfer note ${number}?\nA confirmed note can no longer be edited or deleted.`)) return;
+      const number = reqNo || '';
+      if (!number) { showToast('Save the requisition before confirming it', true); return; }
+      if (!confirm(`Confirm issue requisition ${number}?\nA confirmed requisition can no longer be edited or deleted.`)) return;
 
-      const res = await fetch(`/api/inventory/transfer/note/${encodeURIComponent(number)}/confirm`, {
+      const res = await fetch(`/api/inventory/issue/requisition/${encodeURIComponent(number)}/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fromLocCode: fromLoc, toLoc }),
@@ -413,7 +328,7 @@ export default function TransferNotePage() {
         throw new Error(json?.hint ? `${json.message} — ${json.hint}` : (json?.message || 'Confirmation failed'));
       }
       setConfirmed(true);
-      setLastResult(json.message || `Transfer Note ${number} confirmed.`);
+      setLastResult(json.message || `Issue requisition ${number} confirmed.`);
       showToast(json.message || 'Confirmed ✓');
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Confirmation failed', true);
@@ -423,12 +338,12 @@ export default function TransferNotePage() {
   }
 
   async function handleDelete() {
-    if (!transferNo) { showToast('This transfer note has not been saved yet'); return; }
-    if (!confirm(`Delete transfer note ${transferNo}? This cannot be undone.`)) return;
+    if (!reqNo) { showToast('This requisition has not been saved yet'); return; }
+    if (!confirm(`Delete issue requisition ${reqNo}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
       const res = await fetch(
-        `/api/inventory/transfer/note/${encodeURIComponent(transferNo)}?fromLoc=${encodeURIComponent(fromLoc)}&toLoc=${encodeURIComponent(toLoc)}`,
+        `/api/inventory/issue/requisition/${encodeURIComponent(reqNo)}?fromLoc=${encodeURIComponent(fromLoc)}&toLoc=${encodeURIComponent(toLoc)}`,
         { method: 'DELETE' },
       );
       const json = await res.json() as { success?: boolean; message?: string; hint?: string };
@@ -448,8 +363,7 @@ export default function TransferNotePage() {
   function handleClear() {
     setLines([newLine()]);
     setRemarks('');
-    setIssueReq('');
-    setTransferNo('');
+    setReqNo('');
     setConfirmed(false);
     setDirty(false);
     setLastResult('');
@@ -462,7 +376,7 @@ export default function TransferNotePage() {
   }
 
   function handleNavigate(key: string, path: string) {
-    if (dirty && !confirm('Leave the page without saving the transfer note?')) return;
+    if (dirty && !confirm('Leave the page without saving the requisition?')) return;
     router.push(path);
   }
 
@@ -484,44 +398,9 @@ export default function TransferNotePage() {
     return () => window.clearTimeout(id);
   }, [printJob]);
 
-    function openMailDialog() {
-    if (printableLines.length === 0) { showToast('Add at least one item before emailing', true); return; }
-    if (!transferNo) { showToast('Save the note first (Save), then it can be emailed', true); return; }
-    setMailSubject((prev) => prev || `Transfer Note ${transferNo}`);
-    setMailCopy((prev) => prev || 'standard');
-    setMailAsk(true);
-  }
-
-  async function sendMail() {
-    const to = mailTo.trim();
-    if (!to) { showToast('Type the address to send the note to', true); return; }
-    setSending(true);
-    try {
-      const res = await fetch(`/api/inventory/transfer/note/${encodeURIComponent(transferNo)}/email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fromLocCode: fromLoc,
-          toLoc,
-          copy: mailCopy,
-          to,
-          subject: mailSubject.trim(),
-          message: mailMessage.trim(),
-        }),
-      });
-      const json = await res.json() as { success?: boolean; message?: string };
-      if (!res.ok || !json?.success) throw new Error(json?.message || 'The note could not be emailed');
-      setMailAsk(false);
-      showToast(json.message || 'Emailed ✓');
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'The note could not be emailed', true);
-    } finally {
-      setSending(false);
-    }
-  }
 
   const busy = saving || deleting || confirming;
-  const locked = confirmed; // a confirmed note is read-only
+  const locked = confirmed; // a confirmed requisition is read-only
 
   const printData = (() => {
     const copy = printJob?.copy ?? 'standard';
@@ -541,9 +420,9 @@ export default function TransferNotePage() {
       fromName: fromLocObj?.des || fromLoc,
       toCode: toLocObj?.code || toLoc,
       toName: toLocObj?.des || toLoc,
-      docNo: transferNo || '(not saved)',
-      docDate: poPrintDate(trDate),
-      issueRef: issueReq,
+      docNo: reqNo || '(not saved)',
+      docDate: poPrintDate(irDate),
+      dueDate: poPrintDate(irDueDate),
       printDate: poPrintClock(at).date,
       printTime: poPrintClock(at).time,
       user: actor,
@@ -553,11 +432,11 @@ export default function TransferNotePage() {
         unitID: l.unitID,
         unitName: unitName(l.unitID),
         costPrice: Number(l.costPrice) || 0,
-        poQty: Number(l.transQty) || 0,
+        poQty: Number(l.irQty) || 0,
       }))),
       total: poPrintTotal(printableLines.map((l) => ({
         itemCode: l.itemCode, name: l.name, unitID: l.unitID,
-        costPrice: Number(l.costPrice) || 0, poQty: Number(l.transQty) || 0,
+        costPrice: Number(l.costPrice) || 0, poQty: Number(l.irQty) || 0,
       }))),
       remarks: (remarks || '').trim(),
     };
@@ -572,18 +451,18 @@ export default function TransferNotePage() {
       {toast && <div className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
 
       <div className="po-shell">
-        <div className="no-print"><AdminSidebar active="inv-tr-note" onNav={handleNavigate} onLogout={() => router.push('/admin-login')} /></div>
+        <div className="no-print"><AdminSidebar active="inv-iss-req" onNav={handleNavigate} onLogout={() => router.push('/admin-login')} /></div>
 
         <div className="po-main">
           <header className="po-head no-print">
-            <h1>TRANSFER NOTE</h1>
+            <h1>ISSUE REQUISITION NOTE</h1>
             <div className="po-tabs">
               <button className={tab === 'find' ? 'on' : ''} onClick={() => setTab('find')}>Find</button>
               <button className={tab === 'details' ? 'on' : ''} onClick={() => setTab('details')}>Details</button>
             </div>
             <div className="po-state">
-              {transferNo ? <span className="chip">{transferNo}</span> : <span className="chip dim">not saved yet</span>}
-              {transferNo && (confirmed ? <span className="chip ok">Confirmed</span> : <span className="chip warn">Pending</span>)}
+              {reqNo ? <span className="chip">{reqNo}</span> : <span className="chip dim">not saved yet</span>}
+              {reqNo && (confirmed ? <span className="chip ok">Confirmed</span> : <span className="chip warn">Pending</span>)}
               {dirty && <span className="chip dim">unsaved changes</span>}
             </div>
           </header>
@@ -603,12 +482,12 @@ export default function TransferNotePage() {
             <div className="po-card no-print">
               <div className="po-find">
                 <label>Find Criteria</label>
-                <input value={findQ} onChange={(e) => setFindQ(e.target.value)} placeholder="TN or requisition number" />
+                <input value={findQ} onChange={(e) => setFindQ(e.target.value)} placeholder="IR number or location" />
                 <label className="rad">
-                  <input type="radio" checked={findStatus === 'confirmed'} onChange={() => setFindStatus('confirmed')} /> Confirmed Issue Note
+                  <input type="radio" checked={findStatus === 'confirmed'} onChange={() => setFindStatus('confirmed')} /> Confirmed IRN
                 </label>
                 <label className="rad">
-                  <input type="radio" checked={findStatus === 'pending'} onChange={() => setFindStatus('pending')} /> Pending Issue Note
+                  <input type="radio" checked={findStatus === 'pending'} onChange={() => setFindStatus('pending')} /> Pending IRN
                 </label>
                 <label className="rad">
                   <input type="radio" checked={findStatus === 'all'} onChange={() => setFindStatus('all')} /> All
@@ -622,25 +501,24 @@ export default function TransferNotePage() {
                 <table className="po-table">
                   <thead>
                     <tr>
-                      <th>Transfer No</th><th>TR Date</th><th>From Location</th><th>To Location</th>
-                      <th>Requisition</th><th className="num">Net Total</th><th>Status</th><th />
+                      <th>IR No</th><th>IR Date</th><th>From Location</th><th>To Location</th>
+                      <th className="num">Net Total</th><th>Status</th><th />
                     </tr>
                   </thead>
                   <tbody>
                     {list.length === 0 && (
-                      <tr><td colSpan={8} className="empty">{listBusy ? 'Loading…' : 'No transfer notes matched'}</td></tr>
+                      <tr><td colSpan={7} className="empty">{listBusy ? 'Loading…' : 'No requisitions matched'}</td></tr>
                     )}
                     {list.map((row) => (
-                      <tr key={`${row.fromLocCode}|${row.toLoc}|${row.tranNo}`}>
-                        <td className="mono">{row.tranNo}</td>
-                        <td>{row.traDate}</td>
+                      <tr key={`${row.fromLocCode}|${row.toLoc}|${row.irNo}`}>
+                        <td className="mono">{row.irNo}</td>
+                        <td>{row.irDate}</td>
                         <td>{row.fromLocDes || row.fromLocCode}</td>
                         <td>{row.toLocDes || row.toLoc}</td>
-                        <td className="mono">{row.tReqNo || '—'}</td>
                         <td className="num">{money(row.netTotal)}</td>
                         <td>{row.confirmed ? <span className="chip ok">Confirmed</span> : <span className="chip warn">Pending</span>}</td>
                         <td>
-                          <button className="btn small" onClick={() => void openNote(row)}>
+                          <button className="btn small" onClick={() => void openReq(row)}>
                             {dirty ? 'Open (discard)' : 'Open'}
                           </button>
                         </td>
@@ -656,61 +534,56 @@ export default function TransferNotePage() {
           {tab === 'details' && (
             <div className="po-card">
               <div className="po-form no-print">
-                <label>Issue Requisition No</label>
-                <select
-                  value={issueReq}
-                  disabled={locked}
-                  onChange={(e) => void loadFromRequisition(e.target.value)}
-                >
-                  <option value="">— choose —</option>
-                  {issueReq && !reqOptions.some((r) => r.trNo === issueReq) && (
-                    <option value={issueReq}>{issueReq} — the requisition on this note</option>
-                  )}
-                  {reqOptions.map((r) => (
-                    <option key={`${r.fromLocCode}|${r.toLoc}|${r.trNo}`} value={r.trNo}>
-                      {r.trNo} — {r.fromLocDes || r.fromLocCode} → {r.toLocDes || r.toLoc}
-                    </option>
-                  ))}
-                </select>
-
-                <label>Transfer No</label>
-                <input value={transferNo} readOnly placeholder="issued on save" />
-
+                {/* only MAIN locations take part in an issue requisition */}
                 <label>From Location</label>
                 <select
                   value={fromLoc}
-                  disabled={locked || !!transferNo}
-                  title={transferNo ? 'Locations are part of the note’s key — Clear to start a new one' : undefined}
+                  disabled={locked || !!reqNo}
+                  title={reqNo ? 'Locations are part of the requisition’s key — Clear to start a new one' : undefined}
                   onChange={(e) => { setFromLoc(e.target.value); setDirty(true); }}
                 >
                   <option value="">— choose —</option>
-                  {locations.map((l) => (
+                  {locations.filter((l) => l.mainLoc).map((l) => (
                     <option key={l.code} value={l.code}>
                       {l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}
                     </option>
                   ))}
+                  {fromLoc && !locations.some((l) => l.code === fromLoc && l.mainLoc) && (
+                    <option key={fromLoc} value={fromLoc}>
+                      {fromLoc} — {locations.find((l) => l.code === fromLoc)?.des || 'saved location'}
+                    </option>
+                  )}
                 </select>
 
                 <label>To Location</label>
                 <select
                   value={toLoc}
-                  disabled={locked || !!transferNo}
-                  title={transferNo ? 'Locations are part of the note’s key — Clear to start a new one' : undefined}
+                  disabled={locked || !!reqNo}
+                  title={reqNo ? 'Locations are part of the requisition’s key — Clear to start a new one' : undefined}
                   onChange={(e) => { setToLoc(e.target.value); setDirty(true); }}
                 >
                   <option value="">— choose —</option>
-                  {locations.map((l) => (
+                  {locations.filter((l) => l.mainLoc).map((l) => (
                     <option key={l.code} value={l.code}>
                       {l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}
                     </option>
                   ))}
+                  {toLoc && !locations.some((l) => l.code === toLoc && l.mainLoc) && (
+                    <option key={toLoc} value={toLoc}>
+                      {toLoc} — {locations.find((l) => l.code === toLoc)?.des || 'saved location'}
+                    </option>
+                  )}
                 </select>
 
-                <label>TR Date</label>
-                <input type="date" value={trDate} disabled={locked} onChange={(e) => { setTrDate(e.target.value); setDirty(true); }} />
-              </div>
+                <label>IR Date</label>
+                <input type="date" value={irDate} disabled={locked} onChange={(e) => { setIrDate(e.target.value); setDirty(true); }} />
 
-              {reqLoading && <div className="po-note no-print">Loading the requisition…</div>}
+                <label>IR Due Date</label>
+                <input type="date" value={irDueDate} disabled={locked} onChange={(e) => { setIrDueDate(e.target.value); setDirty(true); }} />
+
+                <label>Issue Req No</label>
+                <input value={reqNo} readOnly placeholder="issued on save" />
+              </div>
 
               <div className="po-grid-wrap">
                 <table className="po-table">
@@ -720,8 +593,7 @@ export default function TransferNotePage() {
                       <th style={{ width: 260 }}>Item Code / Item Name</th>
                       <th style={{ width: 110 }}>Unit</th>
                       <th style={{ width: 110 }} className="num">Cost Price</th>
-                      <th style={{ width: 100 }} className="num">TR QTY</th>
-                      <th style={{ width: 130 }} className="num">Transferred QTY</th>
+                      <th style={{ width: 100 }} className="num">IR QTY</th>
                       <th style={{ width: 120 }} className="num">Item Value</th>
                       <th className="no-print" style={{ width: 42 }} />
                     </tr>
@@ -732,7 +604,7 @@ export default function TransferNotePage() {
                         <td className="num">{i + 1}</td>
                         <td>
                           <ItemSuggestInput
-                            locCode={fromLoc}
+                            locCode={fromLoc || toLoc}
                             value={line.name}
                             disabled={locked}
                             onText={(text) => patchLine(line.key, { name: text, itemCode: '' })}
@@ -769,18 +641,11 @@ export default function TransferNotePage() {
                         <td>
                           <input
                             type="number" min="0" step="0.001" className="num"
-                            value={line.trQty} disabled={locked}
-                            onChange={(e) => patchLine(line.key, { trQty: e.target.value })}
+                            value={line.irQty} disabled={locked}
+                            onChange={(e) => patchLine(line.key, { irQty: e.target.value })}
                           />
                         </td>
-                        <td>
-                          <input
-                            type="number" min="0" step="0.001" className="num"
-                            value={line.transQty} disabled={locked}
-                            onChange={(e) => patchLine(line.key, { transQty: e.target.value })}
-                          />
-                        </td>
-                        <td className="num">{money(lineValue(line.costPrice, line.transQty))}</td>
+                        <td className="num">{money(lineValue(line.costPrice, line.irQty))}</td>
                         <td className="no-print">
                           <button className="x" title="Remove line" disabled={locked} onClick={() => removeLine(line.key)}>✕</button>
                         </td>
@@ -804,10 +669,7 @@ export default function TransferNotePage() {
                   {confirming ? 'Confirming…' : 'Confirmation'}
                 </button>
                 <button className="btn" onClick={handlePrint} disabled={busy}>Print</button>
-                <button className="btn" onClick={openMailDialog} disabled={busy || sending}>
-                  {sending ? 'Sending…' : 'Email'}
-                </button>
-                <button className="btn danger" onClick={() => void handleDelete()} disabled={busy || !transferNo || confirmed}>
+                <button className="btn danger" onClick={() => void handleDelete()} disabled={busy || !reqNo || confirmed}>
                   {deleting ? 'Deleting…' : 'Delete'}
                 </button>
                 <button className="btn primary" onClick={() => void handleSave()} disabled={busy || locked}>
@@ -824,11 +686,11 @@ export default function TransferNotePage() {
 
       {}
       {printAsk && (
-        <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Print transfer note">
+        <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Print issue requisition">
           <div className="ask-card">
-            <h2>Print Transfer Note</h2>
+            <h2>Print Issue Requisition Note</h2>
             <p>
-              {transferNo ? <><span className="mono">{transferNo}</span> — </> : null}
+              {reqNo ? <><span className="mono">{reqNo}</span> — </> : null}
               which copy do you want to print?
             </p>
             <div className="ask-choices">
@@ -846,84 +708,12 @@ export default function TransferNotePage() {
         </div>
       )}
 
-      {}
-      {mailAsk && (
-        <div className="ask-back no-print" role="dialog" aria-modal="true" aria-label="Email transfer note">
-          <div className="ask-card mail-card">
-            <h2>Email Transfer Note</h2>
-            <p>
-              <span className="mono">{transferNo}</span> —{' '}
-              <b>{locations.find((l) => l.code === fromLoc)?.des || fromLoc}</b> to{' '}
-              <b>{locations.find((l) => l.code === toLoc)?.des || toLoc}</b> — attached as a PDF.
-            </p>
-
-            <div className="mail-field">
-              <label htmlFor="mail-to">To</label>
-              <input
-                id="mail-to"
-                value={mailTo}
-                onChange={(e) => setMailTo(e.target.value)}
-                placeholder="name@example.com"
-                spellCheck={false}
-              />
-            </div>
-
-            <div className="mail-field">
-              <label>Copy to send</label>
-              <div className="mail-copies">
-                {TRANSFER_PRINT_COPY_CHOICES.map((choice) => (
-                  <label key={choice.id} className={`mail-radio ${mailCopy === choice.id ? 'on' : ''}`}>
-                    <input
-                      type="radio"
-                      name="mail-copy"
-                      checked={mailCopy === choice.id}
-                      onChange={() => setMailCopy(choice.id)}
-                    />
-                    <span>
-                      <b>{choice.label}</b>
-                      <span className="mail-radio-hint">{choice.hint}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="mail-field">
-              <label htmlFor="mail-subject">Subject</label>
-              <input id="mail-subject" value={mailSubject} onChange={(e) => setMailSubject(e.target.value)} />
-            </div>
-
-            <div className="mail-field">
-              <label htmlFor="mail-message">Message</label>
-              <textarea
-                id="mail-message"
-                rows={4}
-                value={mailMessage}
-                onChange={(e) => setMailMessage(e.target.value)}
-                placeholder="Leave empty to send the standard covering note (document number, dates, line count)."
-              />
-            </div>
-
-            <div className="mail-attach">
-              Attachment: <b>{(transferNo || 'transfer-note').trim()}.pdf</b> ·{' '}
-              {printableLines.length} item line(s) · {mailCopy === 'supplier' ? 'no prices on this copy' : `total ${printData.total}`}
-            </div>
-
-            <div className="ask-foot">
-              <button className="btn" onClick={() => setMailAsk(false)} disabled={sending}>Cancel</button>
-              <button className="btn primary" onClick={() => void sendMail()} disabled={sending || !mailTo.trim()}>
-                {sending ? 'Sending…' : 'Send Email'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {}
       {printJob && (
         <div aria-hidden="true">
           <TransferPrintSheet
-            title="Transfer Note"
+            title="Issue Requisition Note"
             copy={printData.copy}
             copyLabel={poPrintCopyLabel(printData.copy)}
             cols={printData.cols}
@@ -938,7 +728,7 @@ export default function TransferNotePage() {
             toName={printData.toName}
             docNo={printData.docNo}
             docDate={printData.docDate}
-            issueRef={printData.issueRef}
+            dueDate={printData.dueDate}
             printDate={printData.printDate}
             printTime={printData.printTime}
             user={printData.user}

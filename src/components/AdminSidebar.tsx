@@ -87,7 +87,10 @@ export const NAV_GROUPS: NavGroup[] = [
           { key: 'inv-tr-note', label: 'Transfer Note',    path: '/inventory/transfer/note'       },
           { key: 'inv-tr-ret',  label: 'Return Note',      path: '/inventory/transfer/return'     },
         ]},
-        { key: 'inv-issue',      label: 'Issue',           path: '/inventory/issue'      },
+        { key: 'inv-issue',      label: 'Issue',           path: '', children: [
+          { key: 'inv-iss-req',  label: 'Requisition Note', path: '/inventory/issue/requisition' },
+          { key: 'inv-iss-note', label: 'Issue Note',       path: '/inventory/issue/note'        },
+        ]},
         { key: 'inv-recon',      label: 'Stock Recon.',    path: '/inventory/recon'      },
       ]},
       { key: 'inv-rep',   label: 'Reports',     path: '', children: [

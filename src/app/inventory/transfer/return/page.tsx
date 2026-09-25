@@ -128,7 +128,7 @@ export default function TransferReturnPage() {
         setUnits(json.units ?? []);
         if (json.company?.name) setCompany(json.company);
         setLookupErrors(json.errors ?? {});
-        setLookupNote(`${locs.length} location(s) · ${(json.units ?? []).length} unit(s) loaded from the database`);
+        setLookupNote(`${locs.length} location(s) · ${(json.units ?? []).length} unit(s) loaded`);
         setFromLoc((prev) => prev || locs[0]?.code || '');
       } catch (err) {
         if (!active) return;

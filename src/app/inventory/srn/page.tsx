@@ -229,7 +229,7 @@ export default function SupplierReturnPage(){
             <div className="po-tabs"><button className={tab==='find'?'on':''} onClick={()=>setTab('find')}>Find</button><button className={tab==='details'?'on':''} onClick={()=>setTab('details')}>Details</button></div>
             <div className="po-state">{srnNo? <span className="chip">{srnNo.trim()}</span>:<span className="chip dim">not saved yet</span>}{srnNo&&(confirmed? <span className="chip ok">Confirmed</span>:<span className="chip warn">Pending</span>)}{dirty&& <span className="chip dim">unsaved changes</span>}</div>
           </header>
-          {lookupNote && <div className="po-note no-print">{lookupNote} — GRN No. from Tbl_GRNHeader/Tbl_GRNDetails, supplier auto from GRN</div>}
+          {lookupNote && <div className="po-note no-print">{lookupNote}</div>}
           {tab==='find' && (
             <div className="po-card no-print">
               <div className="po-find"><label>Find Criteria</label><input value={findQ} onChange={e=>setFindQ(e.target.value)} placeholder="SRN no or supplier" /><label className="rad"><input type="radio" checked={findStatus==='confirmed'} onChange={()=>setFindStatus('confirmed')} /> Confirmed Returns</label><label className="rad"><input type="radio" checked={findStatus==='pending'} onChange={()=>setFindStatus('pending')} /> Pending Return</label><label className="rad"><input type="radio" checked={findStatus==='all'} onChange={()=>setFindStatus('all')} /> All</label><button className="btn" onClick={()=>void loadList()} disabled={listBusy}>{listBusy?'Loading…':'Find'}</button></div>
@@ -242,12 +242,12 @@ export default function SupplierReturnPage(){
                 <label>Location</label><select value={locCode} onChange={e=>{setLocCode(e.target.value); setDirty(true);}} disabled={locked}><option value="">— choose —</option>{locations.map(l=><option key={l.code} value={l.code}>{l.code} — {l.des}{l.enable?'':' (Inactive)'}</option>)}</select>
                 <label>GRN No.</label><select value={grnNo} onChange={e=>void chooseGrn(e.target.value)} disabled={locked}><option value="">— choose a confirmed GRN —</option>{openGrns.map(o=><option key={o.grnNo} value={o.grnNo}>{o.grnNo} — {o.supName||o.supID} ({dayOf(o.grnDate)})</option>)}</select>
                 <label>SRN No</label><input value={srnNo.trim()} readOnly placeholder="issued on save" className="mono" style={{background:'#fff8dc'}} />
-                <label>Supplier</label><select value={supID} disabled><option value="">— auto from GRN —</option>{suppliers.map(s=><option key={s.supID} value={s.supID}>{s.supID} — {s.name}</option>)}</select>
+                <label>Supplier</label><select value={supID} disabled><option value="">— set by the GRN —</option>{suppliers.map(s=><option key={s.supID} value={s.supID}>{s.supID} — {s.name}</option>)}</select>
                 <label>Sup Inv No</label><input value={supInvNo} onChange={e=>{setSupInvNo(e.target.value); setDirty(true);}} disabled={locked} />
                 <label>SRN Date</label><input type="date" value={srnDate} onChange={e=>{setSrnDate(e.target.value); setDirty(true);}} disabled={locked} />
               </div>
               {grnErr && <div className="po-error no-print">{grnErr}</div>}
-              {grnNo && <div className="po-note no-print">Return Qty ≤ Remaining (GRN Qty − Already Returned). Tbl_GRNDetails.RETQTY eken balala remaining hisaab wenawa — GRNQty 10 ta 5+2+3 wage multiple returns puluwan. Confirm kalama StockBalance adu wenawa + GRN RET* update.</div>}
+              {grnNo && <div className="po-note no-print">Return Qty must not exceed the remaining quantity (GRN Qty − already returned). Multiple returns against one GRN are allowed; confirming moves the stock back to the supplier and updates the GRN's returned quantities.</div>}
               <div className="po-grid-wrap">
                 <table className="po-table">
                   <thead><tr><th style={{width:38}}>#</th><th style={{width:98}}>Item Code</th><th>Item Name</th><th style={{width:110}}>Unit</th><th style={{width:105}} className="num">Cost Price</th><th style={{width:85}} className="num">GRN QTY</th><th style={{width:95}} className="num">Returned</th><th style={{width:95}} className="num">Remaining</th><th style={{width:110}} className="num">Return Qty</th><th style={{width:120}} className="num">Item Value</th></tr></thead>

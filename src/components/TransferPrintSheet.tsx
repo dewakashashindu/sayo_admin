@@ -43,7 +43,7 @@ export default function TransferPrintSheet(p: TransferPrintSheetProps){
           </div>
           <div className="ps-title">{p.title}</div>
           <div className="ps-head-right">
-            <div className="ps-kv"><span className="ps-k">{p.title.includes("Requisition") ? "TR No" : p.title.includes("Return") ? "Rtn No" : "Trn No"}</span><span className="ps-c">:</span><span className="ps-v ps-strong">{p.docNo}</span></div>
+            <div className="ps-kv"><span className="ps-k">{p.title.includes("Requisition") ? (p.title.includes("Issue") ? "Issue Req No" : "TR No") : p.title.includes("Return") ? "Rtn No" : p.title.includes("Issue") ? "Issue No" : "Trn No"}</span><span className="ps-c">:</span><span className="ps-v ps-strong">{p.docNo}</span></div>
             <div className="ps-kv"><span className="ps-k">Date</span><span className="ps-c">:</span><span className="ps-v">{p.docDate}</span></div>
             {p.dueDate && <div className="ps-kv"><span className="ps-k">Due Date</span><span className="ps-c">:</span><span className="ps-v">{p.dueDate}</span></div>}
             {p.issueRef && <div className="ps-kv"><span className="ps-k">Ref</span><span className="ps-c">:</span><span className="ps-v">{p.issueRef}</span></div>}

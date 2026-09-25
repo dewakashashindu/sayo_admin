@@ -117,7 +117,7 @@ export default function TransferRequisitionPage() {
         setUnits(json.units ?? []);
         if (json.company?.name) setCompany(json.company);
         setLookupErrors(json.errors ?? {});
-        setLookupNote(`${locs.length} location(s) · ${(json.units ?? []).length} unit(s) loaded from the database`);
+        setLookupNote(`${locs.length} location(s) · ${(json.units ?? []).length} unit(s) loaded`);
         // default to the first SUB location — its MAIN fills To automatically
         setFromLoc((prev) => {
           if (prev) return prev;

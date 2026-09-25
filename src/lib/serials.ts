@@ -22,6 +22,10 @@ export const SERIAL_CODES = {
   transferNote: "TN",
   /** Transfer return no    -> TR000001 (fits tbl_transferreturnheader.TRtnNo CHAR(10)) */
   transferReturn: "TR",
+  /** Issue requisition no  -> IR000001 (fits tbl_issuereqheder.IRNO CHAR(10)) */
+  issueReq: "IR",
+  /** Issue note no         -> IN000001 (fits tbl_issuenoteheder.INNO VARCHAR(50)) */
+  issueNote: "IN",
 } as const;
 
 export type SerialCodeName = keyof typeof SERIAL_CODES;
@@ -35,6 +39,8 @@ export const SERIAL_CODE_ALIASES: Record<string, string[]> = {
   TC: ["TC", "TRQ", "TR", "TRANSFERREQ", "TRANSFERREQUISITION"],
   TN: ["TN", "TRANSFERNOTE", "TRANSFER", "ISSUE"],
   TR: ["TR", "TRTN", "TRANSFERRETURN", "RETURN"],
+  IR: ["IR", "IRN", "IREQ", "ISSUEREQ", "ISSUEREQUISITION"],
+  IN: ["IN", "INN", "ISSUENOTE"],
 };
 
 /**

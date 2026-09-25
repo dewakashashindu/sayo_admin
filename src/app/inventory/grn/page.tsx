@@ -169,7 +169,7 @@ export default function GrnPage() {
         setUnits(json.units ?? []);
         if((json as any).company) setCompany({name:(json as any).company.name||'SAYO',address:(json as any).company.address||'',phone:(json as any).company.phone||''});
         setLookupErrors(json.errors ?? {});
-        setLookupNote(`${locs.length} location(s) · ${sups.length} supplier(s) loaded from the database`);
+        setLookupNote(`${locs.length} location(s) · ${sups.length} supplier(s) loaded`);
         setLocCode((prev) => prev || locs[0]?.code || '');
         setSupID((prev) => prev || sups[0]?.supID || '');
       } catch (err) {

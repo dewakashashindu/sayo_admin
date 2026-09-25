@@ -325,7 +325,7 @@ export default function ReconPage() {
             </div>
           </header>
 
-          {lookupNote && <div className="po-note no-print">{lookupNote} — categories from tbl_itemcategory1-4 (CatDes)</div>}
+          {lookupNote && <div className="po-note no-print">{lookupNote}</div>}
 
           {tab === 'find' && (
             <div className="po-card no-print">
@@ -480,7 +480,7 @@ export default function ReconPage() {
           <div className="ask-card">
             <h2>Print Stock Reconciliation Note</h2>
             <p><span className="mono">{recNo.trim()}</span> — COLOMBO MAIN BRANCH · {new Date().toLocaleDateString()} · {confirmed ? 'Confirmed' : 'Pending'}</p>
-            <p style={{fontSize:'11.5px',color:'#5b7176'}}>Stock Reconciliation Note ekata supplier copy ne — eliye danna copy ekak na, standard copy withara print karanne GRN/PO wage.</p>
+            <p style={{fontSize:'11.5px',color:'#5b7176'}}>There is no supplier copy for a Stock Reconciliation Note — only the standard copy is printed, unlike for a GRN/PO.</p>
             <div className="ask-choices" style={{gridTemplateColumns:'1fr'}}>
               <button className="ask-choice" onClick={()=> startPrint('standard' as PoPrintCopy)}>
                 <span className="ask-choice-title">Standard Copy — Print</span>

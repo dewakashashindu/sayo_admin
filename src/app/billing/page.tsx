@@ -716,7 +716,7 @@ function BillingContent() {
         } else {
           setTaxRows([]);
           setTaxError(
-            'Taxes could not be loaded from tbl_taxes — the bill is being calculated without tax. Check the table and reload.',
+            'Taxes could not be loaded — the bill is being calculated without tax. Check the tax setup and reload the page.',
           );
         }
       })
@@ -724,7 +724,7 @@ function BillingContent() {
         if (!active) return;
         setTaxRows([]);
         setTaxError(
-          'Taxes could not be loaded from tbl_taxes — the bill is being calculated without tax. Check the table and reload.',
+          'Taxes could not be loaded — the bill is being calculated without tax. Check the tax setup and reload the page.',
         );
       })
       .finally(() => { if (active) setTaxesLoading(false); });
@@ -1396,7 +1396,7 @@ function BillingContent() {
                         {codeLessItems.length + codeLessServices.length === 1 ? '' : 's'} here
                         {codeLessItems.length + codeLessServices.length === 1 ? ' has' : ' have'} no item code
                         {' '}({[...codeLessItems, ...codeLessServices].map(i => i.name).filter(Boolean).join(', ')}).
-                        They are billed, but they cannot be written to tbl_billdetail — pick the item from the
+                        They stay on the bill, but they cannot be billed properly — pick the item from the
                         suggestions so the line carries its item-master code.
                       </p>
                     )}
@@ -1525,13 +1525,13 @@ function BillingContent() {
                     <div className="sum-row divider bold-row"><span>Gross After Dis.</span><span>{fmtMoney(grossAfterDis)}</span></div>
                     {}
                     {taxesLoading ? (
-                      <div className="sum-row" style={{color:'#9ca3af',fontSize:11.5}}><span>Loading taxes…</span><span>tbl_taxes</span></div>
+                      <div className="sum-row" style={{color:'#9ca3af',fontSize:11.5}}><span>Loading taxes…</span><span>tax setup</span></div>
                     ) : taxError ? (
                       <p className="tax-warn">{taxError}</p>
                     ) : taxLines.length === 0 ? (
                       <div className="sum-row" style={{color:'#9ca3af',fontSize:11.5}}>
                         <span>{taxRows.length === 0 ? 'No taxes enabled' : 'No taxes with a rate'}</span>
-                        <span>tbl_taxes</span>
+                        <span>tax setup</span>
                       </div>
                     ) : (
                       <>
@@ -1539,7 +1539,7 @@ function BillingContent() {
                           <div
                             className="sum-row"
                             key={`tax-${line.code}-${line.stage}`}
-                            title={`${line.label} — ${percentLabel(line.percentage)} of ${fmtMoney(line.base)} (tbl_taxes/${line.code})`}
+                            title={`${line.label} — ${percentLabel(line.percentage)} of ${fmtMoney(line.base)} (tax setup/${line.code})`}
                           >
                             <span style={{display:'flex',alignItems:'center',gap:6}}>
                               {line.label}
@@ -1548,7 +1548,7 @@ function BillingContent() {
                             <span style={{fontWeight:600,color:'#1e3a40'}}>+ {fmtMoney(line.amount)}</span>
                           </div>
                         ))}
-                        <p className="sum-note">Rates from tbl_taxes — enabled rows only.</p>
+                        <p className="sum-note">Rates from the tax setup — enabled rows only.</p>
                       </>
                     )}
                     <div className="sum-row total-row"><span>Net Total</span><span>{fmtMoney(netTotal)}</span></div>
@@ -1728,7 +1728,7 @@ function BillingContent() {
                 </div>
                 {skippedLines.length > 0 && (
                   <div className="bill-card no-print tax-warn">
-                    Not written to tbl_billdetail (no item code): {skippedLines.join(', ')}. The money on this
+                    These lines could not be billed (no item code): {skippedLines.join(', ')}. The money on this
                     receipt is correct — give those lines an item-master code next time.
                   </div>
                 )}

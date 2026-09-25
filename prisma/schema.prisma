@@ -988,3 +988,86 @@ model Tbl_TransferReturnDetail {
   @@map("tbl_transferreturndetail")
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Issue — requisition (IRN) / note (IN) (VB6 Tbl_IssueReq*/Tbl_IssueNote*)
+// See scripts/create-Tbl_Issue-mysql.sql & scripts/create-Vw_Issue-mysql.sql
+// ─────────────────────────────────────────────────────────────────────────
+model Tbl_IssueReqHeder {
+  FromLocCode   String   @default("") @db.Char(10)
+  ToLoc         String   @default("") @db.Char(10)
+  IRNO          String   @default("") @db.Char(10)
+  IRDate        DateTime @db.DateTime(0)
+  IRDueDate     DateTime @db.DateTime(0)
+  NetTotal      Float    @default(0)
+  UserID        String   @default("") @db.Char(10)
+  Remarks       String   @default("") @db.VarChar(500)
+  TxnDate       DateTime @db.DateTime(0)
+  SysSerialNo   Float    @default(0)
+  ConUserID     String   @default("") @db.Char(10)
+  Confirmed     String   @default("") @db.Char(1)
+  ConDatetime   DateTime @db.DateTime(0)
+  TakenForIssue String   @default("N") @db.Char(1)
+
+  details Tbl_IssueReqDetail[]
+
+  @@id([FromLocCode, ToLoc, IRNO])
+  @@map("tbl_issuereqheder")
+}
+
+model Tbl_IssueReqDetail {
+  FromLocCode    String @default("") @db.Char(10)
+  ToLoc          String @default("") @db.Char(10)
+  IRNo           String @default("") @db.VarChar(50)
+  ItemCode       String @default("") @db.VarChar(20)
+  UnitID         String @default("") @db.Char(10)
+  CostPrice      Float  @default(0)
+  IRQty          Float  @default(0)
+  ItemValue      Float  @default(0)
+  DirectPOConfNo String @default("") @db.Char(20)
+  IssuedQTY      Float  @default(0)
+
+  header Tbl_IssueReqHeder @relation(fields: [FromLocCode, ToLoc, IRNo], references: [FromLocCode, ToLoc, IRNO])
+
+  @@id([FromLocCode, ToLoc, IRNo, ItemCode])
+  @@map("tbl_issuereqdetail")
+}
+
+model Tbl_IssueNoteHeder {
+  FromLocCode String   @default("") @db.Char(10)
+  ToLoc       String   @default("") @db.Char(10)
+  INNO        String   @default("") @db.VarChar(50)
+  INDate      DateTime @db.DateTime(0)
+  NetTotal    Float    @default(0)
+  UserID      String   @default("") @db.Char(10)
+  Remarks     String   @default("") @db.VarChar(500)
+  TxnDate     DateTime @db.DateTime(0)
+  SysSerialNo Float    @default(0)
+  ConUserID   String   @default("") @db.Char(10)
+  Confirmed   String   @default("") @db.Char(1)
+  ConDatetime DateTime @db.DateTime(0)
+  IRNO        String   @default("0") @db.Char(10)
+
+  details Tbl_IssueNoteDetail[]
+
+  @@id([FromLocCode, ToLoc, INNO])
+  @@map("tbl_issuenoteheder")
+}
+
+model Tbl_IssueNoteDetail {
+  FromLocCode    String @default("") @db.Char(10)
+  ToLoc          String @default("") @db.Char(10)
+  INNo           String @default("") @db.Char(10)
+  ItemCode       String @default("") @db.Char(10)
+  UnitID         String @default("") @db.Char(10)
+  CostPrice      Float  @default(0)
+  IRQty          Float  @default(0)
+  INQty          Float  @default(0)
+  ItemValue      Float  @default(0)
+  DirectPOConfNo String @default("") @db.Char(10)
+  NewItem        String @default(" ") @db.Char(2)
+
+  header Tbl_IssueNoteHeder @relation(fields: [FromLocCode, INNo, ToLoc], references: [FromLocCode, ToLoc, INNO])
+
+  @@id([FromLocCode, ToLoc, INNo, ItemCode])
+  @@map("tbl_issuenotedetail")
+}
