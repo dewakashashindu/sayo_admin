@@ -4,6 +4,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 
 interface LocationMaster {
   LocCode: string;      // CHAR(10) PK
@@ -187,14 +188,6 @@ const PAGE_CSS = `
   .toast-success { background:#15803d; }
   .toast-error   { background:#dc2626; }
 
-  /* QA #4 — the Print button prints ONLY this hidden report, never the app shell */
-  #loc-print-area { display:none; }
-  @media print {
-    html, body { overflow:visible !important; height:auto !important; }
-    body * { visibility:hidden !important; }
-    #loc-print-area, #loc-print-area * { visibility:visible !important; }
-    #loc-print-area { display:block !important; position:absolute; inset:0 0 auto 0; }
-  }
 
   @media(max-width:767px) { .left-panel { display:none !important; } }
 `;
@@ -481,17 +474,17 @@ export default function LocationsPage() {
   }
 
     function handlePrint() {
-    if (!selLoc && !isNew) { showToast('Select a location to print', 'error'); return; }
     window.print();
   }
 
   const HDR = '#dae6e6';
   const searching = !!search.trim();
 
-    return (
+  return (
     <>
-      <style>{SIDEBAR_CSS}</style>
-      <style>{PAGE_CSS}</style>
+     <style>{SIDEBAR_CSS}</style>
+     <style>{PAGE_CSS}</style>
+     <style>{MASTER_PRINT_CSS}</style>
 
       {toast && (
         <div className={`toast ${toast.type === 'success' ? 'toast-success' : 'toast-error'}`}>
@@ -747,48 +740,29 @@ export default function LocationsPage() {
         </div>
       </div>
 
-      {}
-      <div id="loc-print-area" aria-hidden="true">
-        {(() => {
-          const now = new Date();
-          const subs = !isNew && fLocCode
-            ? locations.filter((l) => l.SubLoc && l.MainLocCode === fLocCode)
-            : [];
-          const typeTxt = fMain ? 'MAIN LOCATION' : fSub ? 'SUB LOCATION' : 'BRANCH (STANDALONE)';
-          const underTxt =
-            mainOptions.find((m) => m.LocCode === fMainCode)?.LocDes ||
-            selLoc?.MainLocDes || fMainCode || '—';
-          const R = ({ k, children }: { k: string; children: React.ReactNode }) => (
-            <tr>
-              <td style={{ border: '1px solid #94a3b8', padding: '6px 10px', fontSize: 12, fontWeight: 700, background: '#eef4f5', width: 230 }}>{k}</td>
-              <td style={{ border: '1px solid #94a3b8', padding: '6px 10px', fontSize: 12 }}>{children}</td>
-            </tr>
-          );
-          return (
-            <div style={{ padding: '18mm 14mm', background: '#fff', color: '#111827', fontFamily: "'Inter',sans-serif" }}>
-              <p style={{ textAlign: 'center', fontSize: 16, fontWeight: 800, letterSpacing: '0.12em' }}>SAYO</p>
-              <p style={{ textAlign: 'center', fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', marginTop: 3 }}>LOCATION DETAIL REPORT</p>
-              <p style={{ textAlign: 'center', fontSize: 10.5, color: '#6b7280', marginTop: 3 }}>
-                Printed on {now.toLocaleDateString('en-GB')} at {now.toLocaleTimeString('en-GB')}
-              </p>
-              <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 640, margin: '18px auto 0' }}>
-                <tbody>
-                  <R k="Location Code (LocCode)">{fLocCode}</R>
-                  <R k="Location Description (LocDes)">{fLocDes || '—'}</R>
-                  <R k="Address">{fAddress || '—'}</R>
-                  <R k="Status">{fEnable ? 'Active / Enabled' : 'Disabled'}</R>
-                  <R k="Location Type">{typeTxt}</R>
-                  {fSub ? <R k="Under Main Location">{underTxt}</R> : null}
-                  {fMain ? <R k="Sub Locations">{subs.length ? subs.map((s) => `${s.LocDes} (${s.LocCode})`).join(', ') : 'None yet'}</R> : null}
-                </tbody>
-              </table>
-              <p style={{ marginTop: 28, fontSize: 11, color: '#374151', textAlign: 'left', maxWidth: 640, margin: '28px auto 0' }}>
-                Printed by: Admin&emsp;Signature: __________________
-              </p>
-            </div>
-          );
-        })()}
-      </div>
+      <MasterPrintSheet
+            title="Location Details"
+            columns={[
+              { label: 'Loc Code', width: '90px' },
+              { label: 'Description' },
+              { label: 'Type', width: '110px' },
+              { label: 'Under', width: '150px' },
+              { label: 'Address' },
+              { label: 'Status', width: '80px', align: 'c' },
+            ]}
+            rows={locations
+              .slice()
+              .sort((a, b) => a.LocCode.localeCompare(b.LocCode))
+              .map((l) => [
+                l.LocCode,
+                l.LocDes,
+                l.MainLoc ? 'Main' : l.SubLoc ? 'Sub' : 'Branch',
+                l.SubLoc ? (l.MainLocDes || l.MainLocCode || '—') : '—',
+                l.Address || '',
+                l.Enable ? 'Enabled' : 'Disabled',
+              ])}
+            emptyText="No locations"
+          />
     </>
   );
 }

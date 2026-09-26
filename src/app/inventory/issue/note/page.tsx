@@ -504,7 +504,7 @@ export default function IssueNotePage() {
       copy,
       cols,
       colCount: cols.costPrice ? 6 : 4,
-      companyName: (company.name || fromLocObj?.des || 'SAYO').trim(),
+      companyName: (company.name || 'SAYO BEAUTY').trim(),
       companyAddress: (company.address || fromLocObj?.address || '').trim(),
       companyPhone: (company.phone || '').trim(),
       branch: (fromLocObj?.des || '').trim(),
@@ -664,12 +664,12 @@ export default function IssueNotePage() {
                   <option value="">— choose —</option>
                   {locations.filter((l) => l.mainLoc).map((l) => (
                     <option key={l.code} value={l.code}>
-                      {l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}
+                      {l.des} ({l.code}){l.enable ? '' : ' (Inactive)'}
                     </option>
                   ))}
                   {fromLoc && !locations.some((l) => l.code === fromLoc && l.mainLoc) && (
                     <option key={fromLoc} value={fromLoc}>
-                      {fromLoc} — {locations.find((l) => l.code === fromLoc)?.des || 'saved location'}
+                      {locations.find((l) => l.code === fromLoc)?.des || 'saved location'} ({fromLoc})
                     </option>
                   )}
                 </select>
@@ -684,12 +684,12 @@ export default function IssueNotePage() {
                   <option value="">— choose —</option>
                   {locations.filter((l) => l.mainLoc).map((l) => (
                     <option key={l.code} value={l.code}>
-                      {l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}
+                      {l.des} ({l.code}){l.enable ? '' : ' (Inactive)'}
                     </option>
                   ))}
                   {toLoc && !locations.some((l) => l.code === toLoc && l.mainLoc) && (
                     <option key={toLoc} value={toLoc}>
-                      {toLoc} — {locations.find((l) => l.code === toLoc)?.des || 'saved location'}
+                      {locations.find((l) => l.code === toLoc)?.des || 'saved location'} ({toLoc})
                     </option>
                   )}
                 </select>

@@ -462,7 +462,7 @@ export default function TransferRequisitionPage() {
       copy,
       cols,
       colCount: cols.costPrice ? 6 : 4,
-      companyName: (company.name || fromLocObj?.des || 'SAYO').trim(),
+      companyName: (company.name || 'SAYO BEAUTY').trim(),
       companyAddress: (company.address || fromLocObj?.address || '').trim(),
       companyPhone: (company.phone || '').trim(),
       branch: (fromLocObj?.des || '').trim(),
@@ -600,13 +600,13 @@ export default function TransferRequisitionPage() {
                   <option value="">— choose a sub location —</option>
                   {locations.filter((l) => l.subLoc).map((l) => (
                     <option key={l.code} value={l.code}>
-                      {l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}
+                      {l.des} ({l.code}){l.enable ? '' : ' (Inactive)'}
                     </option>
                   ))}
                   {/* a requisition saved before the Main/Sub structure still shows correctly */}
                   {fromLoc && !locations.some((l) => l.code === fromLoc && l.subLoc) && (
                     <option key={fromLoc} value={fromLoc}>
-                      {fromLoc} — {locations.find((l) => l.code === fromLoc)?.des || 'saved location'}
+                      {locations.find((l) => l.code === fromLoc)?.des || 'saved location'} ({fromLoc})
                     </option>
                   )}
                 </select>
@@ -620,7 +620,7 @@ export default function TransferRequisitionPage() {
                   <option value="">— the sub location’s main comes here —</option>
                   {toLoc && (
                     <option key={toLoc} value={toLoc}>
-                      {toLoc} — {locations.find((l) => l.code === toLoc)?.des || ''}
+                      {locations.find((l) => l.code === toLoc)?.des || toLoc}
                     </option>
                   )}
                 </select>

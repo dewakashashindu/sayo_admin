@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 
 interface Supplier {
@@ -488,6 +489,8 @@ export default function SupplierMasterPage() {
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
 
+      <style>{MASTER_PRINT_CSS}</style>
+
       {toast && <div className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
 
       <div style={{ display:'flex', height:'100vh', overflow:'hidden', background: PAGE }}>
@@ -846,6 +849,24 @@ export default function SupplierMasterPage() {
           </div>
         </div>
       </div>
+      <MasterPrintSheet
+        title="Supplier Details"
+        columns={[
+          { label: 'Supplier Code', width: '120px' },
+          { label: 'Name' },
+          { label: 'Address' },
+          { label: 'Phone', width: '110px' },
+          { label: 'Status', width: '80px', align: 'c' },
+        ]}
+        rows={filtered.map((sup) => [
+          sup.supID,
+          sup.supName,
+          sup.suppAdd1 || '',
+          sup.contactNO || '',
+          sup.enable ? 'Enabled' : 'Disabled',
+        ])}
+        emptyText="No suppliers"
+      />
     </>
   );
 }

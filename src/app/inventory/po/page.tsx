@@ -602,7 +602,7 @@ export default function PurchaseOrderPage() {
       copy,
       cols,
       colCount: poPrintColumnCount(copy),
-      companyName: (company.name || location?.des || 'SAYO').trim(),
+      companyName: (company.name || 'SAYO BEAUTY').trim(),
       companyAddress: (company.address || location?.address || '').trim(),
       companyPhone: (company.phone || '').trim(),
       branch: (location?.des || '').trim(),
@@ -734,7 +734,7 @@ export default function PurchaseOrderPage() {
                   <option value="">— choose —</option>
                   {locations.map((l) => (
                     <option key={l.code} value={l.code}>
-                      {l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}
+                      {l.des} ({l.code}){l.enable ? '' : ' (Inactive)'}
                     </option>
                   ))}
                 </select>
@@ -891,7 +891,7 @@ export default function PurchaseOrderPage() {
                 <select value={locCode} onChange={(e) => setLocCode(e.target.value)}>
                   <option value="">— choose —</option>
                   {locations.map((l) => (
-                    <option key={l.code} value={l.code}>{l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}</option>
+                    <option key={l.code} value={l.code}>{l.des} ({l.code}){l.enable ? '' : ' (Inactive)'}</option>
                   ))}
                 </select>
                 <button className="btn" onClick={() => void loadReqs()} disabled={reqBusy || !locCode}>

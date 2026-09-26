@@ -9,6 +9,7 @@ import React, {
   useCallback,
 } from "react";
 import { useRouter } from "next/navigation";
+import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 import AdminSidebar, { SIDEBAR_CSS } from "@/components/AdminSidebar";
 
 type MofValue = "M" | "F" | "O";
@@ -2889,6 +2890,8 @@ export default function ItemMasterPage() {
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
 
+      <style>{MASTER_PRINT_CSS}</style>
+
       {toast && (
         <div className={`toast ${toast.err ? "err" : ""}`}>{toast.msg}</div>
       )}
@@ -4514,6 +4517,28 @@ export default function ItemMasterPage() {
           </div>
         </div>
       </div>
+      <MasterPrintSheet
+        title="Item Details"
+        columns={[
+          { label: 'Item Code', width: '120px' },
+          { label: 'Description' },
+          { label: 'Loc', width: '70px' },
+          { label: 'Unit', width: '70px', align: 'c' },
+          { label: 'Retail Price', width: '100px', align: 'r' },
+        ]}
+        rows={items
+          .slice()
+          .sort((a, b) => a.itemCode.localeCompare(b.itemCode))
+          .map((item) => [
+            item.itemCode,
+            item.itemDes,
+            // print the referenced master's NAME, never its code
+            locations.find((l) => l.code === item.locCode)?.name || item.locCode,
+            units.find((u) => u.id === item.masterUnitID)?.des || item.masterUnitID,
+            Number(item.retailPrice || 0).toFixed(2),
+          ])}
+        emptyText="No items"
+      />
     </>
   );
 }

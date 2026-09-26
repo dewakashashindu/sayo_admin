@@ -66,7 +66,7 @@ const lineValue = (cost: string, qty: string, free: string) =>
 
 /* The Unit column shows the unit NAME and stores the unit code — exactly like
    the purchase order screen, and like the legacy sheet. */
-const unitName = (units: LookupUnit[], id: string) => units.find((u) => u.id === id)?.des || '';
+const unitName = (units: LookupUnit[], id: string) => units.find((u) => u.id === id)?.des || id || '';
 
 function useToast() {
   const [toast, setToast] = useState<{ msg: string; err: boolean } | null>(null);
@@ -167,7 +167,7 @@ export default function GrnPage() {
         setLocations(locs);
         setSuppliers(sups);
         setUnits(json.units ?? []);
-        if((json as any).company) setCompany({name:(json as any).company.name||'SAYO',address:(json as any).company.address||'',phone:(json as any).company.phone||''});
+        if((json as any).company) setCompany({name:(json as any).company.name||'SAYO BEAUTY',address:(json as any).company.address||'',phone:(json as any).company.phone||''});
         setLookupErrors(json.errors ?? {});
         setLookupNote(`${locs.length} location(s) · ${sups.length} supplier(s) loaded`);
         setLocCode((prev) => prev || locs[0]?.code || '');
@@ -795,7 +795,7 @@ export default function GrnPage() {
                 <select value={locCode} onChange={(e) => { setLocCode(e.target.value); setDirty(true); }} disabled={locked}>
                   <option value="">— choose —</option>
                   {locations.map((l) => (
-                    <option key={l.code} value={l.code}>{l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}</option>
+                    <option key={l.code} value={l.code}>{l.des} ({l.code}){l.enable ? '' : ' (Inactive)'}</option>
                   ))}
                 </select>
 
@@ -1429,9 +1429,9 @@ const PAGE_CSS = `
     .modal-bg { display:none !important; }
     .po-shell { display:block; height:auto; background:#fff; }
     .po-main { overflow:visible; padding:0; }
-    .po-card { border:none; padding:0; }
+    .po-card { border:none; padding:0; background:transparent !important; }
     .po-print-head { display:none !important; } /* PO-style InventoryPrintSheet owns the header */
-    .po-grid-wrap { max-height:none; overflow:visible; border:none; }
-    .po-table thead th { background:#eee; }
+    .po-grid-wrap { display:none !important; }
+    .po-totals, .entry-strip, .code-hint { display:none !important; }
   }
 `;

@@ -48,7 +48,7 @@ export default function SupplierReturnPage(){
   const [mailOpen,setMailOpen]=useState(false); const [mailTo,setMailTo]=useState(''); const [mailCopy,setMailCopy]=useState<PoPrintCopy>('standard'); const [mailSubject,setMailSubject]=useState(''); const [mailMessage,setMailMessage]=useState(''); const [mailSending,setMailSending]=useState(false);
   const [actor,setActor]=useState('');
 
-  useEffect(()=>{ let a=true;(async()=>{ try{ const r=await fetch('/api/inventory/lookups',{cache:'no-store'}); const j=await r.json() as any; if(!a) return; if(!r.ok||!j?.success) throw new Error(); const locs=j.locations??[]; const sups=j.suppliers??[]; setLocations(locs); setSuppliers(sups); setUnits(j.units??[]); if(j.company){ setCompany({name:j.company.name||'SAYO',address:j.company.address||'',phone:j.company.phone||''}); } setLookupNote(`${locs.length} location(s) · ${sups.length} supplier(s)`); setLocCode(p=>p||locs[0]?.code||''); }catch{ if(a){ setLookupNote(''); showToast('Could not load lookups',true);} } })(); return()=>{a=false}; },[showToast]);
+  useEffect(()=>{ let a=true;(async()=>{ try{ const r=await fetch('/api/inventory/lookups',{cache:'no-store'}); const j=await r.json() as any; if(!a) return; if(!r.ok||!j?.success) throw new Error(); const locs=j.locations??[]; const sups=j.suppliers??[]; setLocations(locs); setSuppliers(sups); setUnits(j.units??[]); if(j.company){ setCompany({name:j.company.name||'SAYO BEAUTY',address:j.company.address||'',phone:j.company.phone||''}); } setLookupNote(`${locs.length} location(s) · ${sups.length} supplier(s)`); setLocCode(p=>p||locs[0]?.code||''); }catch{ if(a){ setLookupNote(''); showToast('Could not load lookups',true);} } })(); return()=>{a=false}; },[showToast]);
 
   useEffect(()=>{ let a=true; (async()=>{ try{ const r=await fetch('/api/auth/admin-me',{cache:'no-store'}); const j=await r.json() as any; if(!a||!j?.success) return; setActor(j.user?.username||j.user?.name||''); }catch{} })(); return()=>{a=false}; },[]);
 
@@ -239,7 +239,7 @@ export default function SupplierReturnPage(){
           {tab==='details' && (
             <div className="po-card">
               <div className="po-form no-print">
-                <label>Location</label><select value={locCode} onChange={e=>{setLocCode(e.target.value); setDirty(true);}} disabled={locked}><option value="">— choose —</option>{locations.map(l=><option key={l.code} value={l.code}>{l.code} — {l.des}{l.enable?'':' (Inactive)'}</option>)}</select>
+                <label>Location</label><select value={locCode} onChange={e=>{setLocCode(e.target.value); setDirty(true);}} disabled={locked}><option value="">— choose —</option>{locations.map(l=><option key={l.code} value={l.code}>{l.des} ({l.code}){l.enable?'':' (Inactive)'}</option>)}</select>
                 <label>GRN No.</label><select value={grnNo} onChange={e=>void chooseGrn(e.target.value)} disabled={locked}><option value="">— choose a confirmed GRN —</option>{openGrns.map(o=><option key={o.grnNo} value={o.grnNo}>{o.grnNo} — {o.supName||o.supID} ({dayOf(o.grnDate)})</option>)}</select>
                 <label>SRN No</label><input value={srnNo.trim()} readOnly placeholder="issued on save" className="mono" style={{background:'#fff8dc'}} />
                 <label>Supplier</label><select value={supID} disabled><option value="">— set by the GRN —</option>{suppliers.map(s=><option key={s.supID} value={s.supID}>{s.supID} — {s.name}</option>)}</select>
@@ -412,5 +412,5 @@ const PAGE_CSS = `
   .mail-hint{font-size:11.5px;color:#5b7176}
   .mail-attach{font-size:11.5px;color:#3c5a60;background:#eef4f4;border-radius:8px;padding:8px 10px}
 
-  @media print{.no-print{display:none!important} .po-shell{display:block;height:auto} .po-main{overflow:visible;padding:0} .po-card{border:none;padding:0} .po-grid-wrap{max-height:none;overflow:visible;border:none}}
+  @media print{.no-print{display:none!important} .po-shell{display:block;height:auto} .po-main{overflow:visible;padding:0} .po-card{border:none;padding:0;background:transparent!important} .po-grid-wrap{display:none!important}}
 `;

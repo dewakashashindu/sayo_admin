@@ -536,7 +536,7 @@ export default function TransferReturnPage() {
       copy,
       cols,
       colCount: cols.costPrice ? 6 : 4,
-      companyName: (company.name || fromLocObj?.des || 'SAYO').trim(),
+      companyName: (company.name || 'SAYO BEAUTY').trim(),
       companyAddress: (company.address || fromLocObj?.address || '').trim(),
       companyPhone: (company.phone || '').trim(),
       branch: (fromLocObj?.des || '').trim(),
@@ -695,7 +695,7 @@ export default function TransferReturnPage() {
                   <option value="">— choose —</option>
                   {locations.map((l) => (
                     <option key={l.code} value={l.code}>
-                      {l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}
+                      {l.des} ({l.code}){l.enable ? '' : ' (Inactive)'}
                     </option>
                   ))}
                 </select>
@@ -710,7 +710,7 @@ export default function TransferReturnPage() {
                   <option value="">— choose —</option>
                   {locations.map((l) => (
                     <option key={l.code} value={l.code}>
-                      {l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}
+                      {l.des} ({l.code}){l.enable ? '' : ' (Inactive)'}
                     </option>
                   ))}
                 </select>

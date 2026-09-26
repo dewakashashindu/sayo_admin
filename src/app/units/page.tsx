@@ -3,6 +3,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 
 interface MasterUnit {
@@ -679,6 +680,8 @@ export default function UnitsPage() {
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
 
+      <style>{MASTER_PRINT_CSS}</style>
+
       {toast && (
         <div className={`toast ${toast.type === 'success' ? 'toast-success' : 'toast-error'}`}>
           {toast.msg}
@@ -1142,6 +1145,27 @@ export default function UnitsPage() {
           </div>
         </div>
       </div>
+      <MasterPrintSheet
+        title={section === 'master' ? 'Unit Details — Master Units' : section === 'sub' ? 'Unit Details — Sub Units' : 'Unit Details — Conversions'}
+        columns={section === 'conversion'
+          ? [
+              { label: 'Master Unit', width: '150px' },
+              { label: 'Sub Unit', width: '150px' },
+              { label: 'No of Units', width: '90px', align: 'r' },
+              { label: 'Status', width: '80px', align: 'c' },
+            ]
+          : [
+              { label: 'Unit Code', width: '120px' },
+              { label: 'Description' },
+              { label: 'Status', width: '80px', align: 'c' },
+            ]}
+        rows={section === 'master'
+          ? filteredMasters.map((m) => [m.MasterUnitID, m.UnitDes, m.Enable ? 'Enabled' : 'Disabled'])
+          : section === 'sub'
+            ? filteredSubs.map((u) => [u.SubUnitID, u.SubUnitDes, u.Enable ? 'Enabled' : 'Disabled'])
+            : filteredConvs.map((c) => [masterDes(c.MasterUnitID), subDes(c.SubUnitID), String(c.NoOfUnits), c.Enable ? 'Enabled' : 'Disabled'])}
+        emptyText="No units"
+      />
     </>
   );
 }

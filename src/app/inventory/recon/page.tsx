@@ -94,7 +94,7 @@ export default function ReconPage() {
         if (!res.ok || !j?.success) throw new Error(j?.message || `HTTP ${res.status}`);
         const locs = j.locations ?? [];
         setLocations(locs); setUnits(j.units ?? []);
-        if(j.company) setCompany({name:j.company.name||'SAYO',address:j.company.address||'',phone:j.company.phone||''});
+        if(j.company) setCompany({name:j.company.name||'SAYO BEAUTY',address:j.company.address||'',phone:j.company.phone||''});
         setLookupNote(`${locs.length} location(s) loaded`);
         setLocCode((prev) => prev || locs[0]?.code || '');
         // categories — 4 masters, CatDes shown, Code stored
@@ -372,7 +372,7 @@ export default function ReconPage() {
                 <label>Location</label>
                 <select value={locCode} onChange={(e) => { setLocCode(e.target.value); setDirty(true); }} disabled={locked}>
                   <option value="">— choose —</option>
-                  {locations.map((l) => <option key={l.code} value={l.code}>{l.code} — {l.des}{l.enable ? '' : ' (Inactive)'}</option>)}
+                  {locations.map((l) => <option key={l.code} value={l.code}>{l.des} ({l.code}){l.enable ? '' : ' (Inactive)'}</option>)}
                 </select>
                 <label>Sub cat1</label>
                 <select value={sub1} onChange={(e) => setSub1(e.target.value)} disabled={locked}>
@@ -594,5 +594,5 @@ const PAGE_CSS = `
   .mail-hint{font-size:11.5px;color:#5b7176}
   .mail-attach{font-size:11.5px;color:#3c5a60;background:#eef4f4;border-radius:8px;padding:8px 10px}
 
-  @media print{.no-print{display:none!important} html,body{background:#fff!important} .po-shell{display:block;height:auto} .po-main{overflow:visible;padding:0} .po-card{border:none;padding:0} .po-grid-wrap{max-height:none;overflow:visible;border:none} .po-print-head{display:block;font-size:12px;margin-bottom:8px} .po-print-only{display:block}}
+  @media print{.no-print{display:none!important} html,body{background:#fff!important} .po-shell{display:block;height:auto} .po-main{overflow:visible;padding:0} .po-card{border:none;padding:0;background:transparent!important} .po-grid-wrap{display:none!important} .po-print-head{display:none!important} .po-print-only{display:none!important}}
 `;

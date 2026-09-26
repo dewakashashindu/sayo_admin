@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 
 interface Category {
@@ -157,14 +158,6 @@ const PAGE_CSS = `
     border-radius:12px; padding:16px 20px;
   }
 
-  /* The Print button prints ONLY this hidden report, never the app shell */
-  #cat-print-area { display:none; }
-  @media print {
-    html, body { overflow:visible !important; height:auto !important; }
-    body * { visibility:hidden !important; }
-    #cat-print-area, #cat-print-area * { visibility:visible !important; }
-    #cat-print-area { display:block !important; position:absolute; inset:0 0 auto 0; }
-  }
 
   @media(max-width:767px) {
     .left-panel { display:none !important; }
@@ -475,10 +468,6 @@ export default function CategoriesPage() {
   }
 
   function handlePrint() {
-    if (isNew || !current.catCode) {
-      showToast('Select a category to print', true);
-      return;
-    }
     window.print();
   }
   function handleLogout() {
@@ -497,6 +486,8 @@ export default function CategoriesPage() {
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
+
+      <style>{MASTER_PRINT_CSS}</style>
 
       {/* Toast */}
       {toast && (
@@ -821,41 +812,20 @@ export default function CategoriesPage() {
       </div>
 
       {}
-      <div id="cat-print-area" aria-hidden="true">
-        {(() => {
-          const now = new Date();
-          const levelName = activeTabCfg.label;
-          const R = ({ k, children }: { k: string; children: React.ReactNode }) => (
-            <tr>
-              <td style={{ border: '1px solid #94a3b8', padding: '6px 10px', fontSize: 12, fontWeight: 700, background: '#eef4f5', width: 220 }}>{k}</td>
-              <td style={{ border: '1px solid #94a3b8', padding: '6px 10px', fontSize: 12 }}>{children}</td>
-            </tr>
-          );
-          return (
-            <div style={{ padding: '18mm 14mm', background: '#fff', color: '#111827', fontFamily: "'Inter',sans-serif" }}>
-              <p style={{ textAlign: 'center', fontSize: 16, fontWeight: 800, letterSpacing: '0.12em' }}>SAYO</p>
-              <p style={{ textAlign: 'center', fontSize: 12, fontWeight: 700, letterSpacing: '0.08em', marginTop: 3 }}>
-                CATEGORY DETAIL REPORT — {levelName.toUpperCase()}
-              </p>
-              <p style={{ textAlign: 'center', fontSize: 10.5, color: '#6b7280', marginTop: 3 }}>
-                Printed on {now.toLocaleDateString('en-GB')} at {now.toLocaleTimeString('en-GB')}
-              </p>
-              <table style={{ borderCollapse: 'collapse', width: '100%', maxWidth: 620, margin: '18px auto 0' }}>
-                <tbody>
-                  <R k="Category Level">{levelName}</R>
-                  <R k="Category Code">{current.catCode || '—'}</R>
-                  <R k="Category Description">{current.catDes || '—'}</R>
-                  <R k="Status">{current.enable ? 'Active / Enabled' : 'Disabled'}</R>
-                  <R k="Total in this Level">{`${currentList.length} (Active ${totalActive} / Inactive ${totalInactive})`}</R>
-                </tbody>
-              </table>
-              <p style={{ fontSize: 11, color: '#374151', textAlign: 'left', maxWidth: 620, margin: '28px auto 0' }}>
-                Printed by: Admin&emsp;Signature: __________________
-              </p>
-            </div>
-          );
-        })()}
-      </div>
+      <MasterPrintSheet
+        title={`Category Details — ${activeTabCfg.label}`}
+        columns={[
+          { label: 'Category Code', width: '130px' },
+          { label: 'Description' },
+          { label: 'Status', width: '90px', align: 'c' },
+        ]}
+        rows={filtered.map((c) => [
+          c.catCode,
+          c.catDes,
+          c.enable ? 'Enabled' : 'Disabled',
+        ])}
+        emptyText="No categories"
+      />
     </>
   );
 }
