@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
+import { postIssueOutReversal } from "@/lib/issuePosting";
 import {
   findLocation,
   invActor,
@@ -152,7 +153,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   }
 }
 
-/** Lock the header and prove it is still a working draft (pending, nothing confirmed). */
+/** Lock the header and prove the receiver has not confirmed it yet. */
 async function lockPendingHead(tx: Prisma.TransactionClient, fromLoc: string, toLoc: string, inNo: string) {
   const rows = await tx.$queryRaw<{ INNO: string; Confirmed: string }[]>`
     SELECT RTRIM(h.INNO) AS INNO, UPPER(h.Confirmed) AS Confirmed
@@ -176,82 +177,13 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     const fromRaw = invId(sp.get("fromLoc"), "From Location", 10);
     const toRaw = invId(sp.get("toLoc"), "To Location", 10);
 
-    const body = (await req.json()) as Record<string, unknown>;
-    const irRaw = trim(body.irNo ?? body.IRNO);
-    const inDate = invDateField(body.inDate ?? body.INDate, "IN Date");
-    const remarks = trim(body.remarks).slice(0, 500);
-    const rawLines = Array.isArray(body.lines) ? (body.lines as any[]) : [];
-    if (rawLines.length === 0) throw new InvError("Add at least one line.");
-
-    const result = await prisma.$transaction(
-      async (tx) => {
-        await lockPendingHead(tx, fromRaw, toRaw, inNo);
-
-        const fromLoc = await findLocation(tx, fromRaw);
-        if (!fromLoc) throw new InvError(`Unknown From ${fromRaw}`, 400);
-        const toLoc = await findLocation(tx, toRaw);
-        if (!toLoc) throw new InvError(`Unknown To ${toRaw}`, 400);
-
-        if (irRaw) {
-          const rq = await tx.$queryRaw<{ IRNO: string; Confirmed: string }[]>`
-            SELECT RTRIM(IRNO) AS IRNO, UPPER(Confirmed) AS Confirmed
-            FROM tbl_issuereqheder
-            WHERE ${keySql("IRNO")}=${keyVal(irRaw)} AND ${keySql("FromLocCode")}=${keyVal(fromLoc)} AND ${keySql("ToLoc")}=${keyVal(toLoc)}
-            LIMIT 1`;
-          if (!rq.length) throw new InvError(`Requisition ${irRaw} not found for ${fromLoc} → ${toLoc}.`, 404);
-          if (trim(rq[0].Confirmed) !== "Y") throw new InvError(`Requisition ${irRaw} is not confirmed yet.`, 409);
-        }
-
-        const items = await resolveItems(tx, fromLoc, rawLines.map((l) => String(l.itemCode || "").trim()));
-        const lines = buildLines(items, fromLoc, rawLines);
-
-        // never issue more than the requisition still owes
-        if (irRaw) {
-          for (const l of lines) {
-            const owed = await tx.$queryRaw<{ Remaining: number }[]>`
-              SELECT IFNULL(d.IRQty,0) - IFNULL(d.IssuedQTY,0) AS Remaining
-              FROM tbl_issuereqdetail d
-              WHERE ${keySql("d.IRNo")}=${keyVal(irRaw)} AND ${keySql("d.ItemCode")}=${keyVal(l.itemCode)}
-                AND ${keySql("d.FromLocCode")}=${keyVal(fromLoc)} AND ${keySql("d.ToLoc")}=${keyVal(toLoc)}
-              LIMIT 1`;
-            if (owed.length && l.issuedQty > Number(owed[0].Remaining || 0) + 1e-9) {
-              throw new InvError(`Issued QTY of ${l.itemCode} (${l.issuedQty}) is more than the requisition still owes (${Number(owed[0].Remaining || 0)}).`, 400);
-            }
-          }
-        }
-
-        const netTotal = lines.reduce((s, l) => s + l.itemValue, 0);
-
-        await tx.$executeRaw`
-          UPDATE tbl_issuenoteheder
-          SET INDate=${inDate}, Remarks=${remarks}, IRNO=${invChar(irRaw, 10)},
-              NetTotal=${netTotal}
-          WHERE ${keySql("FromLocCode")}=${keyVal(fromRaw)} AND ${keySql("ToLoc")}=${keyVal(toRaw)} AND ${keySql("INNO")}=${keyVal(inNo)}
-        `;
-        await tx.$executeRaw`
-          DELETE FROM tbl_issuenotedetail
-          WHERE ${keySql("FromLocCode")}=${keyVal(fromRaw)} AND ${keySql("ToLoc")}=${keyVal(toRaw)} AND ${keySql("INNo")}=${keyVal(inNo)}
-        `;
-        for (const l of lines) {
-          await tx.$executeRaw`
-            INSERT INTO tbl_issuenotedetail
-              (FromLocCode,ToLoc,INNo,ItemCode,UnitID,CostPrice,IRQty,INQty,ItemValue,DirectPOConfNo,NewItem)
-            VALUES
-              (${invChar(fromLoc, 10)},${invChar(toLoc, 10)},${invChar(inNo, 10)},${invChar(l.itemCode, 10)},${invChar(l.unitID, 10)},
-               ${l.costPrice},${l.irQty},${l.issuedQty},${l.itemValue},${invChar(inNo, 10)},"")
-          `;
-        }
-        return { inNo, fromLoc, toLoc, netTotal, lines: lines.length };
-      },
-      { timeout: 30000 },
+    // the sender's stock moved out the moment this note was saved — changing
+    // lines after that would desync stock, so the note is deleted-and-recycled
+    await prisma.$transaction(async (tx) => { await lockPendingHead(tx, fromRaw, toRaw, inNo); }, { timeout: 20000 });
+    throw new InvError(
+      `Issue Note ${inNo} issued the stock when it was saved. To fix it, delete this note and make a new one.`,
+      409,
     );
-
-    await logActivity(actor.name, "inventory", `Issue Note ${inNo} updated — ${result.lines} line(s), net ${result.netTotal.toFixed(2)}`);
-    return NextResponse.json({
-      success: true,
-      data: result,
-      message: `Issue Note ${inNo} updated (${result.lines} line(s)).`,
-    });
   } catch (err) {
     return invFail(err, tag);
   }
@@ -267,9 +199,27 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
     const fromRaw = invId(sp.get("fromLoc"), "From Location", 10);
     const toRaw = invId(sp.get("toLoc"), "To Location", 10);
 
+    let giveBack = 0;
     await prisma.$transaction(
       async (tx) => {
         await lockPendingHead(tx, fromRaw, toRaw, inNo);
+        // the note issued this stock at save time — it goes back on delete
+        const head = await tx.$queryRaw<{ IRNO: string; SysSerialNo: number }[]>`
+          SELECT RTRIM(h.IRNO) AS IRNO, h.SysSerialNo AS SysSerialNo
+          FROM tbl_issuenoteheder h
+          WHERE ${keySql("h.FromLocCode")}=${keyVal(fromRaw)} AND ${keySql("h.ToLoc")}=${keyVal(toRaw)} AND ${keySql("h.INNO")}=${keyVal(inNo)}
+        `;
+        const dl = await tx.$queryRaw<{ ItemCode: string; IssuedQty: number }[]>`
+          SELECT RTRIM(d.ItemCode) AS ItemCode, d.INQty AS IssuedQty
+          FROM tbl_issuenotedetail d
+          WHERE ${keySql("d.FromLocCode")}=${keyVal(fromRaw)} AND ${keySql("d.ToLoc")}=${keyVal(toRaw)} AND ${keySql("d.INNo")}=${keyVal(inNo)}
+        `;
+        const reversal = await postIssueOutReversal(tx as any, {
+          inNo, fromLoc: fromRaw, toLoc: toRaw, irNo: trim(head[0]?.IRNO ?? ""),
+          lines: dl.map((l) => ({ itemCode: trim(l.ItemCode), qty: Number(l.IssuedQty || 0) })),
+          sysSerialId: Number(head[0]?.SysSerialNo || 0), userId: actor.userId,
+        });
+        giveBack = reversal.moved;
         await tx.$executeRaw`
           DELETE FROM tbl_issuenotedetail
           WHERE ${keySql("FromLocCode")}=${keyVal(fromRaw)} AND ${keySql("ToLoc")}=${keyVal(toRaw)} AND ${keySql("INNo")}=${keyVal(inNo)}
@@ -282,8 +232,8 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
       { timeout: 20000 },
     );
 
-    await logActivity(actor.name, "inventory", `Issue Note ${inNo} deleted (${fromRaw} → ${toRaw})`);
-    return NextResponse.json({ success: true, message: `Issue Note ${inNo} deleted.` });
+    await logActivity(actor.name, "inventory", `Issue Note ${inNo} deleted (${fromRaw} → ${toRaw}) — issued stock given back (${giveBack} line(s))`);
+    return NextResponse.json({ success: true, message: `Issue Note ${inNo} deleted — the issued stock is back at ${fromRaw}.` });
   } catch (err) {
     return invFail(err, tag);
   }

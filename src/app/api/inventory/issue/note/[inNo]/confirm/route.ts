@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { invActor, invChar, invFail, invId, InvError, keySql, keyVal } from "@/lib/inventoryServer";
-import { postIssueConfirmation } from "@/lib/issuePosting";
+import { postIssueIn } from "@/lib/issuePosting";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,9 +16,9 @@ if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
 type Ctx = { params: Promise<{ inNo: string }> };
 const trim = (v: unknown) => String(v ?? "").trim();
 
-// Confirming an Issue Note moves the stock: "IO" out of the From location and
-// "II" into the To location; IssuedQTY grows on the requisition in the same
-// From/To order; TakenForIssue = '1' once the whole requisition is issued.
+// The RECEIVER confirms the Issue Note: the stock left the sender when the note
+// was saved, and only now lands at the receiving location ("II" + batches +
+// ledger). The requisition bookkeeping already happened at issue time.
 export async function POST(req: NextRequest, ctx: Ctx) {
   const tag = "POST /api/inventory/issue/note/[inNo]/confirm";
   try {
@@ -55,8 +55,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
           FROM tbl_issuenotedetail d
           WHERE ${keySql("d.FromLocCode")}=${keyVal(fromLoc)} AND ${keySql("d.ToLoc")}=${keyVal(toLoc)} AND ${keySql("d.INNo")}=${keyVal(inNo)}
         `;
-        const posting = await postIssueConfirmation(tx as any, {
-          inNo, fromLoc, toLoc, irNo: trim(rows[0].IRNO),
+        const posting = await postIssueIn(tx as any, {
+          inNo, fromLoc, toLoc,
           lines: dl.map((l) => ({ itemCode: trim(l.ItemCode), qty: Number(l.IssuedQty || 0) })),
           sysSerialId: Number(rows[0].SysSerialNo || 0), userId: actor.userId,
         });
@@ -65,11 +65,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       { timeout: 30000 },
     );
 
-    await logActivity(actor.name, "inventory", `Issue Note ${inNo} confirmed (${fromLoc} → ${toLoc}) — ${result.lines} line(s), stock moved (${result.moved}), net ${result.netTotal.toFixed(2)}`);
+    await logActivity(actor.name, "inventory", `Issue Note ${inNo} received at ${toLoc} (${fromLoc} → ${toLoc}) — ${result.lines} line(s), stock added (${result.moved}), net ${result.netTotal.toFixed(2)}`);
     return NextResponse.json({
       success: true,
       data: { inNo, fromLocCode: fromLoc, toLoc, confirmed: true },
-      message: `Issue Note ${inNo} confirmed — stock moved (${result.moved} line(s)).`,
+      message: `Issue Note ${inNo} confirmed — stock added to ${toLoc} (${result.moved} line(s)).`,
     });
   } catch (err) {
     return invFail(err, tag);

@@ -68,6 +68,26 @@ export default function IssueNotePage() {
   const [units, setUnits] = useState<LookupUnit[]>([]);
   const [lookupErrors, setLookupErrors] = useState<Record<string, string>>({});
   const [lookupNote, setLookupNote] = useState('Loading locations and units…');
+
+  /* receiver inbox — issue notes the receiver still has to confirm.
+     A new note shows up here for everyone; whoever physically received the
+     goods opens it from the drawer and hits Confirm Receipt. */
+  const [inbox, setInbox] = useState<FindRow[]>([]);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const loadInbox = useCallback(async () => {
+    try {
+      const res = await fetch('/api/inventory/issue/note?status=pending&limit=50', { cache: 'no-store' });
+      const json = await res.json() as { success?: boolean; data?: FindRow[] };
+      if (res.ok && json?.success) setInbox(json.data ?? []);
+    } catch { /* the badge just keeps its last count */ }
+  }, []);
+  useEffect(() => {
+    let stop = false;
+    const tick = async () => { if (!stop) await loadInbox(); };
+    void tick();
+    const t = window.setInterval(() => { void tick(); }, 20000);
+    return () => { stop = true; window.clearInterval(t); };
+  }, [loadInbox]);
   const [company, setCompany] = useState<LookupCompany>({ name: '', address: '', phone: '' });
 
   /* printing */
@@ -385,6 +405,7 @@ export default function IssueNotePage() {
       if (json.data?.inNo) setInNo(json.data.inNo);
       setDirty(false);
       showToast(json.message || 'Saved ✓');
+      void loadInbox();
       return true;
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Save failed', true);
@@ -405,7 +426,7 @@ export default function IssueNotePage() {
       }
       const number = inNo || '';
       if (!number) { showToast('Save the issue note before confirming it', true); return; }
-      if (!confirm(`Confirm issue note ${number}?\nA confirmed note can no longer be edited or deleted.`)) return;
+      if (!confirm(`Confirm receipt of issue note ${number}?\nThe stock is added to your location now.`)) return;
 
       const res = await fetch(`/api/inventory/issue/note/${encodeURIComponent(number)}/confirm`, {
         method: 'POST',
@@ -417,6 +438,7 @@ export default function IssueNotePage() {
         throw new Error(json?.hint ? `${json.message} — ${json.hint}` : (json?.message || 'Confirmation failed'));
       }
       setConfirmed(true);
+      void loadInbox();
       setLastResult(json.message || `Issue Note ${number} confirmed.`);
       showToast(json.message || 'Confirmed ✓');
     } catch (err) {
@@ -789,7 +811,7 @@ export default function IssueNotePage() {
                 <button className="btn" onClick={addLine} disabled={locked}>+ Add line</button>
                 <button className="btn" onClick={handleClear} disabled={busy}>Clear</button>
                 <button className="btn" onClick={() => void handleConfirm()} disabled={busy || confirmed}>
-                  {confirming ? 'Confirming…' : 'Confirmation'}
+                  {confirming ? 'Confirming…' : confirmed ? 'Received ✓' : 'Confirm Receipt'}
                 </button>
                 <button className="btn" onClick={handlePrint} disabled={busy}>Print</button>
                 <button className="btn danger" onClick={() => void handleDelete()} disabled={busy || !inNo || confirmed}>
@@ -831,6 +853,38 @@ export default function IssueNotePage() {
         </div>
       )}
 
+
+      {/* receiver inbox — the floating badge opens the slide-out drawer */}
+      {inbox.length > 0 && !inboxOpen && (
+        <button type="button" className="inbox-fab no-print" onClick={() => setInboxOpen(true)}
+                title="Issue notes waiting to be confirmed">
+          <span className="inbox-fab-count">{inbox.length}</span>
+          Issue notes to receive
+        </button>
+      )}
+      <div className={`inbox-drawer no-print${inboxOpen ? ' open' : ''}`} role="dialog" aria-label="Incoming issue notes">
+        <div className="inbox-head">
+          <div>
+            <div className="inbox-title">Issue notes to receive</div>
+            <div className="inbox-sub">{inbox.length} waiting for a receipt confirmation</div>
+          </div>
+          <button type="button" className="inbox-x" onClick={() => setInboxOpen(false)} aria-label="Close">✕</button>
+        </div>
+        <div className="inbox-list">
+          {inbox.length === 0 && <div className="inbox-empty">Nothing waiting to be received.</div>}
+          {inbox.map((r) => (
+            <button type="button" key={`${r.fromLocCode}|${r.toLoc}|${r.inNo}`} className="inbox-row"
+                    onClick={() => { setInboxOpen(false); void openNote(r); }}>
+              <div className="inbox-row-top">
+                <span className="inbox-inno">{r.inNo}</span>
+                <span className="inbox-date">{poPrintDate(r.inDate)}</span>
+              </div>
+              <div className="inbox-row-locs">{r.fromLocDes || r.fromLocCode} → {r.toLocDes || r.toLoc}</div>
+              <div className="inbox-row-meta">{r.irNo ? `IR ${r.irNo} · ` : ''}Net {r.netTotal.toFixed(2)}</div>
+            </button>
+          ))}
+        </div>
+      </div>
 
       {}
       {printJob && (
@@ -1009,4 +1063,49 @@ const PAGE_CSS = `
     .no-print, .po-tabs, .po-note, .po-state, .po-shell, .toast, .ask-back { display:none !important; }
     html, body { background:#fff !important; height:auto; background-image:none !important; }
   }
+
+  /* receiver inbox — floating badge + right-side slide drawer */
+  .inbox-fab {
+    position:fixed; right:16px; bottom:22px; z-index:60;
+    display:flex; align-items:center; gap:9px;
+    background:#1e3a40; color:#fff; border:none; border-radius:999px;
+    padding:11px 18px; font-size:12.5px; font-weight:700; cursor:pointer;
+    box-shadow:0 8px 24px rgba(0,0,0,0.3); animation:inbox-pop .35s ease;
+  }
+  .inbox-fab:hover { background:#2a5260; }
+  .inbox-fab-count {
+    background:#e2503c; color:#fff; border-radius:999px; min-width:22px; height:22px;
+    display:flex; align-items:center; justify-content:center; font-size:11.5px; font-weight:800;
+    padding:0 6px; animation:inbox-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes inbox-pulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.14); } }
+  @keyframes inbox-pop { from { transform:translateY(12px); opacity:0; } to { transform:none; opacity:1; } }
+  .inbox-drawer {
+    position:fixed; top:0; right:0; bottom:0; width:400px; max-width:92vw; z-index:70;
+    background:#f4f8f8; border-left:2px solid #1e3a40; box-shadow:-14px 0 34px rgba(0,0,0,0.28);
+    transform:translateX(102%); transition:transform .28s ease;
+    display:flex; flex-direction:column;
+  }
+  .inbox-drawer.open { transform:none; }
+  .inbox-head {
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:14px 16px; background:#1e3a40; color:#fff;
+  }
+  .inbox-title { font-size:14px; font-weight:800; letter-spacing:.02em; }
+  .inbox-sub { font-size:11px; opacity:.85; margin-top:2px; }
+  .inbox-x { background:rgba(255,255,255,0.14); color:#fff; border:none; border-radius:8px; width:30px; height:30px; font-size:14px; cursor:pointer; }
+  .inbox-x:hover { background:rgba(255,255,255,0.28); }
+  .inbox-list { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .inbox-empty { text-align:center; color:#8496a0; font-size:12.5px; padding:30px 0; }
+  .inbox-row {
+    text-align:left; background:#fff; border:1px solid rgba(30,58,64,0.16); border-radius:12px;
+    padding:11px 13px; cursor:pointer; display:flex; flex-direction:column; gap:4px;
+    font-family:inherit; box-shadow:0 2px 8px rgba(0,0,0,0.05);
+  }
+  .inbox-row:hover { border-color:#1e3a40; box-shadow:0 4px 14px rgba(30,58,64,0.14); }
+  .inbox-row-top { display:flex; justify-content:space-between; align-items:center; }
+  .inbox-inno { font-weight:800; font-size:13px; color:#0b5cab; letter-spacing:.02em; }
+  .inbox-date { font-size:11px; color:#75868c; }
+  .inbox-row-locs { font-size:12px; font-weight:600; color:#1e3a40; }
+  .inbox-row-meta { font-size:11px; color:#75868c; }
 `;

@@ -2,13 +2,15 @@
 // GET  /api/inventory/issue/note?status=&q=&fromLoc=&toLoc=&limit=
 // POST /api/inventory/issue/note  body: {irNo,fromLocCode,toLoc,inDate,remarks,lines:[{itemCode,unitID,costPrice,irQty,issuedQty}], confirm?:boolean}
 // The Issue Note consumes a confirmed Issue Requisition (same From/To order —
-// no location swap, unlike the transfer chain). Confirming it moves stock.
+// no location swap, unlike the transfer chain). SAVING it moves the stock OUT of
+// the issuing location immediately; the receiving location confirms RECEIPT
+// separately (that is when the stock lands there).
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
 import { nextSerialTx, SERIAL_CODES } from "@/lib/serials";
-import { postIssueConfirmation } from "@/lib/issuePosting";
+import { postIssueOut } from "@/lib/issuePosting";
 import { findLocation, invActor, invChar, invDateField, invFail, invId, invPrice, invQty, InvError, resolveItems, keySql, keyVal } from "@/lib/inventoryServer";
 
 export const runtime = "nodejs";
@@ -66,7 +68,7 @@ export async function POST(req: NextRequest) {
     if (fromRaw === toRaw) throw new InvError("From and To must differ.");
     const inDate = invDateField(body.inDate ?? body.INDate ?? new Date().toISOString().slice(0, 10), "IN Date");
     const remarks = trim(body.remarks).slice(0, 500);
-    const confirmNow = body.confirm === true || trim(body.confirm) === '1' || trim(body.confirm) === 'Y';
+    // a body.confirm flag is ignored — the receiver confirms receipt on their side
     const allLines = Array.isArray(body.lines) ? (body.lines as any[]) : [];
     const rawLines = allLines.filter((l: any) => Number(l?.issuedQty ?? l?.IssuedQty ?? l?.irQty ?? 0) > 0);
     if (rawLines.length === 0) throw new InvError("Add at least one line with Issued QTY above zero.");
@@ -130,7 +132,7 @@ export async function POST(req: NextRequest) {
           (FromLocCode,ToLoc,INNO,INDate,NetTotal,UserID,Remarks,TxnDate,SysSerialNo,Confirmed,ConUserID,ConDatetime,IRNO)
         VALUES
           (${invChar(fromLoc, 10)},${invChar(toLoc, 10)},${invChar(inNo, 10)},${inDate},${netTotal},
-           ${invChar(actor.userId, 10)},${remarks},${now},${sysSerNo},${confirmNow ? "Y" : "N"},${invChar(confirmNow ? actor.userId : "", 10)},${confirmNow ? now : new Date("1900-01-01")},${invChar(irRaw, 10)})
+           ${invChar(actor.userId, 10)},${remarks},${now},${sysSerNo},"N",${invChar("", 10)},${new Date("1900-01-01")},${invChar(irRaw, 10)})
       `;
       for (const l of lines) {
         await tx.$executeRaw`
@@ -142,25 +144,20 @@ export async function POST(req: NextRequest) {
         `;
       }
 
-      let moved = 0;
-      let reqTakenFully = false;
-      if (confirmNow) {
-        const posting = await postIssueConfirmation(tx as any, {
-          inNo, fromLoc, toLoc, irNo: irRaw,
-          lines: lines.map((l) => ({ itemCode: l.itemCode, qty: l.issuedQty })),
-          sysSerialId: sysSerNo, userId: actor.userId,
-        });
-        moved = posting.moved;
-        reqTakenFully = posting.takenFully;
-      }
-      return { inNo, fromLoc, toLoc, netTotal, lines: lines.length, confirmed: confirmNow, moved, reqTakenFully };
+      // the sender's stock leaves with the note — the receiver confirms receipt later
+      const posting = await postIssueOut(tx as any, {
+        inNo, fromLoc, toLoc, irNo: irRaw,
+        lines: lines.map((l) => ({ itemCode: l.itemCode, qty: l.issuedQty })),
+        sysSerialId: sysSerNo, userId: actor.userId,
+      });
+      return { inNo, fromLoc, toLoc, netTotal, lines: lines.length, confirmed: false, moved: posting.moved, reqTakenFully: posting.takenFully };
     }, { timeout: 30000 });
 
-    try { await logActivity(actor.name, "inventory", `Issue Note ${result.inNo} ${result.confirmed ? 'confirmed' : 'saved'} — ${result.lines} line(s), net ${result.netTotal.toFixed(2)}`); } catch {}
+    try { await logActivity(actor.name, "inventory", `Issue Note ${result.inNo} issued — stock moved out of ${result.fromLoc} (${result.lines} line(s), net ${result.netTotal.toFixed(2)})`); } catch {}
 
     return NextResponse.json({
       success: true, data: result,
-      message: result.confirmed ? `Issue Note ${result.inNo} confirmed — stock moved (${result.moved} line(s)).` : `Issue Note ${result.inNo} saved.`
+      message: `Issue Note ${result.inNo} issued — stock moved out of ${result.fromLoc}; ${result.toLoc} still has to confirm receipt (${result.moved} line(s)).`
     });
   } catch (err) { return invFail(err, tag); }
 }
