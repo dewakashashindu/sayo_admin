@@ -47,6 +47,14 @@ function maskPhone(phone: string): string {
   return `${prefix}${maskedMiddle}${suffix}`;
 }
 
+/**
+ * Convert all supported Sri Lankan mobile formats to the Text.lk format.
+ *
+ * 07XXXXXXXX     -> 947XXXXXXXX
+ * 947XXXXXXXX    -> 947XXXXXXXX
+ * +947XXXXXXXX   -> 947XXXXXXXX
+ * 00947XXXXXXXX  -> 947XXXXXXXX
+ */
 export function normalizeSmsPhone(phone: string): string {
   const digits = String(phone || "").replace(/\D/g, "");
   if (!digits) return "";
@@ -157,6 +165,17 @@ export interface TextLkResult {
   error?: string;
 }
 
+/* ── is Text.lk set up? ────────────────────────────────────────────────────
+
+   The two settings live in the project's .env file (the one that already holds
+   DATABASE_URL and AUTH_SECRET):
+
+       TEXTLK_API_TOKEN=…
+       TEXTLK_SENDER_ID=SAYO
+
+   Nothing is sent while one of them is empty; the screens say which one it is
+   instead of silently pretending to have sent a message. */
+
 export const SMS_ENV_KEYS = ["TEXTLK_API_TOKEN", "TEXTLK_SENDER_ID"] as const;
 
 export function smsMissingEnv(env: Record<string, string | undefined> = process.env): string[] {
@@ -189,6 +208,8 @@ async function sendTextLkSMS(
     console.error(`[SMS Service] ${smsSetupMessage(missing)}`);
     return { success: false, error: smsSetupMessage(missing) };
   }
+
+
 
   try {
     const response = await fetch(TEXTLK_ENDPOINT, {
@@ -288,3 +309,30 @@ export async function sendRegistrationSMS({
 
   return sendTextLkSMS(formattedPhone, smsMessage);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Password-reset OTP helpers (used by /api/auth/forgot-password)
+
+export function normalizePhoneSriLanka(raw: string): string {
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("94")) return digits;
+  if (digits.startsWith("0")) return `94${digits.slice(1)}`;
+  return digits.length === 9 ? `94${digits}` : digits;
+}
+
+export function maskPhoneForUser(phone: string): string {
+  const p = normalizePhoneSriLanka(phone);
+  if (p.length < 6) return "your contact number";
+  // 94771223344 → 07*****3344
+  return `0${p.slice(2, 4)}*****${p.slice(-4)}`;
+}
+
+export async function sendOtpSms(to: string, message: string): Promise<void> {
+  try {
+    await sendSms(normalizePhoneSriLanka(to), message);
+  } catch (e) {
+    console.error("[OTP] SMS send failed:", e instanceof Error ? e.message : e);
+  }
+}
+

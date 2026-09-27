@@ -65,6 +65,11 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
     const enable = body.enable === true || trim(body.enable) === "1" ? 1 : 0;
     const newPsw = String(body.psw ?? "").trim();
 
+    const prevRows = await prisma.$queryRaw<{ GroupId: string | null }[]>`
+      SELECT GroupId FROM tbl_userdetails WHERE UserId = ${userId}
+    `;
+    const prevGroupId = trim(prevRows[0]?.GroupId);
+
     if (groupId) {
       const g = await prisma.$queryRaw<{ n: number }[]>`
         SELECT COUNT(*) AS n FROM tbl_usergroups WHERE GroupId = ${groupId}
@@ -92,6 +97,36 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
           WHERE UserId=${userId}
         `;
     if (Number(n) === 0) return err(`User ${userId} was not found.`, 404);
+
+    // group changed — re-seed this user's override rows from the NEW group's profile
+    if (groupId && groupId !== prevGroupId) {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS Tbl_UserAuthorization (
+          UserID  CHAR(10)     NOT NULL,
+          FuncID  VARCHAR(200) NOT NULL,
+          Auth    TINYINT(1)   NOT NULL DEFAULT 0,
+          Module  VARCHAR(50)  NOT NULL DEFAULT 'RT',
+          ACCESS  VARCHAR(50)  NOT NULL DEFAULT '',
+          PRIMARY KEY (UserID, FuncID)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS Tbl_UserAccess_StdProfile (
+          UserID  CHAR(10)     NOT NULL,
+          FuncID  VARCHAR(200) NOT NULL,
+          Auth    TINYINT(1)   NOT NULL DEFAULT 0,
+          Module  VARCHAR(50)  NOT NULL DEFAULT 'RT',
+          ACCESS  VARCHAR(50)  NOT NULL DEFAULT '',
+          PRIMARY KEY (UserID, FuncID)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+      `);
+      await prisma.$executeRaw`DELETE FROM Tbl_UserAuthorization WHERE UserID = ${userId}`;
+      await prisma.$executeRaw`
+        INSERT INTO Tbl_UserAuthorization (UserID, FuncID, Auth, Module, ACCESS)
+        SELECT ${userId}, FuncID, Auth, Module, ACCESS
+        FROM Tbl_UserAccess_StdProfile WHERE UserID = ${groupId}
+      `;
+    }
     return ok({ userId });
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not update the user", 500);
@@ -105,6 +140,18 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ userId:
     if (!userId) return err("User id is missing.");
     const n = await prisma.$executeRaw`DELETE FROM tbl_userdetails WHERE UserId=${userId}`;
     if (Number(n) === 0) return err(`User ${userId} was not found.`, 404);
+    // drop the deleted user's override rows too
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS Tbl_UserAuthorization (
+        UserID  CHAR(10)     NOT NULL,
+        FuncID  VARCHAR(200) NOT NULL,
+        Auth    TINYINT(1)   NOT NULL DEFAULT 0,
+        Module  VARCHAR(50)  NOT NULL DEFAULT 'RT',
+        ACCESS  VARCHAR(50)  NOT NULL DEFAULT '',
+        PRIMARY KEY (UserID, FuncID)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await prisma.$executeRaw`DELETE FROM Tbl_UserAuthorization WHERE UserID = ${userId}`;
     return ok({ userId });
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not delete the user", 500);

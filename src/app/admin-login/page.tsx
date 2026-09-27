@@ -47,7 +47,7 @@ function LoginForm() {
         /* Full-page navigation (not router.push) — guarantees a clean load
            of the admin area with the fresh session cookie. */
         const next = params.get('next');
-        window.location.href = next && next.startsWith('/') ? next : '/admin';
+        window.location.href = next && next.startsWith('/') ? next : '/dashboard';
         return; // keep the button disabled while the browser navigates
       }
       setError(data?.error || 'Invalid username or password.');
@@ -70,7 +70,7 @@ function LoginForm() {
         <input
           type="text"
           placeholder="username"
-          className="w-full px-4 py-3 rounded-xl bg-[#f8fafc] border border-gray-200 text-sm focus:outline-none focus:border-[#bcd1cb] transition-colors placeholder:text-gray-400"
+          className="w-full px-4 py-3 rounded-xl bg-[#f8fafc] border border-gray-200 text-sm focus:outline-none focus:border-[#bcd1cb] transition-colors placeholder:text-gray-400 text-gray-900 caret-[#1e3a40]"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           autoComplete="username"
@@ -84,7 +84,7 @@ function LoginForm() {
         <input
           type="password"
           placeholder="password"
-          className="w-full px-4 py-3 rounded-xl bg-[#f8fafc] border border-gray-200 text-sm focus:outline-none focus:border-[#bcd1cb] transition-colors placeholder:text-gray-400"
+          className="w-full px-4 py-3 rounded-xl bg-[#f8fafc] border border-gray-200 text-sm focus:outline-none focus:border-[#bcd1cb] transition-colors placeholder:text-gray-400 text-gray-900 caret-[#1e3a40]"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
@@ -100,11 +100,14 @@ function LoginForm() {
         </p>
       )}
 
-      {/* Forgot password hint */}
+      {/* Forgot password — self-service OTP reset */}
       <div className="text-right">
-        <span className="text-[11px] text-gray-400" title="Ask a system administrator to reset your password from Settings → Users">
-          Forgot password? Ask your system administrator
-        </span>
+        <a
+          href="/admin-login/forgot-password"
+          className="text-[11px] text-[#6b8a84] hover:text-[#4f6d68] font-medium underline-offset-2 hover:underline"
+        >
+          Forgot password?
+        </a>
       </div>
 
       {/* Login button */}
@@ -131,34 +134,35 @@ export default function LoginPage() {
       className="relative min-h-screen w-full flex items-center justify-center overflow-hidden p-6 bg-cover bg-center bg-fixed"
       style={{ backgroundImage: BACKGROUND_IMAGE }}
     >
-      {/* Soft veil so the white card and the gold logo stay readable on the photo */}
+      {/* Soft veil so the white card and the logo stay readable on the photo */}
       <div className="absolute inset-0 bg-gradient-to-br from-[#0b1614]/75 via-[#12211f]/45 to-[#0b1614]/65" />
 
       {/* Top Right Logo */}
-      <div className="absolute top-6 right-8 z-10 flex flex-col items-center justify-center text-[#d4a359]">
-        <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 drop-shadow">
-          <path d="M12 3c-1.2 2.2-2.8 4.2-4.5 6 1.7 1.8 3.3 3.8 4.5 6 1.2-2.2 2.8-4.2 4.5-6-1.7-1.8-3.3-3.8-4.5-6z" />
-        </svg>
-        <span className="text-[10px] font-semibold tracking-widest text-[#d4a359] uppercase mt-0.5 drop-shadow">SAYO</span>
+      <div className="absolute top-6 right-8 z-10 drop-shadow">
+        <img src="/sayologo.png" alt="SAYO" className="h-12 w-auto" />
       </div>
 
       {/* Main Card */}
       <div className="relative z-10 w-[880px] max-w-full md:h-[500px] bg-white rounded-[24px] p-4 flex flex-col md:flex-row shadow-2xl">
 
-        {}
         <div
           className="relative w-full md:w-[45%] h-[190px] md:h-full rounded-[18px] overflow-hidden p-6 flex flex-col justify-start"
           style={WINDOW_BG}
         >
           {/* gentle shading inside the window so the titles keep their contrast */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/5 to-black/25" />
-          <div className="relative z-10">
-            <h2 className="text-[#e3b467] text-xl font-bold tracking-wider uppercase drop-shadow-[0_1px_6px_rgba(0,0,0,0.6)]">
-              SAYO BEAUTY
-            </h2>
-            <p className="text-white font-extrabold text-xs tracking-wider mt-0.5 drop-shadow-[0_1px_6px_rgba(0,0,0,0.6)]">
-              ADMIN PORTAL
-            </p>
+          <div className="relative z-10 flex items-center gap-3">
+            <div className="bg-white/90 rounded-full p-2 shadow">
+              <img src="/sayologo.png" alt="SAYO" className="h-8 w-auto" />
+            </div>
+            <div>
+              <h2 className="text-[#e3b467] text-xl font-bold tracking-wider uppercase drop-shadow-[0_1px_6px_rgba(0,0,0,0.6)]">
+                SAYO BEAUTY
+              </h2>
+              <p className="text-white font-extrabold text-xs tracking-wider mt-0.5 drop-shadow-[0_1px_6px_rgba(0,0,0,0.6)]">
+                ADMIN PORTAL
+              </p>
+            </div>
           </div>
         </div>
 

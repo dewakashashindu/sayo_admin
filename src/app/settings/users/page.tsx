@@ -249,6 +249,15 @@ export default function UsersPage() {
               <div className="actions">
                 <button className="btn" onClick={clear} disabled={busy}>Clear</button>
                 <div className="flex" />
+                {!isNew && current && (
+                  <button
+                    className="btn"
+                    onClick={() => router.push(`/settings/access-profiles?user=${encodeURIComponent(current.userId)}`)}
+                    title="Adjust this user's role-based permissions on the Access Profiles screen"
+                  >
+                    Customize Role
+                  </button>
+                )}
                 {!isNew && (
                   <button className="btn danger" onClick={handleDelete} disabled={busy}>Delete</button>
                 )}

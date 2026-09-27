@@ -149,8 +149,9 @@ export const NAV_GROUPS: NavGroup[] = [
     children: [
       { key: 'settings-startup', label: 'Start-up Settings', path: '/settings/startup' },
       { key: 'settings-usercfg', label: 'User Settings',     path: '', children: [
-        { key: 'settings-user-groups', label: 'User Groups', path: '/settings/user-groups' },
-        { key: 'settings-users',       label: 'Users',       path: '/settings/users'       },
+        { key: 'settings-user-groups', label: 'User Groups',     path: '/settings/user-groups'     },
+        { key: 'settings-users',       label: 'Users',           path: '/settings/users'           },
+        { key: 'settings-access',      label: 'Access Profiles', path: '/settings/access-profiles' },
       ]},
     ],
   },
