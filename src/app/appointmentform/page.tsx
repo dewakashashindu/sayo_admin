@@ -2,6 +2,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo, Suspense } from "react";
+import { useMyAccess } from "@/lib/useMyAccess";
+import AccessLoading from "@/components/AccessLoading";
+import NoAccess from "@/components/NoAccess";
 import { useRouter, useSearchParams } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
 
@@ -5607,6 +5610,11 @@ function WalkInPage() {
 }
 
 export default function WalkInPageWrapper() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <AccessLoading />;
+  if (enforce && !(has("APPTGRP", "ACCESS") && has("APPTFORM", "ACCESS"))) {
+    return <NoAccess screen="the new booking form" />;
+  }
   return (
     <Suspense
       fallback={

@@ -2,6 +2,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 import ItemSuggestInput, { type SuggestedItem } from '@/components/ItemSuggestInput';
 import TransferPrintSheet, { TRANSFER_PRINT_CSS } from '@/components/TransferPrintSheet';
 import {
@@ -58,7 +61,16 @@ function useToast() {
   return { toast, show };
 }
 
-export default function TransferReturnPage() {
+function TransferReturnPageContent() {
+  const access = useMyAccess();
+  const canAddLine = !access.enforce || access.has("TRET", "ADD_LINE");
+  const canClear = !access.enforce || access.has("TRET", "CLEAR");
+  const canConfirm = !access.enforce || access.has("TRET", "CONFIRM");
+  const canPrint = !access.enforce || access.has("TRET", "PRINT");
+  const canEmail = !access.enforce || access.has("TRET", "EMAIL");
+  const canDelete = !access.enforce || access.has("TRET", "DELETE");
+  const canSave = !access.enforce || access.has("TRET", "SAVE");
+
   const router = useRouter();
   const { toast, show: showToast } = useToast();
 
@@ -807,21 +819,35 @@ export default function TransferReturnPage() {
               </div>
 
               <div className="po-actions no-print">
+                {canAddLine && (
                 <button className="btn" onClick={addLine} disabled={locked}>+ Add line</button>
+                )}
+                {canClear && (
                 <button className="btn" onClick={handleClear} disabled={busy}>Clear</button>
+                )}
+                {canConfirm && (
                 <button className="btn" onClick={() => void handleConfirm()} disabled={busy || confirmed}>
                   {confirming ? 'Confirming…' : 'Confirmation'}
                 </button>
+                )}
+                {canPrint && (
                 <button className="btn" onClick={handlePrint} disabled={busy}>Print</button>
+                )}
+                {canEmail && (
                 <button className="btn" onClick={openMailDialog} disabled={busy || sending}>
                   {sending ? 'Sending…' : 'Email'}
                 </button>
+                )}
+                {canDelete && (
                 <button className="btn danger" onClick={() => void handleDelete()} disabled={busy || !retNo || confirmed}>
                   {deleting ? 'Deleting…' : 'Delete'}
                 </button>
+                )}
+                {canSave && (
                 <button className="btn primary" onClick={() => void handleSave()} disabled={busy || locked}>
                   {saving ? 'Saving…' : 'Save'}
                 </button>
+                )}
                 <button className="btn" onClick={handleCancel} disabled={busy}>Cancel</button>
               </div>
 
@@ -1106,3 +1132,9 @@ const PAGE_CSS = `
     html, body { background:#fff !important; height:auto; background-image:none !important; }
   }
 `;
+export default function TransferReturnPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}><AccessLoading /></div>;
+  if (enforce && !(has("INV", "ACCESS") && has("INVTXN", "ACCESS") && has("TRN", "ACCESS") && has("TRET", "ACCESS"))) return <NoAccess screen="Transfer Return Note" />;
+  return <TransferReturnPageContent />;
+}

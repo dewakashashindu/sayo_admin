@@ -4,6 +4,9 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation';
 import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 
 interface Supplier {
   id: number;
@@ -290,7 +293,14 @@ function focusNext(current: HTMLElement) {
   }
 }
 
-export default function SupplierMasterPage() {
+function SupplierMasterPageContent() {
+  const access = useMyAccess();
+  const canSave   = !access.enforce || access.has("SUP", "SAVE");
+  const canClear  = !access.enforce || access.has("SUP", "CLEAR");
+  const canDelete = !access.enforce || access.has("SUP", "DELETE");
+  const canPrint  = !access.enforce || access.has("SUP", "PRINT");
+  const canRecipe = !access.enforce || access.has("SUP", "RECIPE");
+
   const router = useRouter();
 
   const [navKey,   setNavKey]   = useState('suppliers');
@@ -540,9 +550,11 @@ export default function SupplierMasterPage() {
                     {loading ? '…' : `${suppliers.length} total`}
                   </span>
                 </div>
+                {canSave && (
                 <button className="btn-new" style={{ width:'100%' }} onClick={handleNew} disabled={busy}>
                   <IPlus s={14} /> New Supplier
                 </button>
+                )}
               </div>
 
               <div style={{ flex:1, overflowY:'auto', padding:'8px' }}>
@@ -821,9 +833,11 @@ export default function SupplierMasterPage() {
 
               {}
               <div style={{ background:'#dce8e8', borderTop:'1.5px solid rgba(30,58,64,0.12)', padding:'10px 14px', display:'flex', gap:8, flexShrink:0, flexWrap:'wrap', alignItems:'center' }}>
+                {canClear && (
                 <button className="btn-clear" onClick={handleClear} disabled={busy}>
                   <IRefresh s={13} /> Clear
                 </button>
+                )}
                 <button className="btn-print" onClick={() => window.print()} disabled={busy}>
                   <IPrint s={13} /> Print
                 </button>
@@ -831,18 +845,20 @@ export default function SupplierMasterPage() {
                 {isDirty && (
                   <span style={{ fontSize:11, color:'#dc6b2f', fontWeight:600 }}>● Unsaved changes</span>
                 )}
-                {!isNew && (
+                {!isNew && canDelete && (
                   <button className="btn-del" onClick={handleDelete} disabled={busy}>
                     {deleting
                       ? <><span className="spinner" style={{ borderTopColor:'#dc2626', borderColor:'rgba(220,38,38,0.2)' }} /> Deleting…</>
                       : <><ITrash s={13} /> Delete</>}
                   </button>
                 )}
+                {canSave && (
                 <button className="btn-save" onClick={handleSave} disabled={busy}>
                   {saving
                     ? <><span className="spinner" /> Saving…</>
                     : <><ISave s={13} /> Save  <span style={{ fontSize:11, opacity:0.65 }}>(Ctrl+S)</span></>}
                 </button>
+                )}
               </div>
 
             </div>
@@ -869,4 +885,19 @@ export default function SupplierMasterPage() {
       />
     </>
   );
+}
+
+export default function SupplierMasterPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#c2d4d4' }}>
+        <AccessLoading />
+      </div>
+    );
+  }
+  if (enforce && !(has("INV", "ACCESS") && has("INVREF", "ACCESS") && has("SUP", "ACCESS"))) {
+    return <NoAccess screen="Supplier Master" />;
+  }
+  return <SupplierMasterPageContent />;
 }

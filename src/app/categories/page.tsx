@@ -4,6 +4,9 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation';
 import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 
 interface Category {
   catCode: string;
@@ -288,7 +291,14 @@ const TABS: { level: Level; label: string; title: string }[] = [
   { level: '4', label: 'Sub Category 3', title: 'SUB CATEGORY DETAIL — Level 3' },
 ];
 
-export default function CategoriesPage() {
+function CategoriesPageContent() {
+  const access = useMyAccess();
+  const canSave   = !access.enforce || access.has("CAT", "SAVE");
+  const canClear  = !access.enforce || access.has("CAT", "CLEAR");
+  const canDelete = !access.enforce || access.has("CAT", "DELETE");
+  const canPrint  = !access.enforce || access.has("CAT", "PRINT");
+  const canRecipe = !access.enforce || access.has("CAT", "RECIPE");
+
   const router = useRouter();
   const [navKey, setNavKey] = useState('categories');
   const [search, setSearch] = useState('');
@@ -553,9 +563,11 @@ export default function CategoriesPage() {
                     {loading ? '…' : `${currentList.length} total`}
                   </span>
                 </div>
+                {canSave && (
                 <button className="btn-new" style={{ width: '100%' }} onClick={handleNew} disabled={busy}>
                   <IPlus s={14} /> New Category
                 </button>
+                )}
               </div>
 
               {/* List */}
@@ -785,25 +797,31 @@ export default function CategoriesPage() {
                 padding: '12px 16px',
                 display: 'flex', gap: 10, flexShrink: 0, flexWrap: 'wrap', alignItems: 'center',
               }}>
+                {canClear && (
                 <button className="btn-clear" onClick={handleClear} disabled={busy}>
                   <IRefresh s={14} /> Clear
                 </button>
+                )}
+                {canPrint && (
                 <button className="btn-print" onClick={handlePrint} disabled={busy}>
                   <IPrint s={14} /> Print
                 </button>
+                )}
                 <div style={{ flex: 1 }} />
-                {!isNew && (
+                {!isNew && canDelete && (
                   <button className="btn-del" onClick={handleDelete} disabled={busy}>
                     {deleting
                       ? <><span className="spinner" style={{ borderTopColor: '#dc2626', borderColor: 'rgba(220,38,38,0.2)' }} /> Deleting…</>
                       : <><ITrash s={14} /> Delete</>}
                   </button>
                 )}
+                {canSave && (
                 <button className="btn-save" id="btn-save-cat" onClick={handleSave} disabled={busy}>
                   {saving
                     ? <><span className="spinner" /> Saving…</>
                     : <><ISave s={14} /> Save</>}
                 </button>
+                )}
               </div>
 
             </div>
@@ -828,4 +846,19 @@ export default function CategoriesPage() {
       />
     </>
   );
+}
+
+export default function CategoriesPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#c2d4d4' }}>
+        <AccessLoading />
+      </div>
+    );
+  }
+  if (enforce && !(has("INV", "ACCESS") && has("INVREF", "ACCESS") && has("CAT", "ACCESS"))) {
+    return <NoAccess screen="Categories" />;
+  }
+  return <CategoriesPageContent />;
 }

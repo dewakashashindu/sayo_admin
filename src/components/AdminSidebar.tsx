@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
+import { useMyAccess } from '@/lib/useMyAccess';
 import Image from 'next/image';
 
 export interface AdminSidebarProps {
@@ -40,6 +41,55 @@ export function IHeart()     { return <svg width="18" height="18" viewBox="0 0 2
 export function IBook()      { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>; }
 export function IStar()      { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>; }
 export function IChevRight() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>; }
+
+// ─── Access visibility map ─────────────────────────────────────────────
+// Nav leaf key  ->  access screen code ("<code>.ACCESS" must be granted).
+// Items not listed here are not (yet) gate-controlled and stay visible.
+const ITEM_ACCESS_CODE: Record<string, string> = {
+  dashboard: 'DASH',
+  'appt-dashboard': 'APPT',
+  'appt-tech': 'TECHAPPT',
+  'billing-dashboard': 'BILLDASH', 'billing-transactions': 'BILLTXN', 'billing-reports': 'BILLREP',
+  'inv-location': 'LOC', 'inv-categories': 'CAT', 'inv-items': 'ITEM', 'inv-units': 'UNIT', 'inv-suppliers': 'SUP',
+  'inv-po': 'PO', 'inv-grn': 'GRN', 'inv-srn': 'SRN', 'inv-damage': 'DMG',
+  'inv-tr-req': 'TREQ', 'inv-tr-note': 'TNOTE', 'inv-tr-ret': 'TRET',
+  'inv-iss-req': 'IREQ', 'inv-iss-note': 'INOTE', 'inv-recon': 'RECON', 'inv-reports': 'INVREP',
+  'crm-stats': 'CRMSTATS', 'crm-enquiry': 'CRMQRY', 'crm-customers': 'CRMCUST', 'crm-feedback': 'CRMFB', 'crm-notes': 'CRMNOTES',
+  'admin-schedules': 'ADSCH', 'admin-hours': 'ADHRS', 'settings-user-groups': 'UGROUPS', 'settings-users': 'USERS',
+  'promo-coupons': 'PRCOUP', 'promo-packages': 'PRPACK', 'promo-rewards': 'PRREWRD', 'promo-discounts': 'PRDISC', 'promo-greetings': 'PRGREET',
+  'acc-salary': 'ACCSAL', 'acc-raw': 'ACCRAW', 'acc-other': 'ACCOTH', 'acc-revenue': 'ACCREV',
+  'settings-startup': 'SETUP', 'settings-access': 'ACCESSP',
+  reports: 'REPORTS',
+};
+// Some nav leaves count for more than one screen code.
+const ITEM_ACCESS_EXTRA: Record<string, string[]> = {
+  'billing-transactions': ['BILL'],
+};
+const SPEC_ACCESS_CODE = ITEM_ACCESS_CODE; // anchor marker
+
+function leafAllowed(key: string, perms: Set<string>): boolean {
+  const code = ITEM_ACCESS_CODE[key];
+  if (!code) return true; // un-mapped leaves are not access-controlled
+  const candidates = [code, ...(ITEM_ACCESS_EXTRA[key] ?? [])];
+  return candidates.some((c) => perms.has(`${c}.ACCESS`));
+}
+function subItemVisible(item: SubItem, perms: Set<string>): boolean {
+  if (!item.children?.length) return leafAllowed(item.key, perms);
+  return item.children.some((c) => subItemVisible(c, perms));
+}
+function filterSubItems(items: SubItem[], perms: Set<string>): SubItem[] {
+  return items
+    .filter((c) => subItemVisible(c, perms))
+    .map((c) => (c.children ? { ...c, children: filterSubItems(c.children, perms) } : c));
+}
+/** Groups the current user may see: filtered leaves; a group with no visible leaf disappears. */
+function visibleNavGroups(perms: Set<string>, loaded: boolean): NavGroup[] {
+  if (!loaded) return NAV_GROUPS;           // first paint: show all, revalidate quickly
+  return NAV_GROUPS
+    .filter((g) => (g.children?.length ? g.children.some((c) => subItemVisible(c, perms)) : leafAllowed(g.key, perms)))
+    .map((g) => (g.children ? { ...g, children: filterSubItems(g.children, perms) } : g));
+}
+
 export function IChevDown()  { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>; }
 
 export const NAV_GROUPS: NavGroup[] = [
@@ -53,7 +103,10 @@ export const NAV_GROUPS: NavGroup[] = [
     key: 'appointments',
     label: 'Appointments',
     icon: <ICal />,
-    path: '/appointment',
+    children: [
+      { key: 'appt-dashboard', label: 'Appointments Dashboard', path: '/appointment' },
+      { key: 'appt-tech',      label: 'Technician Dashboard',   path: '/technician-appointments' },
+    ],
   },
   {
     key: 'billing',
@@ -309,6 +362,8 @@ const SB_EXPANDED_KEY = 'sayo.sb.expanded';
 function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
   const pathname = usePathname() || '';
   const [open, setOpen] = useState(true);
+  const { perms, loaded } = useMyAccess();
+  const groups = useMemo(() => visibleNavGroups(perms, loaded), [perms, loaded]);
 
   // The URL decides what is active — the group containing the current page always stays expanded.
   const effActive = useMemo(() => {
@@ -447,7 +502,7 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
           gap: 1,
         }}
       >
-        {NAV_GROUPS.map((group) => {
+        {groups.map((group) => {
           const isGroupActive = ag === group.key;
           const isExpanded    = !!expanded[group.key];
           const isDirect      = !group.children;
@@ -558,6 +613,8 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
 
 function MobileNav({ active, onNav, onLogout }: AdminSidebarProps) {
   const pathname = usePathname() || '';
+  const { perms, loaded } = useMyAccess();
+  const groups = useMemo(() => visibleNavGroups(perms, loaded), [perms, loaded]);
   const activeKey = useMemo(() => {
     let best: { key: string; path: string } | null = null;
     for (const g of NAV_GROUPS) {
@@ -574,7 +631,7 @@ function MobileNav({ active, onNav, onLogout }: AdminSidebarProps) {
 
   return (
     <nav className="mob-nav">
-      {NAV_GROUPS.map(g => (
+      {groups.map(g => (
         <button
           key={g.key}
           className={`mob-btn ${ag === g.key ? 'active' : ''}`}

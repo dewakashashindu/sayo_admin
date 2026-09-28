@@ -2,6 +2,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 import ItemSuggestInput, { type SuggestedItem } from '@/components/ItemSuggestInput';
 import TransferPrintSheet, { TRANSFER_PRINT_CSS } from '@/components/TransferPrintSheet';
 import {
@@ -57,7 +60,16 @@ function useToast() {
   return { toast, show };
 }
 
-export default function IssueNotePage() {
+function IssueNotePageContent() {
+  const access = useMyAccess();
+  const canAddLine = !access.enforce || access.has("INOTE", "ADD_LINE");
+  const canClear = !access.enforce || access.has("INOTE", "CLEAR");
+  const canConfirm = !access.enforce || access.has("INOTE", "CONFIRM");
+  const canPrint = !access.enforce || access.has("INOTE", "PRINT");
+  const canEmail = !access.enforce || access.has("INOTE", "EMAIL");
+  const canDelete = !access.enforce || access.has("INOTE", "DELETE");
+  const canSave = !access.enforce || access.has("INOTE", "SAVE");
+
   const router = useRouter();
   const { toast, show: showToast } = useToast();
 
@@ -808,18 +820,30 @@ export default function IssueNotePage() {
               </div>
 
               <div className="po-actions no-print">
+                {canAddLine && (
                 <button className="btn" onClick={addLine} disabled={locked}>+ Add line</button>
+                )}
+                {canClear && (
                 <button className="btn" onClick={handleClear} disabled={busy}>Clear</button>
+                )}
+                {canConfirm && (
                 <button className="btn" onClick={() => void handleConfirm()} disabled={busy || confirmed}>
                   {confirming ? 'Confirming…' : confirmed ? 'Received ✓' : 'Confirm Receipt'}
                 </button>
+                )}
+                {canPrint && (
                 <button className="btn" onClick={handlePrint} disabled={busy}>Print</button>
+                )}
+                {canDelete && (
                 <button className="btn danger" onClick={() => void handleDelete()} disabled={busy || !inNo || confirmed}>
                   {deleting ? 'Deleting…' : 'Delete'}
                 </button>
+                )}
+                {canSave && (
                 <button className="btn primary" onClick={() => void handleSave()} disabled={busy || locked}>
                   {saving ? 'Saving…' : 'Save'}
                 </button>
+                )}
                 <button className="btn" onClick={handleCancel} disabled={busy}>Cancel</button>
               </div>
 
@@ -1109,3 +1133,9 @@ const PAGE_CSS = `
   .inbox-row-locs { font-size:12px; font-weight:600; color:#1e3a40; }
   .inbox-row-meta { font-size:11px; color:#75868c; }
 `;
+export default function IssueNotePage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}><AccessLoading /></div>;
+  if (enforce && !(has("INV", "ACCESS") && has("INVTXN", "ACCESS") && has("ISS", "ACCESS") && has("INOTE", "ACCESS"))) return <NoAccess screen="Issue Note" />;
+  return <IssueNotePageContent />;
+}

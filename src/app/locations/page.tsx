@@ -5,6 +5,9 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 
 interface LocationMaster {
   LocCode: string;      // CHAR(10) PK
@@ -282,7 +285,14 @@ function LocationRow({ l, isSub, active, onSelect }: { l: LocationMaster; isSub?
   );
 }
 
-export default function LocationsPage() {
+function LocationsPageContent() {
+  const access = useMyAccess();
+  const canSave   = !access.enforce || access.has("LOC", "SAVE");
+  const canClear  = !access.enforce || access.has("LOC", "CLEAR");
+  const canDelete = !access.enforce || access.has("LOC", "DELETE");
+  const canPrint  = !access.enforce || access.has("LOC", "PRINT");
+  const canRecipe = !access.enforce || access.has("LOC", "RECIPE");
+
   const router = useRouter();
   const [navKey, setNavKey] = useState('locations');
   const [search, setSearch] = useState('');
@@ -543,9 +553,11 @@ export default function LocationsPage() {
                   <span style={{ fontSize: 13, fontWeight: 700, color: '#1e3a40' }}>Locations</span>
                   <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 500 }}>{locations.length} total</span>
                 </div>
+                {canSave && (
                 <button className="btn-new" style={{ width: '100%' }} onClick={handleNew} disabled={loading}>
                   <IPlus s={14} /> New Location
                 </button>
+                )}
               </div>
 
               <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
@@ -718,21 +730,27 @@ export default function LocationsPage() {
 
               {/* Action Bar */}
               <div style={{ background: '#dce8e8', borderTop: '1.5px solid rgba(30,58,64,0.12)', padding: '12px 16px', display: 'flex', gap: 10, flexShrink: 0, flexWrap: 'wrap', alignItems: 'center' }}>
+                {canClear && (
                 <button className="btn-clear" onClick={handleClear} disabled={saving || deleting || (!selLoc && !isNew)}>
                   <IRefresh s={14} /> Clear
                 </button>
+                )}
+                {canPrint && (
                 <button className="btn-print" onClick={handlePrint}>
                   <IPrint s={14} /> Print
                 </button>
+                )}
                 <div style={{ flex: 1 }} />
-                {!isNew && selLoc && (
+                {!isNew && selLoc && canDelete && (
                   <button className="btn-del" onClick={handleDelete} disabled={saving || deleting}>
                     <ITrash s={14} /> {deleting ? 'Deleting…' : 'Delete'}
                   </button>
                 )}
+                {canSave && (
                 <button id="btn-save-loc" className="btn-save" onClick={handleSave} disabled={saving || deleting || (!selLoc && !isNew)}>
                   <ISave s={14} /> {saving ? 'Saving…' : 'Save'}
                 </button>
+                )}
               </div>
 
             </div>
@@ -765,4 +783,19 @@ export default function LocationsPage() {
           />
     </>
   );
+}
+
+export default function LocationsPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#c2d4d4' }}>
+        <AccessLoading />
+      </div>
+    );
+  }
+  if (enforce && !(has("INV", "ACCESS") && has("INVREF", "ACCESS") && has("LOC", "ACCESS"))) {
+    return <NoAccess screen="Location Master" />;
+  }
+  return <LocationsPageContent />;
 }

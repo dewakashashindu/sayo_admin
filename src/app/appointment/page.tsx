@@ -10,6 +10,8 @@ import React, {
 } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
+import { useMyAccess } from "@/lib/useMyAccess";
+import AccessLoading from "@/components/AccessLoading";
 
 interface ServiceSchedule {
   serviceIndex: number;
@@ -1058,9 +1060,11 @@ function ProfileMenu({ onLogout }: { onLogout: () => void }) {
 function StatsRow({
   stats,
   onNewAppointment,
+  showNewBooking = true,
 }: {
   stats: Stats;
   onNewAppointment: () => void;
+  showNewBooking?: boolean;
 }) {
   const percentage = (value: number) =>
     stats.total > 0 ? Math.round((value / stats.total) * 100) : 0;
@@ -1231,6 +1235,7 @@ function StatsRow({
         />
       </div>
 
+      {showNewBooking && (
       <button
         type="button"
         onClick={onNewAppointment}
@@ -1254,6 +1259,7 @@ function StatsRow({
         <Ico.Plus />
         <span style={{ fontSize: 13, fontWeight: 700 }}>New Booking</span>
       </button>
+      )}
     </div>
   );
 }
@@ -1641,6 +1647,9 @@ function DetailModal({
   onStatusChange,
   onGoToBill,
   onReschedule,
+  canCancel = true,
+  canCheckIn = true,
+  canReschedule = true,
 }: {
   appointment: Appointment;
   onClose: () => void;
@@ -1651,6 +1660,9 @@ function DetailModal({
   ) => void;
   onGoToBill: (appointment: Appointment) => void;
   onReschedule: (appointment: Appointment) => void;
+  canCancel?: boolean;
+  canCheckIn?: boolean;
+  canReschedule?: boolean;
 }) {
   const guestIDs = Array.from(
     new Set(
@@ -1941,93 +1953,63 @@ function DetailModal({
             </div>
           )}
 
-          {appointment.status === "pending" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div className="modal-action-row">
+          {(appointment.status === "pending" || appointment.status === "confirmed") && (
+            <div
+              className="modal-action-row"
+              style={{ display: "flex", gap: 10, flexWrap: "wrap" }}
+            >
+              {canCancel && (
                 <button
                   className="btn-modal-cancel"
                   type="button"
+                  style={{ flex: "1 1 140px", justifyContent: "center" }}
                   onClick={() => {
-                    onStatusChange(
-                      appointment.bookingID,
-                      appointment.locCode,
-                      "cancelled",
-                    );
+                    onStatusChange(appointment.bookingID, appointment.locCode, "cancelled");
                     onClose();
                   }}
                 >
-                  <Ico.XCircle size={18} /> Cancel
+                  <Ico.XCircle size={18} /> Cancel Booking
                 </button>
+              )}
+              {appointment.status === "pending" && (
                 <button
                   className="btn-modal-confirm"
                   type="button"
+                  style={{ flex: "1 1 140px", justifyContent: "center" }}
                   onClick={() => {
-                    onStatusChange(
-                      appointment.bookingID,
-                      appointment.locCode,
-                      "confirmed",
-                    );
+                    onStatusChange(appointment.bookingID, appointment.locCode, "confirmed");
                     onClose();
                   }}
                 >
                   <Ico.CheckCircle size={18} /> Confirm
                 </button>
-              </div>
-              <button
-                className="btn-modal-reschedule"
-                type="button"
-                onClick={() => {
-                  onReschedule(appointment);
-                  onClose();
-                }}
-              >
-                <Ico.Reschedule size={18} /> Reschedule
-              </button>
-            </div>
-          )}
-
-          {appointment.status === "confirmed" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div className="modal-action-row">
-                <button
-                  className="btn-modal-cancel"
-                  type="button"
-                  onClick={() => {
-                    onStatusChange(
-                      appointment.bookingID,
-                      appointment.locCode,
-                      "cancelled",
-                    );
-                    onClose();
-                  }}
-                >
-                  <Ico.XCircle size={18} /> Cancel
-                </button>
+              )}
+              {appointment.status === "confirmed" && canCheckIn && (
                 <button
                   className="btn-modal-checkin"
                   type="button"
+                  style={{ flex: "1 1 140px", justifyContent: "center" }}
                   onClick={() => {
-                    onStatusChange(
-                      appointment.bookingID,
-                      appointment.locCode,
-                      "ongoing",
-                    );
+                    onStatusChange(appointment.bookingID, appointment.locCode, "ongoing");
                     onClose();
                   }}
                 >
                   <Ico.Login size={18} /> Check In
                 </button>
-              </div>
-              <button
-                className="btn-modal-reschedule"
-                type="button"
-                onClick={() => {
-                  onReschedule(appointment);
-                  onClose();
-                }}
-              >
-                <Ico.Reschedule size={18} /> Reschedule
-              </button>
+              )}
+              {canReschedule && (
+                <button
+                  className="btn-modal-reschedule"
+                  type="button"
+                  style={{ flex: "1 1 140px", justifyContent: "center" }}
+                  onClick={() => {
+                    onReschedule(appointment);
+                    onClose();
+                  }}
+                >
+                  <Ico.Reschedule size={18} /> Reschedule Booking
+                </button>
+              )}
             </div>
           )}
 
@@ -2072,7 +2054,8 @@ function DetailModal({
               >
                 This booking has been cancelled.
               </div>
-              <button
+              {canReschedule && (
+<button
                 className="btn-modal-reschedule"
                 type="button"
                 onClick={() => {
@@ -2080,8 +2063,9 @@ function DetailModal({
                   onClose();
                 }}
               >
-                <Ico.Reschedule size={18} /> Reschedule
+                <Ico.Reschedule size={18} /> Reschedule Booking
               </button>
+)}
             </div>
           )}
         </div>
@@ -2730,6 +2714,10 @@ function AppointmentCard({
 
 export default function AppointmentsPage() {
   const router = useRouter();
+  // role-based permissions for THIS logged-in user — shared cache via hook (strict once loaded)
+  const { loaded: permsLoaded, perms, locRight, workLoc } = useMyAccess();
+  const enforce = permsLoaded; // strict deny when the user has no saved permissions
+  const hasPerm = (c: string, a = "ACCESS") => !enforce || perms.has(`${c}.${a}`);
   const [navKey, setNavKey] = useState("calendar");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [date, setDate] = useState(todayISO);
@@ -3357,6 +3345,52 @@ export default function AppointmentsPage() {
     filterStatus !== "ALL" ||
     filterTech !== "ALL";
 
+  // allowed branch list: profile-granted locations; otherwise ONLY the
+  // location assigned to this user in their user details (WorkingLocID).
+  const locateAllowed = (() => {
+    if (!enforce) return filterMeta.locations;
+    const allowed = new Set<string>(
+      locRight.length ? locRight : workLoc ? [workLoc] : [],
+    );
+    if (!allowed.size) return filterMeta.locations;
+    const out = filterMeta.locations.filter((l) => allowed.has(l.LocCode.trim()));
+    return out;
+  })();
+  useEffect(() => {
+    if (!enforce) return;
+    if (locateAllowed.length === 1 && filterLoc !== locateAllowed[0].LocCode) {
+      setFilterLoc(locateAllowed[0].LocCode);
+    }
+    if (locateAllowed.length > 0 && filterLoc === "ALL") {
+      // ALL is fine — visible only when multiple allowed
+    }
+  }, [enforce, locateAllowed, filterLoc]);
+
+  if (!permsLoaded) {
+    return (
+      <>
+        <style>{CSS}</style>
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#c2d4d4", fontFamily: "inherit" }}>
+          <AccessLoading />
+        </div>
+      </>
+    );
+  }
+
+  if (enforce && !(perms.has("APPTGRP.ACCESS") && perms.has("APPT.ACCESS"))) {
+    return (
+      <>
+        <style>{CSS}</style>
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#c2d4d4", fontFamily: "inherit" }}>
+          <div style={{ background: "#eef4f4", borderRadius: 14, padding: "26px 34px", textAlign: "center", boxShadow: "0 8px 24px rgba(0,0,0,.12)" }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#1e3a40", marginBottom: 8 }}>No Access</div>
+            <div style={{ fontSize: 13, color: "#3c5a60" }}>You do not have access to the Appointments screen.<br />Ask your administrator to grant it in Access Profiles.</div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <style>{CSS}</style>
@@ -3372,6 +3406,9 @@ export default function AppointmentsPage() {
           }}
           onGoToBill={handleGoToBill}
           onReschedule={handleReschedule}
+          canCancel={hasPerm("APPT", "CANCEL_BOOKING")}
+          canCheckIn={hasPerm("APPT", "CHECK_IN")}
+          canReschedule={hasPerm("APPT", "RESCHEDULE")}
         />
       )}
 
@@ -3554,6 +3591,7 @@ export default function AppointmentsPage() {
             <StatsRow
               stats={stats}
               onNewAppointment={() => router.push("/appointmentform")}
+              showNewBooking={hasPerm("APPT", "NEW_BOOKING")}
             />
 
             <div
@@ -3577,18 +3615,23 @@ export default function AppointmentsPage() {
                   </option>
                 ))}
               </select>
-              <select
-                className="f-sel"
-                value={filterLoc}
-                onChange={(event) => setFilterLoc(event.target.value)}
-              >
-                <option value="ALL">All Branches</option>
-                {filterMeta.locations.map((location) => (
-                  <option key={location.LocCode} value={location.LocCode}>
-                    {location.LocDes}
-                  </option>
-                ))}
-              </select>
+              {(() => {
+                const locs = locateAllowed.length ? locateAllowed : filterMeta.locations;
+                return (
+                  <select
+                    className="f-sel"
+                    value={filterLoc}
+                    onChange={(event) => setFilterLoc(event.target.value)}
+                  >
+                    {locs.length > 1 && <option value="ALL">All Branches</option>}
+                    {locs.map((location) => (
+                      <option key={location.LocCode} value={location.LocCode}>
+                        {location.LocDes}
+                      </option>
+                    ))}
+                  </select>
+                );
+              })()}
               <select
                 className="f-sel"
                 value={filterMode}

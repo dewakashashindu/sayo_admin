@@ -18,6 +18,9 @@ import {
 } from '@/lib/billingPayments';
 /* Suggestion lists must never be clipped by the card they sit in. */
 import FloatingPanel from '@/components/FloatingPanel';
+import { useMyAccess } from '@/lib/useMyAccess';
+import NoAccess from '@/components/NoAccess';
+import AccessLoading from '@/components/AccessLoading';
 /* Tax maths. The rates are never hard-coded: they are read from tbl_taxes. */
 import {
   computeTaxes,
@@ -506,6 +509,10 @@ function IPhone()   { return <svg width="12" height="12" viewBox="0 0 24 24" fil
 function BillingContent() {
   const router       = useRouter();
   const searchParams = useSearchParams();
+  const access = useMyAccess();
+  const canRevert    = !access.enforce || access.has('BILLFUNC', 'REVERT_BILL');
+  const canPrint     = !access.enforce || access.has('BILLFUNC', 'PRINT');
+  const canDiscount  = !access.enforce || access.has('BILLFUNC', 'DISCOUNT');
 
   const appt      = useMemo(() => getApptFromParams(searchParams), [searchParams]);
   const bookingID = appt.bookingID;
@@ -699,6 +706,13 @@ function BillingContent() {
   const [discountPct,  setDiscountPct]  = useState<number|''>(0);
   const [discountAmt,  setDiscountAmt]  = useState<number|''>('');
   const [discountSource, setDiscountSource] = useState<'pct'|'amt'|''>('pct');
+
+  // No DISCOUNT right => forcibly strip any discount (cannot sneak one in).
+  useEffect(() => {
+    if (access.loaded && !canDiscount) {
+      setDiscountPct(''); setDiscountAmt(''); setDiscountSource('');
+    }
+  }, [access.loaded, canDiscount]);
 
     const [taxRows,      setTaxRows]      = useState<TaxRow[]>([]);
   const [taxesLoading, setTaxesLoading] = useState(true);
@@ -1230,7 +1244,7 @@ function BillingContent() {
                         {/* REVERT — the antidote to a “Done” pressed by mistake.
                             Shown while the booking is still Done or Ongoing and
                             the bill has not been written yet. */}
-                        {!paid && statusFromDbKnown && ['done','ongoing'].includes((view.status||'').toLowerCase()) && (
+                        {canRevert && !paid && statusFromDbKnown && ['done','ongoing'].includes((view.status||'').toLowerCase()) && (
                           <button
                             type="button"
                             className="btn-revert"
@@ -1496,7 +1510,7 @@ function BillingContent() {
                       <span style={{fontWeight:500}}>Discount</span>
                       <div style={{display:'flex',gap:6,width:'100%',alignItems:'center'}}>
                         <div style={{position:'relative',flex:1}}>
-                          <input className="sum-inp" type="number" min={0} max={100} placeholder="0" value={discountPct} onChange={e=>{
+                          <input disabled={!canDiscount} title={!canDiscount?'No permission to add discounts':''} className="sum-inp" type="number" min={0} max={100} placeholder="0" value={discountPct} onChange={e=>{
                             const raw = e.target.value;
                             if (raw === '') { setDiscountPct(''); setDiscountAmt(''); setDiscountSource(''); return; }
                             const pct = clamp(Number(raw), 0, 100);
@@ -1509,7 +1523,7 @@ function BillingContent() {
                         </div>
                         <span style={{fontSize:11,color:'#9ca3af',flexShrink:0}}>or</span>
                         <div style={{flex:1}}>
-                          <input className="sum-inp" type="number" min={0} placeholder="0.00" value={discountAmt} onChange={e=>{
+                          <input disabled={!canDiscount} title={!canDiscount?'No permission to add discounts':''} className="sum-inp" type="number" min={0} placeholder="0.00" value={discountAmt} onChange={e=>{
                             const raw = e.target.value;
                             if (raw === '') { setDiscountPct(''); setDiscountAmt(''); setDiscountSource(''); return; }
                             const amt = clamp(Number(raw), 0, gross > 0 ? gross : Number(raw));
@@ -1642,9 +1656,6 @@ function BillingContent() {
                         </>
                       )}
                     </div>
-                    {Object.keys(vwGroups).length > 0 && (
-                      <p style={{fontSize:10,color:'#9ca3af',marginTop:-4,marginBottom:8}}>Modes from Vw_PaymentModes (Tbl_PaymentModes + Tbl_PaymentGroup) — Enable=1, DoNotShowInSales=0.</p>
-                    )}
 
                     <div className="sum-row" style={{paddingTop:2}}>
                       <span>Total Paid</span>
@@ -1863,7 +1874,7 @@ function BillingContent() {
                   <p style={{textAlign:'center',fontSize:11,color:'#9ca3af',marginTop:16}}>Thank you for visiting us!</p>
                 </div>
                 <div className="no-print" style={{display:'flex',gap:10}}>
-                  <button className="btn-ghost" style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6}} onClick={handlePrint}><IPrinter/> Print Receipt</button>
+                  {canPrint && <button className="btn-ghost" style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6}} onClick={handlePrint}><IPrinter/> Print Receipt</button>}
                   <button className="btn-primary" style={{flex:1}} onClick={()=>router.push('/billing/dashboard')}>Back to Billing Dashboard</button>
                 </div>
               </div>
@@ -1876,6 +1887,12 @@ function BillingContent() {
 }
 
 export default function BillingPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:'#c2d4d4'}}><AccessLoading /></div>;
+  // POS opens when the BILL screen, or the POS-Functions screen, is granted.
+  if (enforce && !(has('BILLGRP', 'ACCESS') && (has('BILL', 'ACCESS') || has('BILLFUNC', 'ACCESS')))) {
+    return <NoAccess screen="the bill (POS)" />;
+  }
   return (
     <Suspense fallback={
       <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',background:'#c2d4d4',fontFamily:'Inter,sans-serif',color:'#1e3a40',fontSize:14}}>

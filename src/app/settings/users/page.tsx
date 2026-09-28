@@ -4,6 +4,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 import AccessProfilePrintSheet, { ACCESS_PROFILE_PRINT_CSS } from '@/components/AccessProfilePrintSheet';
 
 interface UserRow {
@@ -19,7 +22,12 @@ const EMPTY = {
 };
 type FormState = typeof EMPTY;
 
-export default function UsersPage() {
+function UsersPageContent() {
+  const access = useMyAccess();
+  const canNewUser = !access.enforce || access.has("USERS", "NEW_USER");
+  const canCancelU = !access.enforce || access.has("USERS", "CANCEL");
+  const canSaveU = !access.enforce || access.has("USERS", "SAVE");
+
   const router = useRouter();
   const [toast, setToast] = useState<{ msg: string; err: boolean } | null>(null);
   const showToast = useCallback((msg: string, err = false) => {
@@ -199,7 +207,9 @@ export default function UsersPage() {
               <div className="panel-search">
                 <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search users…" />
               </div>
+              {canNewUser && (
               <button className={`new-btn ${isNew ? 'on' : ''}`} onClick={clear}>+ New User</button>
+              )}
               <div className="list">
                 {loading && <div className="empty">Loading…</div>}
                 {!loading && filtered.length === 0 && <div className="empty">No users yet — start with the form.</div>}
@@ -280,7 +290,9 @@ export default function UsersPage() {
               </div>
 
               <div className="actions">
+                {canCancelU && (
                 <button className="btn" onClick={clear} disabled={busy}>Clear</button>
+                )}
                 <div className="flex" />
                 {!isNew && current && (
                   <button
@@ -299,9 +311,11 @@ export default function UsersPage() {
                 {!isNew && (
                   <button className="btn danger" onClick={handleDelete} disabled={busy}>Delete</button>
                 )}
+                {canSaveU && (
                 <button className="btn primary" onClick={() => void handleSave()} disabled={busy || !dirty}>
                   {busy ? 'Saving…' : 'Save'}
                 </button>
+                )}
               </div>
             </section>
           </div>
@@ -356,3 +370,9 @@ const CSS = `
   .toast.err{background:#b91c1c}
   @media(max-width:900px){.panel{width:100%}.body{flex-direction:column}.grid{grid-template-columns:1fr}.fld.wide{grid-column:span 1}}
 `;
+export default function UsersPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}><AccessLoading /></div>;
+  if (enforce && !(has("ADMINGRP", "ACCESS") && has("USERGEN", "ACCESS") && has("USERS", "ACCESS"))) return <NoAccess screen="Users" />;
+  return <UsersPageContent />;
+}

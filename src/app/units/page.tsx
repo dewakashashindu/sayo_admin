@@ -3,9 +3,14 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 
+/* ─────────────────────────────────────────
+   TYPES — matches DB tables exactly
+───────────────────────────────────────── */
 interface MasterUnit {
   MasterUnitID: string;
   UnitDes: string;
@@ -27,6 +32,9 @@ interface UnitConversion {
 
 type Section = 'master' | 'sub' | 'conversion';
 
+/* ─────────────────────────────────────────
+   API HELPERS — single consolidated route
+───────────────────────────────────────── */
 const API_BASE   = '/api/units';
 const API_MASTER = `${API_BASE}?type=master`;
 const API_SUB    = `${API_BASE}?type=sub`;
@@ -48,6 +56,9 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<ApiRespo
   }
 }
 
+/* ─────────────────────────────────────────
+   PAGE CSS
+───────────────────────────────────────── */
 const PAGE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
@@ -232,6 +243,9 @@ const PAGE_CSS = `
   }
 `;
 
+/* ─────────────────────────────────────────
+   ICONS
+───────────────────────────────────────── */
 function IBell({ s=21 }: { s?: number })    { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>; }
 function ISearch({ s=15 }: { s?: number }) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>; }
 function IChevD({ s=13 }: { s?: number })  { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>; }
@@ -246,6 +260,9 @@ function ILayers({ s=13 }: { s?: number }) { return <svg width={s} height={s} vi
 function IArrows({ s=13 }: { s?: number }) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>; }
 function IAlertCircle({ s=32 }: { s?: number }) { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>; }
 
+/* ─────────────────────────────────────────
+   TOAST HOOK
+───────────────────────────────────────── */
 function useToast() {
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const show = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
@@ -255,6 +272,9 @@ function useToast() {
   return { toast, show };
 }
 
+/* ─────────────────────────────────────────
+   REUSABLE COMPONENTS
+───────────────────────────────────────── */
 function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <div className="chk-row" onClick={() => onChange(!checked)} role="checkbox" aria-checked={checked} tabIndex={0}
@@ -290,7 +310,16 @@ function EnableBadge({ v }: { v: boolean }) {
   return <span className={v ? 'badge-active' : 'badge-inactive'}>{v ? 'Active' : 'Inactive'}</span>;
 }
 
-export default function UnitsPage() {
+/* ─────────────────────────────────────────
+   MAIN PAGE
+───────────────────────────────────────── */
+function UnitsPageContent() {
+  const access = useMyAccess();
+  const canSave   = !access.enforce || access.has("UNIT", "SAVE");
+  const canClear  = !access.enforce || access.has("UNIT", "CLEAR");
+  const canDelete = !access.enforce || access.has("UNIT", "DELETE");
+  const canPrint  = !access.enforce || access.has("UNIT", "PRINT");
+
   const router  = useRouter();
   const [navKey,  setNavKey]  = useState('units');
   const [section, setSection] = useState<Section>('master');
@@ -299,7 +328,8 @@ export default function UnitsPage() {
 
   const MAX_DES = 50;
 
-    const [masters,    setMasters]    = useState<MasterUnit[]>([]);
+  /* ══ MASTER UNIT state ══ */
+  const [masters,    setMasters]    = useState<MasterUnit[]>([]);
   const [selMaster,  setSelMaster]  = useState<MasterUnit | null>(null);
   const [isNewM,     setIsNewM]     = useState(true);   // blank form until a row is picked
   const [loadingM,   setLoadingM]   = useState(true);
@@ -310,7 +340,8 @@ export default function UnitsPage() {
   const [fUnitDes,   setFUnitDes]   = useState('');
   const [fMEnable,   setFMEnable]   = useState(true);
 
-    const [subs,      setSubs]      = useState<SubUnit[]>([]);
+  /* ══ SUB UNIT state ══ */
+  const [subs,      setSubs]      = useState<SubUnit[]>([]);
   const [selSub,    setSelSub]    = useState<SubUnit | null>(null);
   const [isNewS,    setIsNewS]    = useState(true);    // blank form until a row is picked
   const [loadingS,  setLoadingS]  = useState(true);
@@ -321,7 +352,8 @@ export default function UnitsPage() {
   const [fSubDes,   setFSubDes]   = useState('');
   const [fSEnable,  setFSEnable]  = useState(true);
 
-    const [convs,      setConvs]      = useState<UnitConversion[]>([]);
+  /* ══ CONVERSION state ══ */
+  const [convs,      setConvs]      = useState<UnitConversion[]>([]);
   const [selConv,    setSelConv]    = useState<UnitConversion | null>(null);
   const [isNewC,     setIsNewC]     = useState(true);   // blank form until a row is picked
   const [loadingC,   setLoadingC]   = useState(true);
@@ -333,10 +365,14 @@ export default function UnitsPage() {
   const [fCUnits,    setFCUnits]    = useState(0);
   const [fCEnable,   setFCEnable]   = useState(true);
 
-    const masterDes = (id: string) => masters.find((m) => m.MasterUnitID === id)?.UnitDes ?? id;
+  /* ── helpers ── */
+  const masterDes = (id: string) => masters.find((m) => m.MasterUnitID === id)?.UnitDes ?? id;
   const subDes    = (id: string) => subs.find((s) => s.SubUnitID === id)?.SubUnitDes ?? id;
 
-    const fetchMasters = useCallback(async () => {
+  /* ════════════════════════════════════════
+     FETCH — real data on mount
+  ════════════════════════════════════════ */
+  const fetchMasters = useCallback(async () => {
     setLoadingM(true); setErrorM(null);
     const res = await apiFetch<MasterUnit[]>(API_MASTER);
     if (res.success && res.data) {
@@ -387,7 +423,8 @@ export default function UnitsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-    const filteredMasters = useMemo(() =>
+  /* ── filtered lists ── */
+  const filteredMasters = useMemo(() =>
     masters.filter((m) =>
       m.UnitDes.toLowerCase().includes(search.toLowerCase()) ||
       m.MasterUnitID.toLowerCase().includes(search.toLowerCase())
@@ -407,7 +444,10 @@ export default function UnitsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [convs, search, masters, subs]);
 
-    function loadMasterForm(m: MasterUnit) {
+  /* ═══════════════════════════════════════
+     MASTER UNIT HANDLERS
+  ═══════════════════════════════════════ */
+  function loadMasterForm(m: MasterUnit) {
     setSelMaster(m); setIsNewM(false);
     setFMasterID(m.MasterUnitID);
     setFUnitDes(m.UnitDes);
@@ -419,7 +459,15 @@ export default function UnitsPage() {
     setFUnitDes(''); setFMEnable(true);
     setSelMaster(null); setIsNewM(true);
   }
-  
+  /* ═══════════════════════════════════════
+     SAVE CLEARS THE FORM  (asked for in this round)
+     ----------------------------------------------
+     After a successful save the panel goes straight back to a BLANK “new”
+     form, so the next unit can be typed without hunting for a New button.
+     The saved row stays in the list on the left, and the toast says which
+     record was written.
+  ═══════════════════════════════════════ */
+
   async function handleSaveMaster() {
     const trimmed = fUnitDes.trim();
     if (!trimmed) { showToast('Unit Description is required', 'error'); return; }
@@ -474,7 +522,10 @@ export default function UnitsPage() {
     else if (selMaster) { setFUnitDes(selMaster.UnitDes); setFMEnable(selMaster.Enable); }
   }
 
-    function loadSubForm(s: SubUnit) {
+  /* ═══════════════════════════════════════
+     SUB UNIT HANDLERS
+  ═══════════════════════════════════════ */
+  function loadSubForm(s: SubUnit) {
     setSelSub(s); setIsNewS(false);
     setFSubID(s.SubUnitID); setFSubDes(s.SubUnitDes); setFSEnable(s.Enable);
   }
@@ -537,7 +588,10 @@ export default function UnitsPage() {
     else if (selSub) { setFSubDes(selSub.SubUnitDes); setFSEnable(selSub.Enable); }
   }
 
-    function loadConvForm(c: UnitConversion) {
+  /* ═══════════════════════════════════════
+     CONVERSION HANDLERS
+  ═══════════════════════════════════════ */
+  function loadConvForm(c: UnitConversion) {
     setSelConv(c); setIsNewC(false);
     setFCMasterID(c.MasterUnitID); setFCSubID(c.SubUnitID);
     setFCUnits(c.NoOfUnits); setFCEnable(c.Enable);
@@ -623,7 +677,8 @@ export default function UnitsPage() {
     }
   }
 
-    function handleNavigate(key: string, path: string) { setNavKey(key); router.push(path); }
+  /* ── Navigation ── */
+  function handleNavigate(key: string, path: string) { setNavKey(key); router.push(path); }
   function handleLogout() { router.push('/admin/login'); }
 
   function switchSection(next: Section) {
@@ -633,7 +688,8 @@ export default function UnitsPage() {
 
   const HDR = '#dae6e6';
 
-    function ActionBar({
+  /* ── Shared ActionBar ── */
+  function ActionBar({
     onClear, onDelete, onSave, isNew, saving, deleting, canAct,
   }: {
     onClear: () => void; onDelete: () => void; onSave: () => void;
@@ -641,22 +697,23 @@ export default function UnitsPage() {
   }) {
     return (
       <div style={{ background:'#dce8e8', borderTop:'1.5px solid rgba(30,58,64,0.12)', padding:'12px 16px', display:'flex', gap:10, flexShrink:0, flexWrap:'wrap', alignItems:'center' }}>
-        <button className="btn-clear" onClick={onClear} disabled={saving || deleting || !canAct}><IRefresh s={14}/> Clear</button>
-        <button className="btn-print" onClick={() => window.print()}><IPrint s={14}/> Print</button>
+        {canClear && <button className="btn-clear" onClick={onClear} disabled={saving || deleting || !canAct}><IRefresh s={14}/> Clear</button>}
+        {canPrint && <button className="btn-print" onClick={() => window.print()}><IPrint s={14}/> Print</button>}
         <div style={{ flex:1 }}/>
-        {!isNew && canAct && (
+        {!isNew && canAct && canDelete && (
           <button className="btn-del" onClick={onDelete} disabled={saving || deleting}>
             <ITrash s={14}/> {deleting ? 'Deleting…' : 'Delete'}
           </button>
         )}
-        <button className="btn-save" onClick={onSave} disabled={saving || deleting || !canAct}>
+        {canSave && <button className="btn-save" onClick={onSave} disabled={saving || deleting || !canAct}>
           <ISave s={14}/> {saving ? 'Saving…' : 'Save'}
-        </button>
+        </button>}
       </div>
     );
   }
 
-    function ListState({ loading, error, onRetry, empty }: { loading: boolean; error: string | null; onRetry: () => void; empty: boolean }) {
+  /* ── Loading/Error state for left list ── */
+  function ListState({ loading, error, onRetry, empty }: { loading: boolean; error: string | null; onRetry: () => void; empty: boolean }) {
     if (loading) {
       return <div style={{ display:'flex', justifyContent:'center', paddingTop:40 }}><div className="spinner" /></div>;
     }
@@ -675,12 +732,13 @@ export default function UnitsPage() {
     return null;
   }
 
-    return (
+  /* ════════════════════════════════════════
+     RENDER
+  ════════════════════════════════════════ */
+  return (
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{PAGE_CSS}</style>
-
-      <style>{MASTER_PRINT_CSS}</style>
 
       {toast && (
         <div className={`toast ${toast.type === 'success' ? 'toast-success' : 'toast-error'}`}>
@@ -728,7 +786,9 @@ export default function UnitsPage() {
           {/* BODY */}
           <div className="main-body" style={{ flex:1, overflow:'hidden', padding:'13px 15px', display:'flex', gap:13 }}>
 
-            {}
+            {/* ══════════════════════════════════
+                MASTER UNIT
+            ══════════════════════════════════ */}
             {section === 'master' && (
               <>
                 <div className="left-panel" style={{ width:250, flexShrink:0, background:'#deeaea', borderRadius:12, display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:'0 1px 5px rgba(0,0,0,0.08)' }}>
@@ -737,9 +797,11 @@ export default function UnitsPage() {
                       <span style={{ fontSize:13, fontWeight:700, color:'#1e3a40' }}>Master Units</span>
                       <span style={{ fontSize:11, color:'#6b7280', fontWeight:500 }}>{masters.length} total</span>
                     </div>
+                    {canSave && (
                     <button className="btn-new" style={{ width:'100%' }} onClick={handleNewMaster} disabled={loadingM}>
                       <IPlus s={14}/> New Master Unit
                     </button>
+                    )}
                   </div>
                   <div style={{ flex:1, overflowY:'auto', padding:'8px' }}>
                     <ListState loading={loadingM} error={errorM} onRetry={fetchMasters} empty={filteredMasters.length === 0} />
@@ -859,7 +921,9 @@ export default function UnitsPage() {
               </>
             )}
 
-            {}
+            {/* ══════════════════════════════════
+                SUB UNIT
+            ══════════════════════════════════ */}
             {section === 'sub' && (
               <>
                 <div className="left-panel" style={{ width:250, flexShrink:0, background:'#deeaea', borderRadius:12, display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:'0 1px 5px rgba(0,0,0,0.08)' }}>
@@ -868,9 +932,11 @@ export default function UnitsPage() {
                       <span style={{ fontSize:13, fontWeight:700, color:'#1e3a40' }}>Sub Units</span>
                       <span style={{ fontSize:11, color:'#6b7280', fontWeight:500 }}>{subs.length} total</span>
                     </div>
+                    {canSave && (
                     <button className="btn-new" style={{ width:'100%' }} onClick={handleNewSub} disabled={loadingS}>
                       <IPlus s={14}/> New Sub Unit
                     </button>
+                    )}
                   </div>
                   <div style={{ flex:1, overflowY:'auto', padding:'8px' }}>
                     <ListState loading={loadingS} error={errorS} onRetry={fetchSubs} empty={filteredSubs.length === 0} />
@@ -990,7 +1056,9 @@ export default function UnitsPage() {
               </>
             )}
 
-            {}
+            {/* ══════════════════════════════════
+                UNIT CONVERSION
+            ══════════════════════════════════ */}
             {section === 'conversion' && (
               <>
                 <div className="left-panel" style={{ width:280, flexShrink:0, background:'#deeaea', borderRadius:12, display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:'0 1px 5px rgba(0,0,0,0.08)' }}>
@@ -999,10 +1067,12 @@ export default function UnitsPage() {
                       <span style={{ fontSize:13, fontWeight:700, color:'#1e3a40' }}>Unit Conversions</span>
                       <span style={{ fontSize:11, color:'#6b7280', fontWeight:500 }}>{convs.length} total</span>
                     </div>
+                    {canSave && (
                     <button className="btn-new" style={{ width:'100%' }} onClick={handleNewConv}
                       disabled={loadingC || masters.length===0 || subs.length===0}>
                       <IPlus s={14}/> New Conversion
                     </button>
+                    )}
                     {(masters.length===0||subs.length===0) && !loadingM && !loadingS && (
                       <p style={{ fontSize:10.5, color:'#dc2626', marginTop:6 }}>Add Master & Sub units first.</p>
                     )}
@@ -1145,27 +1215,21 @@ export default function UnitsPage() {
           </div>
         </div>
       </div>
-      <MasterPrintSheet
-        title={section === 'master' ? 'Unit Details — Master Units' : section === 'sub' ? 'Unit Details — Sub Units' : 'Unit Details — Conversions'}
-        columns={section === 'conversion'
-          ? [
-              { label: 'Master Unit', width: '150px' },
-              { label: 'Sub Unit', width: '150px' },
-              { label: 'No of Units', width: '90px', align: 'r' },
-              { label: 'Status', width: '80px', align: 'c' },
-            ]
-          : [
-              { label: 'Unit Code', width: '120px' },
-              { label: 'Description' },
-              { label: 'Status', width: '80px', align: 'c' },
-            ]}
-        rows={section === 'master'
-          ? filteredMasters.map((m) => [m.MasterUnitID, m.UnitDes, m.Enable ? 'Enabled' : 'Disabled'])
-          : section === 'sub'
-            ? filteredSubs.map((u) => [u.SubUnitID, u.SubUnitDes, u.Enable ? 'Enabled' : 'Disabled'])
-            : filteredConvs.map((c) => [masterDes(c.MasterUnitID), subDes(c.SubUnitID), String(c.NoOfUnits), c.Enable ? 'Enabled' : 'Disabled'])}
-        emptyText="No units"
-      />
     </>
   );
+}
+
+export default function UnitsPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}>
+        <AccessLoading />
+      </div>
+    );
+  }
+  if (enforce && !(has("INV", "ACCESS") && has("INVREF", "ACCESS") && has("UNIT", "ACCESS"))) {
+    return <NoAccess screen="Unit Master" />;
+  }
+  return <UnitsPageContent />;
 }

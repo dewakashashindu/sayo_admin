@@ -2,6 +2,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 import InventoryPrintSheet, { INVENTORY_PRINT_CSS } from '@/components/InventoryPrintSheet';
 import { poPrintValueColumns, type PoPrintCopy } from '@/lib/poPrint';
 
@@ -40,7 +43,16 @@ function useToast() {
   return { toast, show };
 }
 
-export default function ReconPage() {
+function ReconPageContent() {
+  const access = useMyAccess();
+  const canAddLine = !access.enforce || access.has("RECON", "ADD_LINE");
+  const canClear = !access.enforce || access.has("RECON", "CLEAR");
+  const canConfirm = !access.enforce || access.has("RECON", "CONFIRM");
+  const canPrint = !access.enforce || access.has("RECON", "PRINT");
+  const canEmail = !access.enforce || access.has("RECON", "EMAIL");
+  const canDelete = !access.enforce || access.has("RECON", "DELETE");
+  const canSave = !access.enforce || access.has("RECON", "SAVE");
+
   const router = useRouter();
   const { toast, show: showToast } = useToast();
   const [tab, setTab] = useState<'find' | 'details'>('details');
@@ -459,11 +471,21 @@ export default function ReconPage() {
               </div>
 
               <div className="po-actions no-print">
+                {canClear && (
                 <button className="btn" onClick={handleClear} disabled={busy}>Clear</button>
+                )}
+                {canConfirm && (
                 <button className="btn" onClick={() => void handleConfirm()} disabled={busy || confirmed}>{confirming ? 'Confirming…' : 'Confirmation'}</button>
+                )}
+                {canPrint && (
                 <button className="btn" onClick={() => handlePrint()} disabled={busy||!recNo.trim()}>Print</button>
+                )}
+                {canEmail && (
                 <button className="btn" onClick={()=> void openMailDialog()} disabled={busy||!recNo.trim()||mailSending} title="Email this Recon as PDF">{mailSending?'Sending…':'Email'}</button>
+                )}
+                {canSave && (
                 <button className="btn primary" onClick={() => void handleSave()} disabled={busy || locked}>{saving ? 'Saving…' : 'Save'}</button>
+                )}
                 <button className="btn" onClick={handleCancel} disabled={busy}>Cancel</button>
               </div>
 
@@ -596,3 +618,9 @@ const PAGE_CSS = `
 
   @media print{.no-print{display:none!important} html,body{background:#fff!important} .po-shell{display:block;height:auto} .po-main{overflow:visible;padding:0} .po-card{border:none;padding:0;background:transparent!important} .po-grid-wrap{display:none!important} .po-print-head{display:none!important} .po-print-only{display:none!important}}
 `;
+export default function ReconPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}><AccessLoading /></div>;
+  if (enforce && !(has("INV", "ACCESS") && has("INVTXN", "ACCESS") && has("RECON", "ACCESS"))) return <NoAccess screen="Stock Reconciliation" />;
+  return <ReconPageContent />;
+}

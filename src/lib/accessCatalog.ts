@@ -16,9 +16,11 @@ const A = (code: string, label?: string): AccessAction => ({
   label: label ?? code.charAt(0) + code.slice(1).toLowerCase().replace(/_/g, " "),
 });
 const ACCESS = A("ACCESS");
-const MASTER_ACTIONS = [ACCESS, A("CLEAR"), A("VIEW"), A("PRINT"), A("DELETE"), A("SAVE")];
-const DOC_EMAIL = [ACCESS, A("CLEAR"), A("CONFIRM"), A("PRINT"), A("EMAIL"), A("DELETE"), A("SAVE")];
-const DOC_PLAIN = [ACCESS, A("CLEAR"), A("CONFIRM"), A("PRINT"), A("DELETE"), A("SAVE")];
+// Access = view-only; the others gate the actual buttons.
+const MASTER_ACTIONS = [ACCESS, A("CLEAR"), A("PRINT"), A("DELETE"), A("SAVE")];
+// Inventory document screens — buttons hidden unless granted.
+const DOC_LINE   = [ACCESS, A("ADD_LINE", "Add Line"), A("CLEAR"), A("CONFIRM", "Confirmation"), A("PRINT"), A("EMAIL"), A("DELETE"), A("SAVE")];
+const DOC_NOLINE = [ACCESS, A("CLEAR"), A("CONFIRM", "Confirmation"), A("PRINT"), A("EMAIL"), A("DELETE"), A("SAVE")];
 
 export const ACCESS_TREE: AccessNode[] = [
   { code: "DASH", name: "Dashboard", actions: [ACCESS] },
@@ -26,7 +28,7 @@ export const ACCESS_TREE: AccessNode[] = [
   {
     code: "APPTGRP", name: "Appointments", actions: [ACCESS],
     children: [
-      { code: "APPT",     name: "Appointments Dashboard",  actions: [ACCESS, A("NEW_BOOKING", "New Booking"), A("CANCEL_BOOKING", "Cancel Booking"), A("CHECK_IN", "Check In"), A("RESCHEDULE", "Reschedule")] },
+      { code: "APPT",     name: "Appointments Dashboard",  actions: [ACCESS, A("NEW_BOOKING", "New Booking"), A("CANCEL_BOOKING", "Cancel Booking"), A("CHECK_IN", "Check In"), A("RESCHEDULE", "Reschedule Booking")] },
       { code: "APPTFORM", name: "Perform New Booking",     actions: [ACCESS] },
       { code: "TECHAPPT", name: "Technician Appointments", actions: [ACCESS, A("CHANGE_TECH", "Change Technician")] },
     ],
@@ -39,7 +41,7 @@ export const ACCESS_TREE: AccessNode[] = [
       { code: "BILLTXN",  name: "Billing Transactions",       actions: [ACCESS] },
       { code: "BILL",     name: "BILL",                      actions: [ACCESS] },
       { code: "BILLREP",  name: "Billing Reports",            actions: [ACCESS] },
-      { code: "BILLFUNC", name: "Billing (POS Functions)",    actions: [ACCESS, A("REVERT_BILL", "Revert Bill"), A("PRINT")] },
+      { code: "BILLFUNC", name: "Billing (POS Functions)",    actions: [ACCESS, A("REVERT_BILL", "Revert Bill"), A("PRINT"), A("DISCOUNT", "Add Discount")] },
     ],
   },
 
@@ -51,7 +53,7 @@ export const ACCESS_TREE: AccessNode[] = [
         children: [
           { code: "LOC",  name: "Location Master",  actions: MASTER_ACTIONS },
           { code: "CAT",  name: "Categories",       actions: MASTER_ACTIONS },
-          { code: "ITEM", name: "Item Master",      actions: MASTER_ACTIONS },
+          { code: "ITEM", name: "Item Master",      actions: [...MASTER_ACTIONS, A("RECIPE", "Recipe Management")] },
           { code: "UNIT", name: "Unit Master",      actions: MASTER_ACTIONS },
           { code: "SUP",  name: "Supplier Master",  actions: MASTER_ACTIONS },
         ],
@@ -59,26 +61,26 @@ export const ACCESS_TREE: AccessNode[] = [
       {
         code: "INVTXN", name: "Transactions", actions: [ACCESS],
         children: [
-          { code: "PO",  name: "Purchase Orders", actions: [...DOC_EMAIL, A("CANCEL")] },
-          { code: "GRN", name: "GRN / DGRN",      actions: DOC_EMAIL },
-          { code: "SRN", name: "SRN",             actions: DOC_EMAIL },
-          { code: "DMG", name: "Damage",          actions: DOC_PLAIN },
+          { code: "PO",  name: "Purchase Orders", actions: DOC_LINE },
+          { code: "GRN", name: "GRN / DGRN",      actions: [...DOC_LINE, A("MSG_ADMIN", "Message Admin"), A("AGAINST_PO", "Against a Purchase Order"), A("DIRECT_GRN", "Direct GRN")] },
+          { code: "SRN", name: "SRN",             actions: DOC_NOLINE },
+          { code: "DMG", name: "Damage",          actions: DOC_LINE },
           {
             code: "TRN", name: "Transfer", actions: [ACCESS],
             children: [
-              { code: "TREQ",  name: "Requisition Note", actions: DOC_PLAIN },
-              { code: "TNOTE", name: "Transfer Note",    actions: DOC_PLAIN },
-              { code: "TRET",  name: "Return Note",      actions: DOC_PLAIN },
+              { code: "TREQ",  name: "Requisition Note", actions: DOC_LINE },
+              { code: "TNOTE", name: "Transfer Note",    actions: DOC_LINE },
+              { code: "TRET",  name: "Return Note",      actions: DOC_LINE },
             ],
           },
           {
             code: "ISS", name: "Issue", actions: [ACCESS],
             children: [
-              { code: "IREQ",  name: "Requisition Note", actions: DOC_PLAIN },
-              { code: "INOTE", name: "Issue Note",       actions: [...DOC_PLAIN, A("RECEIVE", "Confirm Receipt")] },
+              { code: "IREQ",  name: "Requisition Note", actions: DOC_LINE },
+              { code: "INOTE", name: "Issue Note",       actions: [...DOC_LINE, A("RECEIVE", "Confirm Receipt")] },
             ],
           },
-          { code: "RECON", name: "Stock Recon.", actions: DOC_PLAIN },
+          { code: "RECON", name: "Stock Recon.", actions: DOC_LINE },
         ],
       },
       { code: "INVREP", name: "Inventory Reports", actions: [ACCESS, A("PRINT")] },
@@ -104,8 +106,8 @@ export const ACCESS_TREE: AccessNode[] = [
       {
         code: "USERGEN", name: "User Creation", actions: [ACCESS],
         children: [
-          { code: "UGROUPS", name: "User Groups", actions: [ACCESS, A("CLEAR"), A("VIEW"), A("DELETE"), A("SAVE")] },
-          { code: "USERS",   name: "Users",       actions: [ACCESS, A("CLEAR"), A("VIEW"), A("DELETE"), A("SAVE")] },
+          { code: "UGROUPS", name: "User Groups", actions: [ACCESS, A("NEW_GROUP", "New Group"), A("CANCEL", "Cancel"), A("SAVE")] },
+          { code: "USERS",   name: "Users",       actions: [ACCESS, A("NEW_USER", "New User"), A("CANCEL", "Cancel"), A("SAVE")] },
         ],
       },
     ],
@@ -136,7 +138,7 @@ export const ACCESS_TREE: AccessNode[] = [
     code: "SYSSET", name: "System Settings", actions: [ACCESS],
     children: [
       { code: "SETUP",   name: "Start-up Settings", actions: [ACCESS, A("SAVE")] },
-      { code: "ACCESSP", name: "Access Profiles",   actions: [ACCESS, A("SAVE")] },
+      { code: "ACCESSP", name: "Access Profiles",   actions: [ACCESS, A("PRINT"), A("SELECT_ALL", "Select All"), A("DESELECT_ALL", "DeSelect All"), A("CANCEL", "Cancel"), A("SAVE")] },
     ],
   },
 

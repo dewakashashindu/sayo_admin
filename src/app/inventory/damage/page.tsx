@@ -2,6 +2,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 import ItemSuggestInput, { type SuggestedItem } from '@/components/ItemSuggestInput';
 import InventoryPrintSheet, { INVENTORY_PRINT_CSS } from '@/components/InventoryPrintSheet';
 import { poPrintValueColumns, type PoPrintCopy } from '@/lib/poPrint';
@@ -33,7 +36,16 @@ function useToast(){
   return {toast,show};
 }
 
-export default function DamageNotePage(){
+function DamageNotePageContent() {
+  const access = useMyAccess();
+  const canAddLine = !access.enforce || access.has("DMG", "ADD_LINE");
+  const canClear = !access.enforce || access.has("DMG", "CLEAR");
+  const canConfirm = !access.enforce || access.has("DMG", "CONFIRM");
+  const canPrint = !access.enforce || access.has("DMG", "PRINT");
+  const canEmail = !access.enforce || access.has("DMG", "EMAIL");
+  const canDelete = !access.enforce || access.has("DMG", "DELETE");
+  const canSave = !access.enforce || access.has("DMG", "SAVE");
+
   const router=useRouter();
   const {toast,show:showToast}=useToast();
   const [tab,setTab]=useState<'find'|'details'>('details');
@@ -361,13 +373,27 @@ export default function DamageNotePage(){
               </div>
 
               <div className="po-actions no-print">
+                {canAddLine && (
                 <button className="btn" onClick={addLine} disabled={locked}>+ Add line</button>
+                )}
+                {canClear && (
                 <button className="btn" onClick={handleClear} disabled={busy}>Clear</button>
+                )}
+                {canConfirm && (
                 <button className="btn" onClick={()=>void handleConfirm()} disabled={busy || confirmed}>{confirming?'Confirming…':'Confirmation'}</button>
+                )}
+                {canPrint && (
                 <button className="btn" onClick={()=> handlePrint()} disabled={busy||!damNo.trim()}>Print</button>
+                )}
+                {canEmail && (
                 <button className="btn" onClick={()=> void openMailDialog()} disabled={busy||!damNo.trim()||mailSending} title="Email this Damage Note as PDF">{mailSending?'Sending…':'Email'}</button>
+                )}
+                {canDelete && (
                 <button className="btn danger" onClick={()=>void handleDelete()} disabled={busy || !damNo || confirmed}>{deleting?'Deleting…':'Delete'}</button>
+                )}
+                {canSave && (
                 <button className="btn primary" onClick={()=>void handleSave()} disabled={busy || locked}>{saving?'Saving…':'Save'}</button>
+                )}
                 <button className="btn" onClick={handleCancel} disabled={busy}>Cancel</button>
               </div>
               {printJob && <InventoryPrintSheet title="Damage Note" docNo={damNo.trim()} docDate={damDate} printDate={printJob.at.toLocaleDateString()} printTime={printJob.at.toLocaleTimeString()} user={actor||'admin'} companyName={company.name} companyAddress={company.address} companyPhone={company.phone} branch={locDes} partnerLabel="Location" partnerCode={locCode} partnerName={locDes} partnerAddress={locations.find(l=>l.code===locCode)?.address||''} columns={(() => { const c = poPrintValueColumns(printJob.copy); return {code:'ItemCode',des:'Item Description',unit:'Unit',qty:'Dmg Qty',cost: c.costPrice ? 'Cost Price' : undefined as any, value: c.itemValue ? 'Item Value' : undefined as any } as any; })()} rows={printRows.map(r=>({ ...r, costPrice: poPrintValueColumns(printJob.copy).costPrice ? r.costPrice : '', itemValue: poPrintValueColumns(printJob.copy).itemValue ? r.itemValue : '' }))} totalLabel="Damage Cost" total={poPrintValueColumns(printJob.copy).total ? money(netValue) : ''} remarks={remarks} />}
@@ -504,3 +530,9 @@ const PAGE_CSS = `
 
   @media print{.no-print{display:none!important} html,body{background:#fff!important} .po-shell{display:block;height:auto} .po-main{overflow:visible;padding:0} .po-card{border:none;padding:0;background:transparent!important} .po-grid-wrap{display:none!important}}
 `;
+export default function DamageNotePage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}><AccessLoading /></div>;
+  if (enforce && !(has("INV", "ACCESS") && has("INVTXN", "ACCESS") && has("DMG", "ACCESS"))) return <NoAccess screen="Damage Note" />;
+  return <DamageNotePageContent />;
+}

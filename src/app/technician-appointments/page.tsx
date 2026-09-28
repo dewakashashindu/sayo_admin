@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
+import { useMyAccess } from "@/lib/useMyAccess";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
 import {
@@ -229,6 +232,7 @@ export default function TechnicianAppointmentsPage() {
   const [usingSample, setUsingSample] = useState(false);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const toastCounter = useRef(0);
+  const { loaded, enforce, has } = useMyAccess();
 
   const showToast = useCallback((text: string, type: ToastMsg["type"] = "info") => {
     const id = ++toastCounter.current;
@@ -427,6 +431,13 @@ export default function TechnicianAppointmentsPage() {
   }
 
   const isToday = date === todayISO();
+
+  if (!loaded) return <AccessLoading />;
+
+  if (enforce && !has("TECHAPPT", "ACCESS")) {
+    return <NoAccess screen="Technician Appointments" />;
+  }
+
   const period =
     date === todayISO() ? "today" : date === shiftDate(todayISO(), 1) ? "tomorrow" : date === shiftDate(todayISO(), 2) ? "dayafter" : "";
 

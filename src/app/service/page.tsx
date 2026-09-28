@@ -11,6 +11,9 @@ import React, {
 import { useRouter } from "next/navigation";
 import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 import AdminSidebar, { SIDEBAR_CSS } from "@/components/AdminSidebar";
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 
 type MofValue = "M" | "F" | "O";
 
@@ -2242,7 +2245,14 @@ const SECTIONS = [
   { id: "sec-image", label: "Image", icon: <IImage s={11} /> },
 ];
 
-export default function ItemMasterPage() {
+function ItemMasterPageContent() {
+  const access = useMyAccess();
+  const canSave   = !access.enforce || access.has("ITEM", "SAVE");
+  const canClear  = !access.enforce || access.has("ITEM", "CLEAR");
+  const canDelete = !access.enforce || access.has("ITEM", "DELETE");
+  const canPrint  = !access.enforce || access.has("ITEM", "PRINT");
+  const canRecipe = !access.enforce || access.has("ITEM", "RECIPE");
+
   const router = useRouter();
   const [navKey, setNavKey] = useState("services");
 
@@ -2340,7 +2350,7 @@ export default function ItemMasterPage() {
     });
   }, [overallCost]);
   const currentType = itemType(current);
-  const hasRecipeRights = canHaveRecipe(current);
+  const hasRecipeRights = canHaveRecipe(current) && canRecipe;
   const primaryLocCode = recipeLocCodes[0] ?? current.locCode;
 
   const ingredientItems = useMemo(
@@ -3370,7 +3380,7 @@ export default function ItemMasterPage() {
                       type="button"
                       className="btn-new"
                       onClick={handleNew}
-                      disabled={busy}
+                      disabled={busy || !canSave}
                     >
                       <IPlus s={13} /> New Item
                     </button>
@@ -4437,7 +4447,7 @@ export default function ItemMasterPage() {
                   type="button"
                   className="btn-clear"
                   onClick={handleClear}
-                  disabled={busy}
+                  disabled={busy || !canClear}
                 >
                   <IRefresh s={14} /> Reset
                 </button>
@@ -4445,7 +4455,7 @@ export default function ItemMasterPage() {
                   type="button"
                   className="btn-print"
                   onClick={() => window.print()}
-                  disabled={busy}
+                  disabled={busy || !canPrint}
                 >
                   <IPrint s={14} /> Print
                 </button>
@@ -4455,7 +4465,7 @@ export default function ItemMasterPage() {
                     type="button"
                     className="btn-del"
                     onClick={handleDelete}
-                    disabled={busy}
+                    disabled={busy || !canDelete}
                   >
                     {deleting ? (
                       <>
@@ -4481,7 +4491,7 @@ export default function ItemMasterPage() {
                     id="btn-save-item"
                     className="btn-save"
                     onClick={handleSave}
-                    disabled={busy}
+                    disabled={busy || !canSave}
                   >
                     {saving ? (
                       <>
@@ -4499,7 +4509,7 @@ export default function ItemMasterPage() {
                     type="button"
                     className="btn-save"
                     onClick={handleSaveRecipes}
-                    disabled={recipeSaving}
+                    disabled={recipeSaving || !canRecipe}
                   >
                     {recipeSaving ? (
                       <>
@@ -4541,4 +4551,19 @@ export default function ItemMasterPage() {
       />
     </>
   );
+}
+
+export default function ItemMasterPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#c2d4d4' }}>
+        <AccessLoading />
+      </div>
+    );
+  }
+  if (enforce && !(has("INV", "ACCESS") && has("INVREF", "ACCESS") && has("ITEM", "ACCESS"))) {
+    return <NoAccess screen="Item Master" />;
+  }
+  return <ItemMasterPageContent />;
 }

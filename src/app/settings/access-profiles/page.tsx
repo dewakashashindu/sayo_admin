@@ -8,6 +8,9 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 import { ACCESS_TREE, ALL_ACCESS_KEYS, ALL_GROUP_CODES, PARENT_OF, type AccessNode } from '@/lib/accessCatalog';
 import AccessProfilePrintSheet, { ACCESS_PROFILE_PRINT_CSS } from '@/components/AccessProfilePrintSheet';
 
@@ -17,6 +20,12 @@ interface UserInfo { userId: string; userName: string; groupId: string }
 const key = (s: string, a: string) => `${s}.${a}`;
 
 function AccessProfilesInner() {
+  const access = useMyAccess();
+  const canPrintP       = !access.enforce || access.has("ACCESSP", "PRINT");
+  const canSelectAll    = !access.enforce || access.has("ACCESSP", "SELECT_ALL");
+  const canDeselectAll  = !access.enforce || access.has("ACCESSP", "DESELECT_ALL");
+  const canCancelP      = !access.enforce || access.has("ACCESSP", "CANCEL");
+  const canSaveP        = !access.enforce || access.has("ACCESSP", "SAVE");
   const router = useRouter();
   const params = useSearchParams();
   const userParam = (params.get('user') || '').trim();
@@ -306,15 +315,25 @@ function AccessProfilesInner() {
             {userMode && (
               <button className="btn" onClick={() => router.push('/settings/users')}>← Back to Users</button>
             )}
+            {canPrintP && (
             <button className="btn" onClick={handlePrint} disabled={disabled && !userMode}>
               Print
             </button>
+            )}
+            {canSelectAll && (
             <button className="btn" onClick={selectAll} disabled={disabled || busy}>Select All</button>
+            )}
+            {canDeselectAll && (
             <button className="btn" onClick={deselectAll} disabled={disabled || busy}>DeSelect All</button>
+            )}
+            {canCancelP && (
             <button className="btn danger" onClick={cancel} disabled={!dirty || busy}>Cancel</button>
+            )}
+            {canSaveP && (
             <button className="btn primary" onClick={() => void handleSave()} disabled={!dirty || disabled || busy}>
               {busy ? 'Saving…' : 'Save'}
             </button>
+            )}
           </div>
 
           {profileLoading && <div className="profile-note">loading…</div>}
@@ -366,7 +385,7 @@ function AccessProfilesInner() {
   );
 }
 
-export default function AccessProfilesPage() {
+function AccessProfilesPageContent() {
   return (
     <Suspense fallback={null}>
       <AccessProfilesInner />
@@ -426,3 +445,9 @@ const CSS = `
   .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#1e3a40;color:#fff;padding:11px 20px;border-radius:10px;font-size:13px;font-weight:600;z-index:99;box-shadow:0 8px 24px rgba(0,0,0,.25)}
   .toast.err{background:#b91c1c}
 `;
+export default function AccessProfilesPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}><AccessLoading /></div>;
+  if (enforce && !(has("SYSSET", "ACCESS") && has("ACCESSP", "ACCESS"))) return <NoAccess screen="Access Profiles" />;
+  return <AccessProfilesPageContent />;
+}

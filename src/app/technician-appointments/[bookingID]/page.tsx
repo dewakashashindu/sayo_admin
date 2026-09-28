@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
+import { useMyAccess } from "@/lib/useMyAccess";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
 /* Suggestion lists are portalled so a card with overflow:hidden cannot clip
@@ -294,6 +297,7 @@ export default function TechnicianAppointmentDetailPage() {
   const [tab, setTab] = useState<TabKey>("details");
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const toastCounter = useRef(0);
+  const access = useMyAccess();
 
   // Recipe tab state
   const [recipes, setRecipes] = useState<ServiceRecipe[]>([]);
@@ -641,6 +645,21 @@ export default function TechnicianAppointmentDetailPage() {
       .slice(0, 8);
   }, [techPick, allTechs]);
 
+  // TECHAPPT.CHANGE_TECH AND the booking must be inside an allowed location
+  const canChangeTech = (() => {
+    if (!access.loaded) return false;
+    if (!access.enforce) return true; // legacy open
+    if (!access.perms.has("TECHAPPT.CHANGE_TECH")) return false;
+    if (access.allowedLocCodes.size === 0) return true;
+    return access.allowedLocCodes.has((appt?.locCode || "").trim());
+  })();
+
+  if (!access.loaded) return <AccessLoading />;
+
+  if (access.enforce && !access.has("TECHAPPT", "ACCESS")) {
+    return <NoAccess screen="Technician Appointments" />;
+  }
+
   // Persist the supporting-technician set for every service row of the
   // booking (Tbl_BookingServiceItemAddTech).
   async function persistAddTech(names: string[]) {
@@ -684,6 +703,10 @@ export default function TechnicianAppointmentDetailPage() {
   function handleAddTechnician() {
     const name = techPick.trim();
     if (!name) return;
+    if (!canChangeTech) {
+      showToast("You have no permission to change technicians in this location", "error");
+      return;
+    }
     if (!canEditExtras) {
       showToast(
         extras?.billed

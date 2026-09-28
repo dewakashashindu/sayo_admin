@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 
 interface DoneBooking {
   bookingID: string;
@@ -148,6 +151,7 @@ function ToastContainer({ toasts }: { toasts: ToastMsg[] }) {
 
 export default function BillingDashboardPage() {
   const router = useRouter();
+  const { loaded, enforce, has } = useMyAccess();
   const [navKey, setNavKey] = useState("billing-dashboard");
   const [bookings, setBookings] = useState<DoneBooking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -269,6 +273,19 @@ export default function BillingDashboardPage() {
     });
     router.push(`/billing?${params.toString()}`);
   }
+
+  if (!loaded) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}>
+        <AccessLoading />
+      </div>
+    );
+  }
+  if (enforce && !(has("BILLGRP", "ACCESS") && has("BILLDASH", "ACCESS"))) {
+    return <NoAccess screen="the Billing Dashboard" />;
+  }
+
+  const canCreateBill = !enforce || has("BILLDASH", "CREATE_BILL");
 
   return (
     <>
@@ -440,6 +457,7 @@ export default function BillingDashboardPage() {
 
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                       <span style={{ color: "#9ca3af", fontSize: 11 }}>Booking: {b.bookingID}</span>
+                      {canCreateBill && (
                       <button
                         className="bill-btn"
                         type="button"
@@ -450,6 +468,7 @@ export default function BillingDashboardPage() {
                       >
                         <Ico.Receipt /> Create Bill
                       </button>
+                      )}
                     </div>
                   </div>
                 ))

@@ -2,6 +2,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 import ItemSuggestInput, { type SuggestedItem } from '@/components/ItemSuggestInput';
 import InventoryPrintSheet, { INVENTORY_PRINT_CSS } from '@/components/InventoryPrintSheet';
 import { PO_PRINT_COPY_CHOICES, poPrintCopyLabel, poPrintValueColumns, type PoPrintCopy } from '@/lib/poPrint';
@@ -77,7 +80,19 @@ function useToast() {
   return { toast, show };
 }
 
-export default function GrnPage() {
+function GrnPageContent() {
+  const access = useMyAccess();
+  const canAddLine    = !access.enforce || access.has("GRN", "ADD_LINE");
+  const canClear      = !access.enforce || access.has("GRN", "CLEAR");
+  const canConfirm    = !access.enforce || access.has("GRN", "CONFIRM");
+  const canPrint      = !access.enforce || access.has("GRN", "PRINT");
+  const canEmail      = !access.enforce || access.has("GRN", "EMAIL");
+  const canDelete     = !access.enforce || access.has("GRN", "DELETE");
+  const canSave       = !access.enforce || access.has("GRN", "SAVE");
+  const canMsgAdmin   = !access.enforce || access.has("GRN", "MSG_ADMIN");
+  const canAgainstPO  = !access.enforce || access.has("GRN", "AGAINST_PO");
+  const canDirectGRN  = !access.enforce || access.has("GRN", "DIRECT_GRN");
+
   const router = useRouter();
   const { toast, show: showToast } = useToast();
 
@@ -765,16 +780,20 @@ export default function GrnPage() {
               <div className="po-form no-print">
                 <label>Receipt</label>
                 <div className="rad-row">
+                  {canAgainstPO && (
                   <label className="rad">
                     <input type="radio" checked={!direct} disabled={locked}
                       onChange={() => { setDirect(false); setLines([]); setPoQueue([]); setPoLineCount(0); setDirty(true); }} />
                     Against a purchase order
                   </label>
+                  )}
+                  {canDirectGRN && (
                   <label className="rad">
                     <input type="radio" checked={direct} disabled={locked}
                       onChange={() => { setDirect(true); setPoNo(''); setLines([newLine()]); setPoQueue([]); setPoLineCount(0); setDirty(true); }} />
                     Direct GRN
                   </label>
+                  )}
                 </div>
 
                 <label>PO Number</label>
@@ -1040,23 +1059,39 @@ export default function GrnPage() {
               </div>
 
               <div className="po-actions no-print">
+                {canAddLine && (
                 <button className="btn" onClick={() => addLine()} disabled={locked || !direct}>+ Add line</button>
+                )}
+                {canClear && (
                 <button className="btn" onClick={handleClear} disabled={busy}>Clear</button>
+                )}
+                {canConfirm && (
                 <button className="btn" onClick={() => void handleConfirm()} disabled={busy || confirmed}>
                   {confirming ? 'Confirming…' : 'Confirmation'}
                 </button>
+                )}
+                {canPrint && (
                 <button className="btn" onClick={() => handlePrint()} disabled={busy||!grnNo.trim()}>Print</button>
+                )}
+                {canEmail && (
                 <button className="btn" onClick={()=>void openMailDialog()} disabled={busy||!grnNo.trim()||mailSending} title={supplierEmail?`Email to ${supplierEmail}`:'Email this GRN to the supplier as PDF'}>{mailSending?'Sending…':'Email to Supplier'}</button>
+                )}
+                {canMsgAdmin && (
                 <button className="btn" onClick={() => void openNotify()} disabled={busy || !grnNo || confirmed}
                   title="SMS an admin so they can come and confirm this receipt">
                   Message Admin
                 </button>
+                )}
+                {canDelete && (
                 <button className="btn danger" onClick={() => void handleDelete()} disabled={busy || !grnNo || confirmed}>
                   {deleting ? 'Deleting…' : 'Delete'}
                 </button>
+                )}
+                {canSave && (
                 <button className="btn primary" onClick={() => void handleSave()} disabled={busy || locked}>
                   {saving ? 'Saving…' : 'Save'}
                 </button>
+                )}
                 <button className="btn" onClick={handleCancel} disabled={busy}>Cancel</button>
               </div>
 
@@ -1435,3 +1470,9 @@ const PAGE_CSS = `
     .po-totals, .entry-strip, .code-hint { display:none !important; }
   }
 `;
+export default function GrnPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}><AccessLoading /></div>;
+  if (enforce && !(has("INV", "ACCESS") && has("INVTXN", "ACCESS") && has("GRN", "ACCESS"))) return <NoAccess screen="GRN / DGRN" />;
+  return <GrnPageContent />;
+}

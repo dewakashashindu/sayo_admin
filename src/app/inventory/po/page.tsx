@@ -2,6 +2,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 import ItemSuggestInput, { type SuggestedItem } from '@/components/ItemSuggestInput';
 import PoPrintSheet, { PO_PRINT_CSS } from '@/components/PoPrintSheet';
 import {
@@ -79,7 +82,16 @@ function useToast() {
   return { toast, show };
 }
 
-export default function PurchaseOrderPage() {
+function PurchaseOrderPageContent() {
+  const access = useMyAccess();
+  const canAddLine    = !access.enforce || access.has("PO", "ADD_LINE");
+  const canClear      = !access.enforce || access.has("PO", "CLEAR");
+  const canConfirm    = !access.enforce || access.has("PO", "CONFIRM");
+  const canPrint      = !access.enforce || access.has("PO", "PRINT");
+  const canEmail      = !access.enforce || access.has("PO", "EMAIL");
+  const canDelete     = !access.enforce || access.has("PO", "DELETE");
+  const canSave       = !access.enforce || access.has("PO", "SAVE");
+
   const router = useRouter();
   const { toast, show: showToast } = useToast();
 
@@ -852,12 +864,21 @@ export default function PurchaseOrderPage() {
               </div>
 
               <div className="po-actions no-print">
+                {canAddLine && (
                 <button className="btn" onClick={() => addLine()} disabled={locked}>+ Add line</button>
+                )}
+                {canClear && (
                 <button className="btn" onClick={handleClear} disabled={busy}>Clear</button>
+                )}
+                {canConfirm && (
                 <button className="btn" onClick={() => void handleConfirm()} disabled={busy || confirmed}>
                   {confirming ? 'Confirming…' : 'Confirmation'}
                 </button>
+                )}
+                {canPrint && (
                 <button className="btn" onClick={handlePrint} disabled={busy}>Print</button>
+                )}
+                {canEmail && (
                 <button
                   className="btn"
                   onClick={openMailDialog}
@@ -870,12 +891,17 @@ export default function PurchaseOrderPage() {
                 >
                   {sending ? 'Sending…' : 'Email to Supplier'}
                 </button>
+                )}
+                {canDelete && (
                 <button className="btn danger" onClick={() => void handleDelete()} disabled={busy || !poNo || confirmed}>
                   {deleting ? 'Deleting…' : 'Delete'}
                 </button>
+                )}
+                {canSave && (
                 <button className="btn primary" onClick={() => void handleSave()} disabled={busy || locked}>
                   {saving ? 'Saving…' : 'Save'}
                 </button>
+                )}
                 <button className="btn" onClick={handleCancel} disabled={busy}>Cancel</button>
               </div>
 
@@ -1297,3 +1323,9 @@ const PAGE_CSS = `
     html, body { background:#fff !important; height:auto; background-image:none !important; }
   }
 `;
+export default function PurchaseOrderPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}><AccessLoading /></div>;
+  if (enforce && !(has("INV", "ACCESS") && has("INVTXN", "ACCESS") && has("PO", "ACCESS"))) return <NoAccess screen="Purchase Orders (PO)" />;
+  return <PurchaseOrderPageContent />;
+}

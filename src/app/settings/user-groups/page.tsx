@@ -4,11 +4,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import { useMyAccess } from "@/lib/useMyAccess";
+import NoAccess from "@/components/NoAccess";
+import AccessLoading from "@/components/AccessLoading";
 import AccessProfilePrintSheet, { ACCESS_PROFILE_PRINT_CSS } from '@/components/AccessProfilePrintSheet';
 
 interface GroupRow { groupId: string; groupDes: string; users: number }
 
-export default function UserGroupsPage() {
+function UserGroupsPageContent() {
+  const access = useMyAccess();
+  const canNewGroup = !access.enforce || access.has("UGROUPS", "NEW_GROUP");
+  const canCancelG = !access.enforce || access.has("UGROUPS", "CANCEL");
+  const canSaveG = !access.enforce || access.has("UGROUPS", "SAVE");
+
   const router = useRouter();
   const [toast, setToast] = useState<{ msg: string; err: boolean } | null>(null);
   const showToast = useCallback((msg: string, err = false) => {
@@ -158,7 +166,9 @@ export default function UserGroupsPage() {
               <div className="panel-search">
                 <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search groups…" />
               </div>
+              {canNewGroup && (
               <button className={`new-btn ${isNew ? 'on' : ''}`} onClick={clear}>+ New Group</button>
+              )}
               <div className="list">
                 {loading && <div className="empty">Loading…</div>}
                 {!loading && filtered.length === 0 && <div className="empty">No groups yet — start with the form.</div>}
@@ -191,7 +201,9 @@ export default function UserGroupsPage() {
                 <div className="hint">{current.users} user(s) belong to this group.</div>
               )}
               <div className="actions">
+                {canCancelG && (
                 <button className="btn" onClick={clear} disabled={busy}>Clear</button>
+                )}
                 <div className="flex" />
                 {!isNew && (
                   <>
@@ -201,9 +213,11 @@ export default function UserGroupsPage() {
                     </button>
                   </>
                 )}
+                {canSaveG && (
                 <button className="btn primary" onClick={() => void handleSave()} disabled={busy || !dirty}>
                   {busy ? 'Saving…' : 'Save'}
                 </button>
+                )}
               </div>
             </section>
           </div>
@@ -251,3 +265,9 @@ const CSS = `
   @media(max-width:860px){.panel{width:100%}
     .body{flex-direction:column}}
 `;
+export default function UserGroupsPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}><AccessLoading /></div>;
+  if (enforce && !(has("ADMINGRP", "ACCESS") && has("USERGEN", "ACCESS") && has("UGROUPS", "ACCESS"))) return <NoAccess screen="User Groups" />;
+  return <UserGroupsPageContent />;
+}
