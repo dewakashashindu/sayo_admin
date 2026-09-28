@@ -8,9 +8,11 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
-import { ACCESS_TREE, ALL_ACCESS_KEYS, ALL_GROUP_CODES, type AccessNode } from '@/lib/accessCatalog';
+import { ACCESS_TREE, ALL_ACCESS_KEYS, ALL_GROUP_CODES, PARENT_OF, type AccessNode } from '@/lib/accessCatalog';
+import AccessProfilePrintSheet, { ACCESS_PROFILE_PRINT_CSS } from '@/components/AccessProfilePrintSheet';
 
 interface GroupOpt { groupId: string; groupDes: string; users: number }
+interface LocRow { locCode: string; locDes: string }
 interface UserInfo { userId: string; userName: string; groupId: string }
 const key = (s: string, a: string) => `${s}.${a}`;
 
@@ -31,6 +33,9 @@ function AccessProfilesInner() {
   const [user, setUser] = useState<UserInfo | null>(null);
   const [granted, setGranted] = useState<Set<string>>(new Set());
   const [loaded, setLoaded] = useState<Set<string>>(new Set());
+  const [locations, setLocations] = useState<LocRow[]>([]);
+  const [locs, setLocs] = useState<Set<string>>(new Set());
+  const [loadedLocs, setLoadedLocs] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(ALL_GROUP_CODES));
   const [loading, setLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -40,6 +45,12 @@ function AccessProfilesInner() {
     let alive = true;
     (async () => {
       try {
+        const lres = await fetch('/api/locations', { cache: 'no-store' });
+        const ljson = await lres.json() as { success?: boolean; data?: { LocCode: string; LocDes: string }[] };
+        if (alive && ljson?.success) {
+          setLocations((ljson.data ?? []).map((r) => ({ locCode: r.LocCode.trim(), locDes: r.LocDes.trim() })));
+        }
+
         const gres = await fetch('/api/security/groups', { cache: 'no-store' });
         const gjson = await gres.json() as { success?: boolean; data?: GroupOpt[]; message?: string };
         if (!gres.ok || !gjson?.success) throw new Error(gjson?.message || 'Could not load the groups');
@@ -73,11 +84,14 @@ function AccessProfilesInner() {
         ? `/api/security/users/${encodeURIComponent(userParam)}/access`
         : `/api/security/groups/${encodeURIComponent(gid)}/access`;
       const res = await fetch(url, { cache: 'no-store' });
-      const json = await res.json() as { success?: boolean; data?: { keys: { screenCode: string; actionCode: string }[]; seeded?: boolean }; message?: string };
+      const json = await res.json() as { success?: boolean; data?: { keys: { screenCode: string; actionCode: string }[]; locations?: string[]; seeded?: boolean }; message?: string };
       if (!res.ok || !json?.success) throw new Error(json?.message || 'Could not load the profile');
       const s = new Set((json.data?.keys ?? []).map((k) => key(k.screenCode, k.actionCode)));
       setGranted(s);
       setLoaded(new Set(s));
+      const ls = new Set((json.data?.locations ?? []).map((l) => String(l).trim()));
+      setLocs(ls);
+      setLoadedLocs(new Set(ls));
       if (json.data?.seeded) {
         showToast("Starting point copied from the group's saved profile — adjust and Save", false);
       }
@@ -99,14 +113,26 @@ function AccessProfilesInner() {
   const dirty = useMemo(() => {
     if (granted.size !== loaded.size) return true;
     for (const k of granted) if (!loaded.has(k)) return true;
+    if (locs.size !== loadedLocs.size) return true;
+    for (const l of locs) if (!loadedLocs.has(l)) return true;
     return false;
-  }, [granted, loaded]);
+  }, [granted, loaded, locs, loadedLocs]);
 
   const toggle = (screen: string, action: string) => {
     setGranted((prev) => {
       const next = new Set(prev);
       const k = key(screen, action);
-      if (next.has(k)) next.delete(k); else next.add(k);
+      if (next.has(k)) {
+        next.delete(k);
+      } else {
+        next.add(k);
+        // anything ticked below ⇒ the chain above it must get Access too
+        let p = PARENT_OF[screen];
+        while (p && p !== 'RT') {
+          next.add(key(p, 'ACCESS'));
+          p = PARENT_OF[p];
+        }
+      }
       return next;
     });
   };
@@ -120,7 +146,15 @@ function AccessProfilesInner() {
 
   const selectAll = () => setGranted(new Set(ALL_ACCESS_KEYS.map((k) => key(k.screenCode, k.actionCode))));
   const deselectAll = () => setGranted(new Set());
-  const cancel = () => setGranted(new Set(loaded));
+  const cancel = () => { setGranted(new Set(loaded)); setLocs(new Set(loadedLocs)); };
+
+  const toggleLoc = (code: string) => {
+    setLocs((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code); else next.add(code);
+      return next;
+    });
+  };
 
   async function handleSave() {
     setBusy(true);
@@ -134,11 +168,12 @@ function AccessProfilesInner() {
         : `/api/security/groups/${encodeURIComponent(groupId)}/access`;
       const res = await fetch(url, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keys }),
+        body: JSON.stringify({ keys, locations: [...locs] }),
       });
       const json = await res.json() as { success?: boolean; data?: { granted: number }; message?: string };
       if (!res.ok || !json?.success) throw new Error(json?.message || 'Could not save the profile');
       setLoaded(new Set(granted));
+      setLoadedLocs(new Set(locs));
       showToast(
         userMode
           ? `User overrides saved ✓ (${json.data?.granted} permission(s)) — group profile untouched`
@@ -149,6 +184,22 @@ function AccessProfilesInner() {
     } finally {
       setBusy(false);
     }
+  }
+
+  const [printData, setPrintData] = useState<{ subject: string; keys: { screenCode: string; actionCode: string }[]; locations: string[] } | null>(null);
+  function handlePrint() {
+    const keysArr = [...granted].map((k) => {
+      const [screenCode, ...rest] = k.split('.');
+      return { screenCode, actionCode: rest.join('.') };
+    });
+    const locLabels = locations
+      .filter((l) => locs.has(l.locCode))
+      .map((l) => `${l.locDes} (${l.locCode})`);
+    const subject = userMode && user
+      ? `User: ${user.userName} (${user.userId}) · Role: ${groups.find((g) => g.groupId === user.groupId)?.groupDes ?? user.groupId} (${user.groupId})`
+      : `Role: ${group?.groupDes ?? groupId} (${groupId})`;
+    setPrintData({ subject, keys: keysArr, locations: locLabels });
+    setTimeout(() => window.print(), 60);
   }
 
   const disabled = profileLoading || (!userMode && !groupId) || (userMode && !user);
@@ -187,10 +238,9 @@ function AccessProfilesInner() {
             type="button"
             className="row-name"
             onClick={() => hasKids && toggleCollapse(node.code)}
-            title={hasKids ? (open ? 'Collapse' : 'Expand') : node.name}
+            title={hasKids ? (open ? 'Collapse' : 'Expand') : node.code}
           >
             <span className={`chev ${hasKids ? (open ? 'open' : '') : 'none'}`}>▸</span>
-            <span className="row-code">{node.code}</span>
             <span>{node.name}</span>
           </button>
           <ActionChips node={node} />
@@ -204,6 +254,7 @@ function AccessProfilesInner() {
     <>
       <style>{SIDEBAR_CSS}</style>
       <style>{CSS}</style>
+      <style>{ACCESS_PROFILE_PRINT_CSS}</style>
 
       {toast && <div className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
 
@@ -255,6 +306,9 @@ function AccessProfilesInner() {
             {userMode && (
               <button className="btn" onClick={() => router.push('/settings/users')}>← Back to Users</button>
             )}
+            <button className="btn" onClick={handlePrint} disabled={disabled && !userMode}>
+              Print
+            </button>
             <button className="btn" onClick={selectAll} disabled={disabled || busy}>Select All</button>
             <button className="btn" onClick={deselectAll} disabled={disabled || busy}>DeSelect All</button>
             <button className="btn danger" onClick={cancel} disabled={!dirty || busy}>Cancel</button>
@@ -270,6 +324,41 @@ function AccessProfilesInner() {
 
           <section className="card">
             {ACCESS_TREE.map((n) => <NodeRow key={n.code} node={n} depth={0} />)}
+          </section>
+
+          {printData && (
+            <AccessProfilePrintSheet
+              title={userMode ? 'USER ROLE CUSTOMIZATION' : 'ROLE ACCESS PROFILE'}
+              subject={printData.subject}
+              keys={printData.keys}
+              locations={printData.locations}
+            />
+          )}
+
+          <section className="card">
+            <div className="loc-head">
+              Location Access
+              <span className="loc-note">{locs.size} of {locations.length} allowed</span>
+            </div>
+            {locations.length === 0 && <div className="loc-empty">No locations found yet — create them in Location Master.</div>}
+            <div className="loc-grid">
+              {locations.map((l) => {
+                const on = locs.has(l.locCode);
+                return (
+                  <button
+                    type="button"
+                    key={l.locCode}
+                    className={`loc-chip ${on ? 'on' : ''}`}
+                    disabled={disabled}
+                    onClick={() => toggleLoc(l.locCode)}
+                    title={on ? 'Allowed — click to stop allowing' : 'Not allowed — click to allow'}
+                  >
+                    <span className="tick">{on ? '✓' : ''}</span>
+                    {l.locDes} ({l.locCode})
+                  </button>
+                );
+              })}
+            </div>
           </section>
         </div>
       </div>
@@ -313,7 +402,7 @@ const CSS = `
   .chev{color:#1e3a40;font-size:11px;width:14px;text-align:center;transition:transform .18s ease;flex-shrink:0}
   .chev.open{transform:rotate(90deg)}
   .chev.none{opacity:0}
-  .row-code{font-family:ui-monospace,monospace;font-size:10.5px;font-weight:800;color:#0b5cab;background:#e2edf8;border-radius:5px;padding:2px 6px;letter-spacing:.03em;flex-shrink:0}
+
   .row-actions{display:flex;flex-wrap:wrap;gap:7px;justify-content:flex-end}
   .act{display:inline-flex;align-items:center;gap:7px;height:29px;padding:0 12px;border-radius:999px;border:1px solid rgba(30,58,64,0.22);background:#fff;color:#5b6d72;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit}
   .act:disabled{opacity:.45;cursor:not-allowed}
@@ -325,6 +414,15 @@ const CSS = `
   .btn:disabled{opacity:.5;cursor:not-allowed}
   .btn.primary{background:#1e3a40;border-color:#1e3a40;color:#fff}
   .btn.danger{background:#fff;border-color:#e2503c;color:#e2503c}
+  .loc-head{font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#3c5a60;display:flex;align-items:center;gap:10px}
+  .loc-note{font-size:10.5px;font-weight:600;color:#8a9aa0;letter-spacing:.02em;text-transform:none}
+  .loc-empty{font-size:12px;color:#8a9aa0;padding:10px 4px 2px}
+  .loc-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .loc-chip{display:inline-flex;align-items:center;gap:7px;height:30px;padding:0 12px;border-radius:999px;border:1px solid rgba(30,58,64,0.22);background:#fff;color:#5b6d72;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit}
+  .loc-chip:disabled{opacity:.45;cursor:not-allowed}
+  .loc-chip:hover{border-color:#1e3a40}
+  .loc-chip.on{background:#1e3a40;border-color:#1e3a40;color:#fff}
+  .loc-chip .tick{display:inline-flex;width:13px;height:13px;border-radius:4px;border:1.5px solid rgba(30,58,64,0.4);background:#fff;color:#1e3a40;font-size:9px;align-items:center;justify-content:center;font-weight:900}
   .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#1e3a40;color:#fff;padding:11px 20px;border-radius:10px;font-size:13px;font-weight:600;z-index:99;box-shadow:0 8px 24px rgba(0,0,0,.25)}
   .toast.err{background:#b91c1c}
 `;

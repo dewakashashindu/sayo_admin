@@ -19,6 +19,17 @@ function err(message: string, status = 400) {
   return NextResponse.json({ success: false, message }, { status });
 }
 
+async function ensureLocTable() {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS Tbl_UserLocAccess (
+      OwnerId CHAR(10) NOT NULL,
+      LocCode CHAR(10) NOT NULL,
+      Allow   CHAR(1)  NOT NULL DEFAULT 'Y',
+      PRIMARY KEY (OwnerId, LocCode)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+}
+
 async function ensureTables() {
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS Tbl_UserAuthorization (
@@ -70,6 +81,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ userId: st
     const userId = trim(raw).slice(0, 10);
     if (!userId) return err("User id is missing.");
     await ensureTables();
+    await ensureLocTable();
     const user = await getUser(userId);
     if (!user) return err(`User ${userId} was not found.`, 404);
 
@@ -89,8 +101,18 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ userId: st
       rows = await prisma.$queryRaw<{ FuncID: string; ACCESS: string }[]>`
         SELECT FuncID, ACCESS FROM Tbl_UserAuthorization WHERE UserID = ${userId}
       `;
+      // locations: copy from group profile too
+      await ensureLocTable();
+      await prisma.$executeRaw`
+        INSERT INTO Tbl_UserLocAccess (OwnerId, LocCode, Allow)
+        SELECT ${userId}, LocCode, Allow FROM Tbl_UserLocAccess WHERE OwnerId = ${gi}
+      `;
     }
-    return ok({ keys: decodeRows(rows), seeded, groupId: trim(user.GroupId) });
+    await ensureLocTable();
+    const locRows = await prisma.$queryRaw<{ LocCode: string }[]>`
+      SELECT LocCode FROM Tbl_UserLocAccess WHERE OwnerId = ${userId} AND UPPER(Allow) = 'Y'
+    `;
+    return ok({ keys: decodeRows(rows), locations: locRows.map((r) => trim(r.LocCode)), seeded, groupId: trim(user.GroupId) });
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not load the user's profile", 500);
   }
@@ -101,8 +123,14 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
     if (!userId) return err("User id is missing.");
-    const body = (await req.json()) as { keys?: { screenCode?: unknown; actionCode?: unknown }[] };
+    const body = (await req.json()) as {
+      keys?: { screenCode?: unknown; actionCode?: unknown }[];
+      locations?: unknown[];
+    };
     const keys = Array.isArray(body.keys) ? body.keys : [];
+    const locations = Array.isArray(body.locations)
+      ? [...new Set(body.locations.map((v) => trim(v).slice(0, 10)).filter(Boolean))]
+      : [];
 
     const granted = new Map<string, Set<string>>();
     for (const k of keys) {
@@ -117,8 +145,19 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
     }
 
     await ensureTables();
+    await ensureLocTable();
     const user = await getUser(userId);
     if (!user) return err(`User ${userId} was not found.`, 404);
+    if (locations.length > 0) {
+      const ph = locations.map(() => "?").join(",");
+      const inDb = await prisma.$queryRawUnsafe<{ n: number }[]>(
+        `SELECT COUNT(*) AS n FROM tbl_locationmaster WHERE LocCode IN (${ph})`,
+        ...locations,
+      );
+      if (Number(inDb[0]?.n || 0) !== locations.length) {
+        return err("One of the selected locations was not found.", 400);
+      }
+    }
 
     // full snapshot for THIS USER only — Tbl_UserAccess_StdProfile untouched
     const rowSql: string[] = [];
@@ -137,11 +176,18 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
           `INSERT INTO Tbl_UserAuthorization (UserID, FuncID, Auth, Module, ACCESS) VALUES ${rowSql.join(",")}`,
           ...vals,
         );
+        await tx.$executeRaw`DELETE FROM Tbl_UserLocAccess WHERE OwnerId = ${userId}`;
+        if (locations.length) {
+          await tx.$executeRawUnsafe(
+            `INSERT INTO Tbl_UserLocAccess (OwnerId, LocCode, Allow) VALUES ${locations.map(() => "(?, ?, 'Y')").join(",")}`,
+            ...locations.flatMap((l) => [userId, l]),
+          );
+        }
       },
       { timeout: 30000, maxWait: 10000 },
     );
     const grantedCount = [...granted.values()].reduce((n, s) => n + s.size, 0);
-    return ok({ userId, granted: grantedCount });
+    return ok({ userId, granted: grantedCount, locations: locations.length });
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not save the user's profile", 500);
   }

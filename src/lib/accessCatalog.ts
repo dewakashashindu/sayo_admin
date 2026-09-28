@@ -26,9 +26,9 @@ export const ACCESS_TREE: AccessNode[] = [
   {
     code: "APPTGRP", name: "Appointments", actions: [ACCESS],
     children: [
-      { code: "APPT",     name: "Appointments",            actions: [ACCESS, A("CANCEL_BOOKING", "Cancel Booking"), A("CHECK_IN", "Check In"), A("RESCHEDULE", "Reschedule")] },
-      { code: "APPTFORM", name: "Appointment Form",        actions: [ACCESS] },
-      { code: "TECHAPPT", name: "Technician Appointments", actions: [ACCESS] },
+      { code: "APPT",     name: "Appointments Dashboard",  actions: [ACCESS, A("NEW_BOOKING", "New Booking"), A("CANCEL_BOOKING", "Cancel Booking"), A("CHECK_IN", "Check In"), A("RESCHEDULE", "Reschedule")] },
+      { code: "APPTFORM", name: "Perform New Booking",     actions: [ACCESS] },
+      { code: "TECHAPPT", name: "Technician Appointments", actions: [ACCESS, A("CHANGE_TECH", "Change Technician")] },
     ],
   },
 
@@ -101,6 +101,13 @@ export const ACCESS_TREE: AccessNode[] = [
     children: [
       { code: "ADSCH", name: "Staff Schedules",   actions: [ACCESS, A("SAVE"), A("DELETE")] },
       { code: "ADHRS", name: "Operational Hours", actions: [ACCESS, A("SAVE")] },
+      {
+        code: "USERGEN", name: "User Creation", actions: [ACCESS],
+        children: [
+          { code: "UGROUPS", name: "User Groups", actions: [ACCESS, A("CLEAR"), A("VIEW"), A("DELETE"), A("SAVE")] },
+          { code: "USERS",   name: "Users",       actions: [ACCESS, A("CLEAR"), A("VIEW"), A("DELETE"), A("SAVE")] },
+        ],
+      },
     ],
   },
 
@@ -128,15 +135,8 @@ export const ACCESS_TREE: AccessNode[] = [
   {
     code: "SYSSET", name: "System Settings", actions: [ACCESS],
     children: [
-      { code: "SETUP", name: "Start-up Settings", actions: [ACCESS, A("SAVE")] },
-      {
-        code: "USERCFG", name: "User Settings", actions: [ACCESS],
-        children: [
-          { code: "UGROUPS", name: "User Groups",     actions: [ACCESS, A("CLEAR"), A("VIEW"), A("DELETE"), A("SAVE")] },
-          { code: "USERS",   name: "Users",           actions: [ACCESS, A("CLEAR"), A("VIEW"), A("DELETE"), A("SAVE")] },
-          { code: "ACCESSP", name: "Access Profiles", actions: [ACCESS, A("SAVE")] },
-        ],
-      },
+      { code: "SETUP",   name: "Start-up Settings", actions: [ACCESS, A("SAVE")] },
+      { code: "ACCESSP", name: "Access Profiles",   actions: [ACCESS, A("SAVE")] },
     ],
   },
 
@@ -162,6 +162,9 @@ export const ALL_ACCESS_NODES: { code: string; parent: string; actions: string[]
   }
   return acc;
 })(ACCESS_TREE, "RT", []);
+
+/** child code → parent code ('RT' for roots) — used to auto-tick ancestors. */
+export const PARENT_OF: Record<string, string> = Object.fromEntries(ALL_ACCESS_NODES.map((n) => [n.code, n.parent]));
 
 /** Codes of every node that has children — used to start the tree collapsed. */
 export const ALL_GROUP_CODES: string[] = (function walk(nodes: AccessNode[], acc: string[]): string[] {

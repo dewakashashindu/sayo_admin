@@ -33,6 +33,17 @@ async function ensureTable() {
   `);
 }
 
+async function ensureLocTable() {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS Tbl_UserLocAccess (
+      OwnerId CHAR(10) NOT NULL,
+      LocCode CHAR(10) NOT NULL,
+      Allow   CHAR(1)  NOT NULL DEFAULT 'Y',
+      PRIMARY KEY (OwnerId, LocCode)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+}
+
 async function groupExists(groupId: string) {
   const rows = await prisma.$queryRaw<{ n: number }[]>`
     SELECT COUNT(*) AS n FROM tbl_usergroups WHERE GroupId = ${groupId}
@@ -63,7 +74,11 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ groupId: s
         if (mask[i] === "1") keys.push({ screenCode: code, actionCode });
       });
     }
-    return ok({ keys });
+    await ensureLocTable();
+    const locRows = await prisma.$queryRaw<{ LocCode: string }[]>`
+      SELECT LocCode FROM Tbl_UserLocAccess WHERE OwnerId = ${groupId} AND UPPER(Allow) = 'Y'
+    `;
+    return ok({ keys, locations: locRows.map((r) => trim(r.LocCode)) });
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not load the profile", 500);
   }
@@ -74,8 +89,14 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ groupId: st
     const { groupId: raw } = await ctx.params;
     const groupId = trim(raw).slice(0, 10);
     if (!groupId) return err("Group id is missing.");
-    const body = (await req.json()) as { keys?: { screenCode?: unknown; actionCode?: unknown }[] };
+    const body = (await req.json()) as {
+      keys?: { screenCode?: unknown; actionCode?: unknown }[];
+      locations?: unknown[];
+    };
     const keys = Array.isArray(body.keys) ? body.keys : [];
+    const locations = Array.isArray(body.locations)
+      ? [...new Set(body.locations.map((v) => trim(v).slice(0, 10)).filter(Boolean))]
+      : [];
 
     const granted = new Map<string, Set<string>>(); // screenCode → allowed action codes
     for (const k of keys) {
@@ -91,6 +112,17 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ groupId: st
 
     await ensureTable();
     if (!(await groupExists(groupId))) return err(`Group ${groupId} was not found.`, 404);
+    await ensureLocTable();
+    if (locations.length > 0) {
+      const ph = locations.map(() => "?").join(",");
+      const inDb = await prisma.$queryRawUnsafe<{ n: number }[]>(
+        `SELECT COUNT(*) AS n FROM tbl_locationmaster WHERE LocCode IN (${ph})`,
+        ...locations,
+      );
+      if (Number(inDb[0]?.n || 0) !== locations.length) {
+        return err("One of the selected locations was not found.", 400);
+      }
+    }
 
     // full snapshot: one row per catalog function, VB6-style.
     // Built as a single multi-row INSERT — dozens of separate $executeRaw
@@ -111,11 +143,18 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ groupId: st
           `INSERT INTO Tbl_UserAccess_StdProfile (UserID, FuncID, Auth, Module, ACCESS) VALUES ${rowSql.join(",")}`,
           ...vals,
         );
+        await tx.$executeRaw`DELETE FROM Tbl_UserLocAccess WHERE OwnerId = ${groupId}`;
+        if (locations.length) {
+          await tx.$executeRawUnsafe(
+            `INSERT INTO Tbl_UserLocAccess (OwnerId, LocCode, Allow) VALUES ${locations.map(() => "(?, ?, 'Y')").join(",")}`,
+            ...locations.flatMap((l) => [groupId, l]),
+          );
+        }
       },
       { timeout: 30000, maxWait: 10000 },
     );
     const grantedCount = [...granted.values()].reduce((n, s) => n + s.size, 0);
-    return ok({ groupId, granted: grantedCount });
+    return ok({ groupId, granted: grantedCount, locations: locations.length });
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not save the profile", 500);
   }

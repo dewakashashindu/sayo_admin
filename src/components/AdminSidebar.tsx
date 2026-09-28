@@ -117,6 +117,10 @@ export const NAV_GROUPS: NavGroup[] = [
     children: [
       { key: 'admin-schedules', label: 'Staff Schedules',   path: '/administration/schedules' },
       { key: 'admin-hours',     label: 'Operational Hours', path: '/administration/hours'     },
+      { key: 'admin-usergen',   label: 'User Creation',     path: '', children: [
+        { key: 'settings-user-groups', label: 'User Groups', path: '/settings/user-groups' },
+        { key: 'settings-users',       label: 'Users',       path: '/settings/users'       },
+      ]},
     ],
   },
   {
@@ -147,12 +151,8 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'System Settings',
     icon: <IGear />,
     children: [
-      { key: 'settings-startup', label: 'Start-up Settings', path: '/settings/startup' },
-      { key: 'settings-usercfg', label: 'User Settings',     path: '', children: [
-        { key: 'settings-user-groups', label: 'User Groups',     path: '/settings/user-groups'     },
-        { key: 'settings-users',       label: 'Users',           path: '/settings/users'           },
-        { key: 'settings-access',      label: 'Access Profiles', path: '/settings/access-profiles' },
-      ]},
+      { key: 'settings-startup', label: 'Start-up Settings', path: '/settings/startup'         },
+      { key: 'settings-access',  label: 'Access Profiles',   path: '/settings/access-profiles' },
     ],
   },
   {

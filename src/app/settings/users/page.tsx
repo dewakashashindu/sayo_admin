@@ -4,6 +4,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import AccessProfilePrintSheet, { ACCESS_PROFILE_PRINT_CSS } from '@/components/AccessProfilePrintSheet';
 
 interface UserRow {
   userId: string; logName: string; userName: string; groupId: string; groupDes: string;
@@ -127,6 +128,28 @@ export default function UsersPage() {
     }
   }
 
+  const [printData, setPrintData] = useState<{ subject: string; keys: { screenCode: string; actionCode: string }[]; locations: string[] } | null>(null);
+  async function handlePrintAccess() {
+    if (!current) return;
+    try {
+      const res = await fetch(`/api/security/users/${encodeURIComponent(current.userId)}/access`, { cache: 'no-store' });
+      const json = await res.json() as { success?: boolean; data?: { keys?: { screenCode: string; actionCode: string }[]; locations?: string[] }; message?: string };
+      if (!res.ok || !json?.success) throw new Error(json?.message || 'Could not load the profile');
+      const gname = groups.find((g) => g.groupId === current.groupId)?.groupDes ?? current.groupId;
+      const locLabels = locations
+        .filter((l) => (json.data?.locations ?? []).map((x) => String(x).trim()).includes(l.LocCode.trim()))
+        .map((l) => `${l.LocDes.trim()} (${l.LocCode.trim()})`);
+      setPrintData({
+        subject: `User: ${current.userName} (${current.userId}) · Role: ${gname} (${current.groupId})`,
+        keys: json.data?.keys ?? [],
+        locations: locLabels,
+      });
+      setTimeout(() => window.print(), 60);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not print', true);
+    }
+  }
+
   async function handleDelete() {
     if (!current) { showToast('Select a user first', true); return; }
     if (!window.confirm(`Delete user ${current.userId} (${current.userName})?`)) return;
@@ -148,7 +171,17 @@ export default function UsersPage() {
   return (
     <>
       <style>{SIDEBAR_CSS}</style>
+      <style>{ACCESS_PROFILE_PRINT_CSS}</style>
       <style>{CSS}</style>
+
+      {printData && (
+        <AccessProfilePrintSheet
+          title="USER ROLE CUSTOMIZATION"
+          subject={printData.subject}
+          keys={printData.keys}
+          locations={printData.locations}
+        />
+      )}
 
       {toast && <div className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
 
@@ -256,6 +289,11 @@ export default function UsersPage() {
                     title="Adjust this user's role-based permissions on the Access Profiles screen"
                   >
                     Customize Role
+                  </button>
+                )}
+                {!isNew && current && (
+                  <button className="btn" onClick={() => void handlePrintAccess()} disabled={busy} title="Print a report of this user's permissions">
+                    Print Access
                   </button>
                 )}
                 {!isNew && (

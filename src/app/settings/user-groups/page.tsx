@@ -4,6 +4,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
+import AccessProfilePrintSheet, { ACCESS_PROFILE_PRINT_CSS } from '@/components/AccessProfilePrintSheet';
 
 interface GroupRow { groupId: string; groupDes: string; users: number }
 
@@ -82,6 +83,32 @@ export default function UserGroupsPage() {
     }
   }
 
+  const [printData, setPrintData] = useState<{ subject: string; keys: { screenCode: string; actionCode: string }[]; locations: string[] } | null>(null);
+  async function handlePrintAccess() {
+    if (!current) return;
+    try {
+      const [ares, lres] = await Promise.all([
+        fetch(`/api/security/groups/${encodeURIComponent(current.groupId)}/access`, { cache: 'no-store' }),
+        fetch('/api/locations', { cache: 'no-store' }),
+      ]);
+      const aJson = await ares.json() as { success?: boolean; data?: { keys?: { screenCode: string; actionCode: string }[]; locations?: string[] }; message?: string };
+      const lJson = await lres.json() as { success?: boolean; data?: { LocCode: string; LocDes: string }[] };
+      if (!ares.ok || !aJson?.success) throw new Error(aJson?.message || 'Could not load the profile');
+      const allowed = (aJson.data?.locations ?? []).map((x) => String(x).trim());
+      const locLabels = (lJson.data ?? [])
+        .filter((l) => allowed.includes(l.LocCode.trim()))
+        .map((l) => `${l.LocDes.trim()} (${l.LocCode.trim()})`);
+      setPrintData({
+        subject: `Role: ${current.groupDes} (${current.groupId})`,
+        keys: aJson.data?.keys ?? [],
+        locations: locLabels,
+      });
+      setTimeout(() => window.print(), 60);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Could not print', true);
+    }
+  }
+
   async function handleDelete() {
     if (!current) { showToast('Select a group first', true); return; }
     if (!window.confirm(`Delete group ${current.groupId} (${current.groupDes})?`)) return;
@@ -103,7 +130,17 @@ export default function UserGroupsPage() {
   return (
     <>
       <style>{SIDEBAR_CSS}</style>
+      <style>{ACCESS_PROFILE_PRINT_CSS}</style>
       <style>{CSS}</style>
+
+      {printData && (
+        <AccessProfilePrintSheet
+          title="ROLE ACCESS PROFILE"
+          subject={printData.subject}
+          keys={printData.keys}
+          locations={printData.locations}
+        />
+      )}
 
       {toast && <div className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
 
@@ -157,7 +194,12 @@ export default function UserGroupsPage() {
                 <button className="btn" onClick={clear} disabled={busy}>Clear</button>
                 <div className="flex" />
                 {!isNew && (
-                  <button className="btn danger" onClick={handleDelete} disabled={busy}>Delete</button>
+                  <>
+                    <button className="btn danger" onClick={handleDelete} disabled={busy}>Delete</button>
+                    <button className="btn" onClick={() => void handlePrintAccess()} disabled={busy} title="Print a report of this group's permissions">
+                      Print Access
+                    </button>
+                  </>
                 )}
                 <button className="btn primary" onClick={() => void handleSave()} disabled={busy || !dirty}>
                   {busy ? 'Saving…' : 'Save'}
