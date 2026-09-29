@@ -5,7 +5,9 @@ import { prisma } from '@/lib/prisma';
 import { sendRegistrationSMS } from '@/lib/sms';
 import { GENDER_OPTIONS } from '@/lib/genderOptions';
 import { nextSerialTx, SERIAL_CODES } from '@/lib/serials';
-import { rateLimit, rateMessage } from "@/lib/rateLimit";
+import { rateMessage } from "@/lib/rateLimit";
+import { rateLimitStrong } from "@/lib/rateLimitDb";
+import { passwordProblem, PASSWORD_HINT } from "@/lib/passwordPolicy";
 import { clientIp, ipForLog } from "@/lib/clientIp";
 
 export const dynamic = 'force-dynamic';
@@ -31,7 +33,7 @@ const REGISTER_PHONE_WINDOW_MS = 24 * 60 * 60 * 1000;
 export async function POST(req: NextRequest) {
   try {
     const callerIp = clientIp(req);
-    const byIp = rateLimit({
+    const byIp = await rateLimitStrong({
       bucket: "register:ip",
       key: callerIp,
       limit: REGISTER_IP_LIMIT,
@@ -54,7 +56,9 @@ export async function POST(req: NextRequest) {
 
     const rawPhone = String((body as Record<string, unknown>).phone ?? "").replace(/\D/g, "").slice(-9);
     if (rawPhone.length >= 9) {
-      const byPhone = rateLimit({
+      /* the per-phone limit is the one a caller cannot walk around by changing
+         address — it lives in MySQL so a restart cannot clear it */
+      const byPhone = await rateLimitStrong({
         bucket: "register:phone",
         key: rawPhone,
         limit: REGISTER_PHONE_LIMIT,
@@ -78,8 +82,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: 'Full name is required.' }, { status: 400 });
     if (!email?.trim())
       return NextResponse.json({ success: false, message: 'Email address is required.' }, { status: 400 });
-    if (!password || password.length < 6)
-      return NextResponse.json({ success: false, message: 'Password must be at least 6 characters.' }, { status: 400 });
+    if (!password) {
+      return NextResponse.json({ success: false, message: 'Password is required.' }, { status: 400 });
+    }
+    {
+      /* one password rule for the whole app (min 8, letter + number) */
+      const problem = passwordProblem(password, "customer");
+      if (problem) {
+        return NextResponse.json({ success: false, message: problem, hint: PASSWORD_HINT }, { status: 400 });
+      }
+    }
 
     const emailLower = email.trim().toLowerCase();
 

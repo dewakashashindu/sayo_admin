@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Image from 'next/image';
+import { logoutAdmin } from '@/lib/logout';
 
 const tokens = {
   color: {
@@ -1029,7 +1030,7 @@ export default function SayoAdminPage() {
 
   const handleLogout = async () => {
     if (!window.confirm('Are you sure you want to log out?')) return;
-    try { await fetch('/api/auth/admin-logout', { method: 'POST' }); } catch {}
+    await logoutAdmin();
     window.location.href = '/admin-login';
   };
 

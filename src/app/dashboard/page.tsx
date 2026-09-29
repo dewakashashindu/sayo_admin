@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import { logoutAdmin } from "@/lib/logout";
 import Image from 'next/image';
 import AdminSidebar from '@/components/AdminSidebar';
 
@@ -1013,7 +1014,7 @@ export default function AdminDashboardPage() {
         <AdminSidebar
           active={navKey}
           onNav={handleNav}
-          onLogout={() => router.push('/admin/login')}
+          onLogout={() => { void logoutAdmin().finally(() => router.push("/admin-login")); }}
         />
 
         {}

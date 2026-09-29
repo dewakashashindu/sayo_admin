@@ -2,11 +2,11 @@
 // GET — the logged-in admin's resolved permissions + allowed locations.
 // Client pages use this to hide buttons they have no right to press.
 import { NextRequest, NextResponse } from "next/server";
-import { ADMIN_COOKIE, verifySessionToken } from "@/lib/adminSession";
 import { loadAccessForUser } from "@/lib/accessServer";
 import { ALL_ACCESS_NODES } from "@/lib/accessCatalog";
 import { prisma } from "@/lib/prisma";
 import { hasNeverLockedOutPower, allAccessKeys, isSuperAdmin } from "@/lib/superAdmin";
+import { requireAdminSession } from "@/lib/sessionGuard";
 
 /** Every enabled location — the super administrator is never branch-bound. */
 async function allLocationCodes(): Promise<string[]> {
@@ -24,11 +24,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const token = req.cookies.get(ADMIN_COOKIE)?.value;
-  const session = token ? await verifySessionToken(token) : null;
-  if (!session) {
-    return NextResponse.json({ success: false, message: "Not logged in" }, { status: 401 });
-  }
+  /* The session has to be LIVE, not merely signed: the account must exist,
+     be enabled, and the password fingerprint in the cookie must still match
+     tbl_userdetails.PSW. That is what makes "disable the user", "change the
+     password" and "delete the user" take effect immediately, instead of eight
+     hours later when the cookie happens to expire. */
+  const live = await requireAdminSession(req);
+  if (!live.ok) return live.response;
+  const session = live.session;
+
   const bag = await loadAccessForUser(session.uid);
   let keys = [...bag.keys];
   let locations = bag.locations;

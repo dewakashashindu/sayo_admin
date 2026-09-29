@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
 import { useMyAccess } from "@/lib/useMyAccess";
+import { logoutAdmin } from "@/lib/logout";
 import NoAccess from "@/components/NoAccess";
 import AccessLoading from "@/components/AccessLoading";
 
@@ -299,7 +300,7 @@ export default function BillingDashboardPage() {
             setNavKey(key);
             router.push(path);
           }}
-          onLogout={() => router.push("/admin-login")}
+          onLogout={() => { void logoutAdmin().finally(() => router.push("/admin-login")); }}
         />
 
         <div style={{ display: "flex", flex: 1, flexDirection: "column", minWidth: 0, overflow: "hidden" }}>

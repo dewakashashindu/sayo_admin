@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
-import { createAdminToken, adminCookieOptions, ADMIN_COOKIE } from '@/lib/adminSession';
+import { createAdminToken, adminCookieOptions, sessionVersion, ADMIN_COOKIE } from '@/lib/adminSession';
 import { rateLimit, rateLimitPeek, clearRate, rateMessage } from '@/lib/rateLimit';
+import { rateLimitStrong, rateLimitStrongPeek, clearRateStrong } from '@/lib/rateLimitDb';
 import { clientIp, ipForLog } from '@/lib/clientIp';
 import { isSuperAdmin } from '@/lib/superAdmin';
 import {
@@ -23,7 +24,9 @@ const OTP_REQUESTS_PER_WINDOW = 5;    // sign-in codes per user name / 10 min
 export async function POST(req: NextRequest) {
   try {
     const caller = clientIp(req);
-    const byIp = rateLimit({
+    /* counters live in MySQL: an IIS app-pool recycle or a deploy used to wipe
+       every attempt, which is exactly the window a cracking script waits for */
+    const byIp = await rateLimitStrong({
       bucket: 'admin-login:ip',
       key: caller,
       limit: LOGIN_IP_LIMIT,
@@ -52,7 +55,7 @@ export async function POST(req: NextRequest) {
       limit: LOGIN_ACCOUNT_LIMIT,
       windowMs: LOGIN_WINDOW_MS,
     };
-    const accountPeek = rateLimitPeek(accountRule);
+    const accountPeek = await rateLimitStrongPeek(accountRule);
     if (!accountPeek.ok) {
       console.warn(`[admin-login] account paused user=${accountKey}`);
       return NextResponse.json(
@@ -91,12 +94,13 @@ export async function POST(req: NextRequest) {
 
     const match = await bcrypt.compare(password, storedHash);
     if (!match) {
-      rateLimit(accountRule);   // count the wrong guess against the user name
+      await rateLimitStrong(accountRule);   // count the wrong guess against the user name
       return invalid;
     }
 
     /* right password — the account counter starts again from zero */
     clearRate(accountRule.bucket, accountRule.key);
+    await clearRateStrong(accountRule.bucket, accountRule.key);
 
     /* ── the hidden super administrator: password is only step one ─────────
        No session cookie is handed out here. A 6-digit code goes to the phone
@@ -109,7 +113,7 @@ export async function POST(req: NextRequest) {
         limit: OTP_REQUESTS_PER_WINDOW,
         windowMs: LOGIN_WINDOW_MS,
       };
-      const otpPeek = rateLimitPeek(otpRule);
+      const otpPeek = await rateLimitStrongPeek(otpRule);
       if (!otpPeek.ok) {
         console.warn(`[admin-login] otp send paused user=${accountKey}`);
         return NextResponse.json(
@@ -164,7 +168,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      rateLimit(otpRule); // count the send against the account
+      await rateLimitStrong(otpRule); // count the send against the account
 
       const message = otpSentMessage(delivery, delivery.phoneMasked, delivery.emailMasked);
       console.log(
@@ -183,6 +187,9 @@ export async function POST(req: NextRequest) {
       uid: user.UserId.trim(),
       log: user.LogName.trim(),
       name: user.UserName.trim(),
+      /* fingerprint of the stored hash — lets the server notice a password
+         change (or a deleted account) without a database hit on every page */
+      sv: await sessionVersion(user.PSW),
     });
     if (!token) {
       console.error('[admin-login] AUTH_SECRET is not configured on the server.');

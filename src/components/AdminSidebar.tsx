@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { useMyAccess } from '@/lib/useMyAccess';
+import { logoutAdmin } from '@/lib/logout';
 import Image from 'next/image';
 
 export interface AdminSidebarProps {
@@ -360,6 +361,9 @@ function rowsOf(items: SubItem[]): number {
 const SB_EXPANDED_KEY = 'sayo.sb.expanded';
 
 function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
+  /* Sign-out does two things first: kill the session cookie and drop the
+     cached access profile — pages only supply the navigation. */
+  const handleLogout = () => { void logoutAdmin().finally(() => onLogout()); };
   const pathname = usePathname() || '';
   const [open, setOpen] = useState(true);
   const { perms, loaded } = useMyAccess();
@@ -579,7 +583,7 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
         {open ? (
           <button
             className="sb-group-btn row-mode"
-            onClick={onLogout}
+            onClick={handleLogout}
             style={{ color: '#f87171' }}
           >
             <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -592,7 +596,7 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
         ) : (
           <button
             className="sb-group-btn icon-mode"
-            onClick={onLogout}
+            onClick={handleLogout}
             title="Logout"
             style={{ color: '#f87171' }}
           >
@@ -612,6 +616,7 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
 }
 
 function MobileNav({ active, onNav, onLogout }: AdminSidebarProps) {
+  const handleLogout = () => { void logoutAdmin().finally(() => onLogout()); };
   const pathname = usePathname() || '';
   const { perms, loaded } = useMyAccess();
   const groups = useMemo(() => visibleNavGroups(perms, loaded), [perms, loaded]);
@@ -645,7 +650,7 @@ function MobileNav({ active, onNav, onLogout }: AdminSidebarProps) {
           <span className="mob-lbl">{g.label}</span>
         </button>
       ))}
-      <button className="mob-btn" onClick={onLogout} style={{ color: '#f87171' }}>
+      <button className="mob-btn" onClick={handleLogout} style={{ color: '#f87171' }}>
         <ILogout />
         <span className="mob-lbl">Logout</span>
       </button>

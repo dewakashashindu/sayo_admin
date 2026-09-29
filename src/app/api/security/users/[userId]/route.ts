@@ -7,6 +7,9 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { isSuperAdminUserId } from "@/lib/superAdmin";
+import { forgetAccountState, requireAdminAccess } from "@/lib/sessionGuard";
+import { passwordProblem } from "@/lib/passwordPolicy";
+import { ensureAuthTables } from "@/lib/authTables";
 
 /* The hidden super administrator is invisible through this API: every verb
    answers exactly as it would for an id that does not exist. */
@@ -25,6 +28,9 @@ function err(message: string, status = 400) {
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ userId: string }> }) {
   try {
+    const guard = await requireAdminAccess(_req, { screen: "USERS", action: "ACCESS" });
+    if (!guard.ok) return guard.response;
+
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
     if (isSuperAdminUserId(userId)) return hiddenUser(`User ${userId} was not found.`);
@@ -52,6 +58,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ userId: st
 
 export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: string }> }) {
   try {
+    const guard = await requireAdminAccess(req, { screen: "USERS", action: "SAVE" });
+    if (!guard.ok) return guard.response;
+
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
     if (!userId) return err("User id is missing.");
@@ -71,6 +80,11 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
     const rmks = trim(body.rmks).slice(0, 250);
     const enable = body.enable === true || trim(body.enable) === "1" ? 1 : 0;
     const newPsw = String(body.psw ?? "").trim();
+    if (newPsw) {
+      /* one password rule for the whole app (min 8, letter + number) */
+      const problem = passwordProblem(newPsw);
+      if (problem) return err(problem);
+    }
 
     const prevRows = await prisma.$queryRaw<{ GroupId: string | null }[]>`
       SELECT GroupId FROM tbl_userdetails WHERE UserId = ${userId}
@@ -105,28 +119,10 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
         `;
     if (Number(n) === 0) return err(`User ${userId} was not found.`, 404);
 
-    // group changed — re-seed this user's override rows from the NEW group's profile
+    /* group changed — re-seed this user's override rows from the NEW group's
+       profile. Tables are ensured once per process, not on every save. */
     if (groupId && groupId !== prevGroupId) {
-      await prisma.$executeRawUnsafe(`
-        CREATE TABLE IF NOT EXISTS Tbl_UserAuthorization (
-          UserID  CHAR(10)     NOT NULL,
-          FuncID  VARCHAR(200) NOT NULL,
-          Auth    TINYINT(1)   NOT NULL DEFAULT 0,
-          Module  VARCHAR(50)  NOT NULL DEFAULT 'RT',
-          ACCESS  VARCHAR(50)  NOT NULL DEFAULT '',
-          PRIMARY KEY (UserID, FuncID)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-      `);
-      await prisma.$executeRawUnsafe(`
-        CREATE TABLE IF NOT EXISTS Tbl_UserAccess_StdProfile (
-          UserID  CHAR(10)     NOT NULL,
-          FuncID  VARCHAR(200) NOT NULL,
-          Auth    TINYINT(1)   NOT NULL DEFAULT 0,
-          Module  VARCHAR(50)  NOT NULL DEFAULT 'RT',
-          ACCESS  VARCHAR(50)  NOT NULL DEFAULT '',
-          PRIMARY KEY (UserID, FuncID)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-      `);
+      await ensureAuthTables();
       await prisma.$executeRaw`DELETE FROM Tbl_UserAuthorization WHERE UserID = ${userId}`;
       await prisma.$executeRaw`
         INSERT INTO Tbl_UserAuthorization (UserID, FuncID, Auth, Module, ACCESS)
@@ -134,6 +130,9 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
         FROM Tbl_UserAccess_StdProfile WHERE UserID = ${groupId}
       `;
     }
+    /* a new password, a disabled account or a new group must invalidate the
+       cached state at once, so old cookies stop working immediately */
+    forgetAccountState(userId);
     return ok({ userId });
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not update the user", 500);
@@ -142,6 +141,13 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
 
 export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ userId: string }> }) {
   try {
+    /* Deleting an account used to be the ONE write here with no permission
+       test at all — any signed-in user could wipe a colleague's login (the
+       accessibility catalog has no USERS.DELETE action, so USERS.SAVE is the
+       right that gates it, exactly like User Groups). */
+    const guard = await requireAdminAccess(_req, { screen: "USERS", action: "SAVE" });
+    if (!guard.ok) return guard.response;
+
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
     if (!userId) return err("User id is missing.");
@@ -149,17 +155,10 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ userId:
     const n = await prisma.$executeRaw`DELETE FROM tbl_userdetails WHERE UserId=${userId}`;
     if (Number(n) === 0) return err(`User ${userId} was not found.`, 404);
     // drop the deleted user's override rows too
-    await prisma.$executeRawUnsafe(`
-      CREATE TABLE IF NOT EXISTS Tbl_UserAuthorization (
-        UserID  CHAR(10)     NOT NULL,
-        FuncID  VARCHAR(200) NOT NULL,
-        Auth    TINYINT(1)   NOT NULL DEFAULT 0,
-        Module  VARCHAR(50)  NOT NULL DEFAULT 'RT',
-        ACCESS  VARCHAR(50)  NOT NULL DEFAULT '',
-        PRIMARY KEY (UserID, FuncID)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    `);
+    await ensureAuthTables();
     await prisma.$executeRaw`DELETE FROM Tbl_UserAuthorization WHERE UserID = ${userId}`;
+    await prisma.$executeRaw`DELETE FROM Tbl_UserLocAccess WHERE OwnerId = ${userId}`;
+    forgetAccountState(userId);
     return ok({ userId });
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not delete the user", 500);

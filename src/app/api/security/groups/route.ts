@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { superAdminGroupId } from "@/lib/superAdmin";
+import { requireAdminAccess } from "@/lib/sessionGuard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +21,9 @@ const trim = (v: unknown) => String(v ?? "").trim();
 
 export async function GET(req: NextRequest) {
   try {
+    const guard = await requireAdminAccess(req, { screen: "UGROUPS", action: "ACCESS" });
+    if (!guard.ok) return guard.response;
+
     const q = trim(req.nextUrl.searchParams.get("q"));
     const like = `%${q}%`;
     const rows = await prisma.$queryRaw<{ GroupId: string; GroupDes: string; Users: number }[]>`
@@ -38,6 +42,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const guard = await requireAdminAccess(req, { screen: "UGROUPS", action: "NEW_GROUP" });
+    if (!guard.ok) return guard.response;
+
     const body = (await req.json()) as { groupDes?: string };
     const groupDes = trim(body.groupDes);
     if (!groupDes) return err("Type the group name first.");

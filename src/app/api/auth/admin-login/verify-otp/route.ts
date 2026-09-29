@@ -4,8 +4,9 @@
 // that account. The challenge is the signed, 10-minute token step 1 returned.
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { createAdminToken, adminCookieOptions, ADMIN_COOKIE } from '@/lib/adminSession';
+import { createAdminToken, adminCookieOptions, sessionVersion, ADMIN_COOKIE } from '@/lib/adminSession';
 import { rateLimit, clearRate, rateMessage } from '@/lib/rateLimit';
+import { rateLimitStrong, clearRateStrong } from '@/lib/rateLimitDb';
 import { clientIp, ipForLog } from '@/lib/clientIp';
 import { isSuperAdmin } from '@/lib/superAdmin';
 import { verifyAdminOtp, verifyOtpChallenge } from '@/lib/adminOtp';
@@ -21,7 +22,7 @@ const VERIFY_WINDOW_MS = 10 * 60 * 1000;
 export async function POST(req: NextRequest) {
   try {
     const caller = clientIp(req);
-    const byIp = rateLimit({
+    const byIp = await rateLimitStrong({
       bucket: 'admin-otp:ip',
       key: caller,
       limit: VERIFY_IP_LIMIT,
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
       limit: VERIFY_ACCOUNT_LIMIT,
       windowMs: VERIFY_WINDOW_MS,
     };
-    const accountCheck = rateLimit(accountRule);
+    const accountCheck = await rateLimitStrong(accountRule);
     if (!accountCheck.ok) {
       console.warn(`[admin-otp] account rate limited user=${account.log}`);
       return NextResponse.json(
@@ -69,10 +70,10 @@ export async function POST(req: NextRequest) {
     /* Re-read the row: the account may have been disabled, renamed or moved
        out of the super-admin group between the two steps. */
     const rows = await prisma.$queryRaw<
-      { UserId: string; LogName: string; UserName: string; GroupId: string; Enable: number }[]
+      { UserId: string; LogName: string; UserName: string; GroupId: string; Enable: number; PSW: string }[]
     >`
       SELECT RTRIM(UserId) AS UserId, RTRIM(LogName) AS LogName, RTRIM(UserName) AS UserName,
-             RTRIM(GroupId) AS GroupId, Enable
+             RTRIM(GroupId) AS GroupId, Enable, PSW
       FROM tbl_userdetails WHERE UserId = ${account.uid} LIMIT 1
     `;
     const row = rows[0];
@@ -99,6 +100,7 @@ export async function POST(req: NextRequest) {
       uid: row.UserId.trim(),
       log: row.LogName.trim(),
       name: row.UserName.trim(),
+      sv: await sessionVersion(row.PSW),
     });
     if (!token) {
       console.error('[admin-otp] AUTH_SECRET is not configured on the server.');
@@ -112,6 +114,9 @@ export async function POST(req: NextRequest) {
     clearRate('admin-login:account', row.LogName.trim().toLowerCase());
     clearRate('admin-login:otp', row.LogName.trim().toLowerCase());
     clearRate(accountRule.bucket, accountRule.key);
+    await clearRateStrong('admin-login:account', row.LogName.trim().toLowerCase());
+    await clearRateStrong('admin-login:otp', row.LogName.trim().toLowerCase());
+    await clearRateStrong(accountRule.bucket, accountRule.key);
 
     const res = NextResponse.json({
       success: true,

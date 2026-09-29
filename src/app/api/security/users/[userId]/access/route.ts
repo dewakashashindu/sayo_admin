@@ -8,6 +8,8 @@ import { prisma } from "@/lib/prisma";
 import { ALL_ACCESS_NODES, isKnownAccessKey } from "@/lib/accessCatalog";
 import { cipher, decipher } from "@/lib/accessCipher";
 import { isSuperAdminUserId } from "@/lib/superAdmin";
+import { requireAdminAccess } from "@/lib/sessionGuard";
+import { ensureAuthTables } from "@/lib/authTables";
 
 /* The hidden super administrator has no editable profile — the API pretends
    the id does not exist. */
@@ -25,39 +27,9 @@ function err(message: string, status = 400) {
   return NextResponse.json({ success: false, message }, { status });
 }
 
-async function ensureLocTable() {
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS Tbl_UserLocAccess (
-      OwnerId CHAR(10) NOT NULL,
-      LocCode CHAR(10) NOT NULL,
-      Allow   CHAR(1)  NOT NULL DEFAULT 'Y',
-      PRIMARY KEY (OwnerId, LocCode)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `);
-}
-
-async function ensureTables() {
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS Tbl_UserAuthorization (
-      UserID  CHAR(10)     NOT NULL,
-      FuncID  VARCHAR(200) NOT NULL,
-      Auth    TINYINT(1)   NOT NULL DEFAULT 0,
-      Module  VARCHAR(50)  NOT NULL DEFAULT 'RT',
-      ACCESS  VARCHAR(50)  NOT NULL DEFAULT '',
-      PRIMARY KEY (UserID, FuncID)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS Tbl_UserAccess_StdProfile (
-      UserID  CHAR(10)     NOT NULL,
-      FuncID  VARCHAR(200) NOT NULL,
-      Auth    TINYINT(1)   NOT NULL DEFAULT 0,
-      Module  VARCHAR(50)  NOT NULL DEFAULT 'RT',
-      ACCESS  VARCHAR(50)  NOT NULL DEFAULT '',
-      PRIMARY KEY (UserID, FuncID)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `);
-}
+/* the tables are created once per process (src/lib/authTables.ts) */
+async function ensureLocTable() { await ensureAuthTables(); }
+async function ensureTables() { await ensureAuthTables(); }
 
 async function getUser(userId: string) {
   const rows = await prisma.$queryRaw<{ UserName: string | null; GroupId: string | null }[]>`
@@ -83,6 +55,9 @@ function decodeRows(rows: { FuncID: string; ACCESS: string }[]) {
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ userId: string }> }) {
   try {
+    const guard = await requireAdminAccess(_req, { screen: "ACCESSP", action: "ACCESS" });
+    if (!guard.ok) return guard.response;
+
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
     if (!userId) return err("User id is missing.");
@@ -127,6 +102,9 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ userId: st
 
 export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: string }> }) {
   try {
+    const guard = await requireAdminAccess(req, { screen: "ACCESSP", action: "SAVE" });
+    if (!guard.ok) return guard.response;
+
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
     if (!userId) return err("User id is missing.");

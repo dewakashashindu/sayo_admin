@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { isSuperAdminGroupId } from "@/lib/superAdmin";
+import { requireAdminAccess } from "@/lib/sessionGuard";
 
 /* The super administrator's role is not a group anybody can rename or delete. */
 const hiddenGroup = (groupId: string) =>
@@ -22,6 +23,9 @@ function err(message: string, status = 400) {
 
 export async function PUT(req: NextRequest, ctx: { params: Promise<{ groupId: string }> }) {
   try {
+    const guard = await requireAdminAccess(req, { screen: "UGROUPS", action: "SAVE" });
+    if (!guard.ok) return guard.response;
+
     const { groupId: raw } = await ctx.params;
     const groupId = trim(raw).slice(0, 10);
     const body = (await req.json()) as { groupDes?: string };
@@ -48,6 +52,10 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ groupId: st
 
 export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ groupId: string }> }) {
   try {
+    /* the screen has no DELETE chip — removing a role is a SAVE-level action */
+    const guard = await requireAdminAccess(_req, { screen: "UGROUPS", action: "SAVE" });
+    if (!guard.ok) return guard.response;
+
     const { groupId: raw } = await ctx.params;
     const groupId = trim(raw).slice(0, 10);
     if (!groupId) return err("Group id is missing.");

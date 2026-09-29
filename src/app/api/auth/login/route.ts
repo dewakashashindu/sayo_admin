@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { createCustomerToken, customerCookieOptions, CUSTOMER_COOKIE } from '@/lib/customerSession';
-import { rateLimit, rateLimitPeek, clearRate, rateMessage } from '@/lib/rateLimit';
+import { clearRate, rateMessage } from '@/lib/rateLimit';
+import { rateLimitStrong, rateLimitStrongPeek, clearRateStrong } from '@/lib/rateLimitDb';
 import { clientIp, ipForLog } from '@/lib/clientIp';
 
 export const dynamic    = 'force-dynamic';
@@ -19,7 +20,9 @@ const CUSTOMER_LOGIN_WINDOW_MS = 10 * 60 * 1000;
 export async function POST(req: NextRequest) {
   try {
     const caller = clientIp(req);
-    const byIp = rateLimit({
+    /* in MySQL, not in memory: a restart must not hand a script a fresh
+       allowance of password guesses */
+    const byIp = await rateLimitStrong({
       bucket: 'customer-login:ip',
       key: caller,
       limit: CUSTOMER_LOGIN_IP_LIMIT,
@@ -38,8 +41,11 @@ export async function POST(req: NextRequest) {
 
     if (!email?.trim())
       return NextResponse.json({ error: 'Email address is required.' }, { status: 400 });
-    if (!password || password.length < 6)
-      return NextResponse.json({ error: 'Password must be at least 6 characters.' }, { status: 400 });
+    /* Only "did you type something" is checked here. An account whose password
+       was created before the 8-character rule must still be able to sign in —
+       password POLICY belongs on the screens that SET a password. */
+    if (!password)
+      return NextResponse.json({ error: 'Password is required.' }, { status: 400 });
 
     const emailNorm = email.trim().toLowerCase();
 
@@ -50,7 +56,7 @@ export async function POST(req: NextRequest) {
       limit: CUSTOMER_LOGIN_ACCOUNT_LIMIT,
       windowMs: CUSTOMER_LOGIN_WINDOW_MS,
     };
-    const accountPeek = rateLimitPeek(accountRule);
+    const accountPeek = await rateLimitStrongPeek(accountRule);
     if (!accountPeek.ok) {
       console.warn(`[login] account paused email=${emailNorm}`);
       return NextResponse.json(
@@ -88,7 +94,7 @@ export async function POST(req: NextRequest) {
     if (!user) {
       /* an unknown address is counted too — otherwise a script could use this
          screen to find out which addresses exist, for free */
-      rateLimit(accountRule);
+      await rateLimitStrong(accountRule);
       return NextResponse.json(
         { error: 'No account found with this email address.' },
         { status: 401 },
@@ -97,7 +103,7 @@ export async function POST(req: NextRequest) {
 
         const passwordMatch = await bcrypt.compare(password, user.PSW);
     if (!passwordMatch) {
-      rateLimit(accountRule);   // count the wrong guess against the account
+      await rateLimitStrong(accountRule);   // count the wrong guess against the account
       return NextResponse.json(
         { error: 'Incorrect password. Please try again.' },
         { status: 401 },
@@ -106,6 +112,7 @@ export async function POST(req: NextRequest) {
 
     /* right password — the account starts again from zero */
     clearRate(accountRule.bucket, accountRule.key);
+    await clearRateStrong(accountRule.bucket, accountRule.key);
 
     console.log(`[login] success — CusCode: ${user.CusCode}`);
 

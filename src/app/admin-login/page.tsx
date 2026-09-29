@@ -2,6 +2,7 @@
 
 import React, { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { safeInternalPath } from '@/lib/safeNext';
 
 const BACKGROUND_IMAGE =
   "url('https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?q=80&w=1920&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D')";
@@ -25,10 +26,10 @@ function LoginForm() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  /* Where the signed-in admin ends up (the middleware put ?next=… there). */
+  /* Where the signed-in admin ends up (the middleware put ?next=… there).
+     safeInternalPath: "//evil.com" also starts with "/" but is another site. */
   function goToAdminArea() {
-    const next = params.get('next');
-    window.location.href = next && next.startsWith('/') ? next : '/dashboard';
+    window.location.href = safeInternalPath(params.get('next'), '/dashboard');
   }
 
   /* Hard client-side timeout — the button can never spin forever */

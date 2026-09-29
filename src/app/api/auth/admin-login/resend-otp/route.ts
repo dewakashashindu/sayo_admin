@@ -3,7 +3,8 @@
 // The old code stops working the moment a new one is written.
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { rateLimit, rateMessage, waitWords } from '@/lib/rateLimit';
+import { rateMessage, waitWords } from '@/lib/rateLimit';
+import { rateLimitStrong } from '@/lib/rateLimitDb';
 import { clientIp, ipForLog } from '@/lib/clientIp';
 import { isSuperAdmin } from '@/lib/superAdmin';
 import {
@@ -24,7 +25,7 @@ const RESEND_WINDOW_MS = 10 * 60 * 1000;
 export async function POST(req: NextRequest) {
   try {
     const caller = clientIp(req);
-    const byIp = rateLimit({
+    const byIp = await rateLimitStrong({
       bucket: 'admin-otp-resend:ip',
       key: caller,
       limit: RESEND_IP_LIMIT,
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
       limit: RESEND_ACCOUNT_LIMIT,
       windowMs: RESEND_WINDOW_MS,
     };
-    const accountCheck = rateLimit(accountRule);
+    const accountCheck = await rateLimitStrong(accountRule);
     if (!accountCheck.ok) {
       return NextResponse.json(
         { error: rateMessage('otp_send', accountCheck.retryAfterSec) },

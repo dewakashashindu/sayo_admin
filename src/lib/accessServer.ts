@@ -5,6 +5,7 @@
 //       Locations work the same way on Tbl_UserLocAccess.
 import { prisma } from "@/lib/prisma";
 import { ALL_ACCESS_NODES } from "@/lib/accessCatalog";
+import { ensureAuthTables } from "@/lib/authTables";
 import { decipher } from "@/lib/accessCipher";
 
 export interface AccessBag {
@@ -48,27 +49,10 @@ export async function loadAccessForUser(userIdRaw: string): Promise<AccessBag> {
   };
   if (!u) return empty;
 
-  // the auth tables may not exist yet on an old database
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS Tbl_UserAuthorization (
-      UserID  CHAR(10) NOT NULL, FuncID VARCHAR(200) NOT NULL,
-      Auth TINYINT(1) NOT NULL DEFAULT 0, Module VARCHAR(50) NOT NULL DEFAULT 'RT',
-      ACCESS VARCHAR(50) NOT NULL DEFAULT '', PRIMARY KEY (UserID, FuncID)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `).catch(() => undefined);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS Tbl_UserAccess_StdProfile (
-      UserID  CHAR(10) NOT NULL, FuncID VARCHAR(200) NOT NULL,
-      Auth TINYINT(1) NOT NULL DEFAULT 0, Module VARCHAR(50) NOT NULL DEFAULT 'RT',
-      ACCESS VARCHAR(50) NOT NULL DEFAULT '', PRIMARY KEY (UserID, FuncID)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `).catch(() => undefined);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS Tbl_UserLocAccess (
-      OwnerId CHAR(10) NOT NULL, LocCode CHAR(10) NOT NULL,
-      Allow CHAR(1) NOT NULL DEFAULT 'Y', PRIMARY KEY (OwnerId, LocCode)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `).catch(() => undefined);
+  /* The permission tables are created ONCE per process (src/lib/authTables.ts)
+     instead of on every request — three DDL round-trips per call, and a silent
+     dependency on the CREATE privilege, used to sit on this hot path. */
+  await ensureAuthTables();
 
   // 1) user overrides?
   let rows = await prisma.$queryRaw<{ FuncID: string; ACCESS: string }[]>`

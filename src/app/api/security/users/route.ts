@@ -8,6 +8,8 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { superAdminUserId, superAdminGroupId } from "@/lib/superAdmin";
+import { requireAdminAccess } from "@/lib/sessionGuard";
+import { passwordProblem } from "@/lib/passwordPolicy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +24,10 @@ const trim = (v: unknown) => String(v ?? "").trim();
 
 export async function GET(req: NextRequest) {
   try {
+    /* staff list = a Settings screen: needs USERS.ACCESS, not just a session */
+    const guard = await requireAdminAccess(req, { screen: "USERS", action: "ACCESS" });
+    if (!guard.ok) return guard.response;
+
     const q = trim(req.nextUrl.searchParams.get("q")).toLowerCase();
     const like = `%${q}%`;
     const rows = await prisma.$queryRaw<{
@@ -52,6 +58,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const guard = await requireAdminAccess(req, { screen: "USERS", action: "NEW_USER" });
+    if (!guard.ok) return guard.response;
+
     const body = (await req.json()) as Record<string, unknown>;
     const logName = trim(body.logName);
     const userName = trim(body.userName);
@@ -59,6 +68,11 @@ export async function POST(req: NextRequest) {
     if (!logName) return err("Type the login name first.");
     if (!userName) return err("Type the user's full name first.");
     if (!psw.trim()) return err("Type a password first.");
+    {
+      /* this route used to accept ANY password — no length check at all */
+      const problem = passwordProblem(psw);
+      if (problem) return err(problem);
+    }
     const groupId = trim(body.groupId).slice(0, 10);
     const nic = trim(body.nic).slice(0, 20);
     const address = trim(body.address).slice(0, 200);

@@ -4,6 +4,8 @@ import { PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import bcrypt from "bcryptjs";
 import { isSuperAdminUserId, isSuperAdminGroupId } from "@/lib/superAdmin";
+import { forgetAccountState, requireAdminAccess } from "@/lib/sessionGuard";
+import { passwordProblem } from "@/lib/passwordPolicy";
 
 const prisma = newRobustPrisma();
 
@@ -133,6 +135,9 @@ async function fetchAllUsers() {
 }
 
 export async function GET(req: NextRequest) {
+  const guard = await requireAdminAccess(req, { screen: "ADMINGRP", action: "ACCESS" });
+  if (!guard.ok) return guard.response;
+
   const { searchParams } = new URL(req.url);
   const entity = searchParams.get("entity");
 
@@ -195,6 +200,16 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { entity, payload } = body;
+
+    {
+      const need = entity === "groups"
+        ? { screen: "UGROUPS", action: "NEW_GROUP" }
+        : entity === "users"
+          ? { screen: "USERS", action: "NEW_USER" }
+          : { screen: "ADMINGRP", action: "SAVE" };
+      const guard = await requireAdminAccess(req, need);
+      if (!guard.ok) return guard.response;
+    }
 
     if (!entity || !payload) {
       return NextResponse.json(
@@ -276,8 +291,13 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ success: false, error: "Login name is required" }, { status: 422 });
         }
         const rawPsw = payload.psw?.trim() || "";
-        if (rawPsw.length < 8) {
-          return NextResponse.json({ success: false, error: "Password is required (minimum 8 characters)" }, { status: 422 });
+        if (!rawPsw) {
+          return NextResponse.json({ success: false, error: "Password is required" }, { status: 422 });
+        }
+        {
+          /* one password rule for the whole app */
+          const problem = passwordProblem(rawPsw);
+          if (problem) return NextResponse.json({ success: false, error: problem }, { status: 422 });
         }
         const dupLog = await prisma.tbl_userdetails.findFirst({ where: { LogName: payload.logName.trim() } });
         if (dupLog) {
@@ -335,6 +355,16 @@ export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
     const { entity, id, payload } = body;
+
+    {
+      const need = entity === "users"
+        ? { screen: "USERS", action: "SAVE" }
+        : entity === "groups"
+          ? { screen: "UGROUPS", action: "SAVE" }
+          : { screen: "ADMINGRP", action: "SAVE" };
+      const guard = await requireAdminAccess(req, need);
+      if (!guard.ok) return guard.response;
+    }
 
     if (!entity || !id || !payload) {
       return NextResponse.json(
@@ -412,10 +442,11 @@ export async function PUT(req: NextRequest) {
 
         const rawPsw = payload.psw?.trim() || "";
         if (rawPsw && !/^•+$/.test(rawPsw)) {
-          if (rawPsw.length < 8) {
-            return NextResponse.json({ success: false, error: "Password must be at least 8 characters" }, { status: 422 });
-          }
+          const problem = passwordProblem(rawPsw);
+          if (problem) return NextResponse.json({ success: false, error: problem }, { status: 422 });
           updateData.PSW = await bcrypt.hash(rawPsw, 10);
+          /* kill this user's existing sessions right away */
+          forgetAccountState(String(id));
         }
         const newLogName = payload.logName?.trim() || "";
         if (newLogName) {
@@ -467,6 +498,16 @@ export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const entity = searchParams.get("entity");
   const id = searchParams.get("id");
+
+  {
+    const need = entity === "users"
+      ? { screen: "USERS", action: "DELETE" }
+      : entity === "groups"
+        ? { screen: "UGROUPS", action: "SAVE" }
+        : { screen: "ADMINGRP", action: "SAVE" };
+    const guard = await requireAdminAccess(req, need);
+    if (!guard.ok) return guard.response;
+  }
 
   if (!entity || !id) {
     return NextResponse.json(
@@ -534,6 +575,7 @@ export async function DELETE(req: NextRequest) {
           where: { UserID: toChar(id, 10) },
         });
         await prisma.tbl_userdetails.delete({ where: { UserId: toChar(id, 10) } });
+        forgetAccountState(String(id));
         return NextResponse.json({ success: true });
       }
 

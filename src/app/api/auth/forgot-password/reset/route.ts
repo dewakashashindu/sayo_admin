@@ -1,17 +1,22 @@
+// src/app/api/auth/forgot-password/reset/route.ts
+// POST { email, otp, newPassword } — step 2 of the CUSTOMER reset.
+//
+// 2026-09-29 fixes:
+//   • the code is read from MySQL (Tbl_CustomerOtpReset, bcrypt-hashed) instead
+//     of a server-memory Map, so a restart or a second worker cannot lose it.
+//   • the new password must pass the app-wide rule (src/lib/passwordPolicy.ts) —
+//     it used to be "at least 6 characters" here and "3" on the staff side.
+//   • rate limit counters live in MySQL and are cleared on success.
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import {
-  otpStore,
-  evaluateOtp,
-  wrongCodeMessage,
-  OTP_MAX_ATTEMPTS,
-  OTP_MIN_PASSWORD,
-  sweepOtps,
-} from "@/lib/otpStore";
-import { rateLimit, rateMessage } from "@/lib/rateLimit";
+import { verifyCustomerOtp, deleteCustomerOtp, CUSTOMER_OTP_MAX_ATTEMPTS } from "@/lib/customerOtp";
+import { rateLimitStrong, clearRateStrong } from "@/lib/rateLimitDb";
+import { rateMessage } from "@/lib/rateLimit";
 import { clientIp, ipForLog } from "@/lib/clientIp";
+import { passwordProblem } from "@/lib/passwordPolicy";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -25,7 +30,7 @@ function errMsg(e: unknown) {
 export async function POST(req: NextRequest) {
   try {
     const caller = clientIp(req);
-    const byIp = rateLimit({
+    const byIp = await rateLimitStrong({
       bucket: "otp-reset:ip",
       key: caller,
       limit: OTP_RESET_IP_LIMIT,
@@ -39,7 +44,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email, otp, newPassword } = (await req.json()) as {
+    const { email, otp, newPassword } = (await req.json().catch(() => ({}))) as {
       email?: string;
       otp?: string;
       newPassword?: string;
@@ -49,54 +54,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Email is required." }, { status: 400 });
     if (!otp || otp.trim().length !== 6)
       return NextResponse.json({ error: "A 6-digit OTP is required." }, { status: 400 });
-    if (!newPassword || newPassword.length < OTP_MIN_PASSWORD)
-      return NextResponse.json(
-        { error: `Password must be at least ${OTP_MIN_PASSWORD} characters.` },
-        { status: 400 },
-      );
 
-    const emailNorm = email.trim().toLowerCase();
-    sweepOtps();
+    const problem = passwordProblem(String(newPassword ?? ""), "customer");
+    if (problem) return NextResponse.json({ error: problem }, { status: 400 });
 
-        const stored = otpStore.get(emailNorm);
-    const verdict = evaluateOtp(stored, otp);
+    const emailNorm = email.trim().toLowerCase().slice(0, 200);
+    const verdict = await verifyCustomerOtp(emailNorm, otp);
 
     if (!verdict.ok) {
-      if (verdict.reason === "wrong" && stored) {
-        stored.attempts += 1;
-        if (stored.attempts >= OTP_MAX_ATTEMPTS) {
-          otpStore.delete(emailNorm);   // burned — a new code has to be requested
-          console.warn(`[reset] code burned after ${OTP_MAX_ATTEMPTS} wrong tries`);
-        }
-      } else if (verdict.reason === "expired" || verdict.reason === "too_many") {
-        otpStore.delete(emailNorm);
-      }
-
       const message =
         verdict.reason === "missing"
           ? "No reset code found. Please request a new one."
           : verdict.reason === "expired" || verdict.reason === "too_many"
             ? "Reset code has expired. Please request a new one."
-            : wrongCodeMessage(verdict.attemptsLeft);
-
+            : `Incorrect code. ${verdict.attemptsLeft} attempt${verdict.attemptsLeft === 1 ? "" : "s"} left.`;
+      if (verdict.reason === "wrong" && verdict.attemptsLeft === 0) {
+        console.warn(`[reset] code burned after ${CUSTOMER_OTP_MAX_ATTEMPTS} wrong tries`);
+      }
       return NextResponse.json({ error: message }, { status: 400 });
     }
 
-        const hashedPSW = await bcrypt.hash(newPassword, 12);
-
-        try {
+    const hashedPSW = await bcrypt.hash(String(newPassword), 12);
+    try {
       const user = await prisma.tbl_CustomerMaster.findFirst({
         where: { CusEmail: emailNorm },
         select: { CusCode: true },
       });
-
       if (!user) {
-        return NextResponse.json(
-          { error: "No account found with this email address." },
-          { status: 404 },
-        );
+        await deleteCustomerOtp(emailNorm);
+        return NextResponse.json({ error: "This reset is no longer valid. Please start again." }, { status: 400 });
       }
-
       await prisma.tbl_CustomerMaster.update({
         where: { CusCode: user.CusCode },
         data: { PSW: hashedPSW },
@@ -106,7 +93,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Password reset failed." }, { status: 500 });
     }
 
-        otpStore.delete(emailNorm);
+    await deleteCustomerOtp(emailNorm);
+    await clearRateStrong("otp-send:email", emailNorm);
+    await clearRateStrong("customer-login:account", emailNorm);
     console.log(`[reset] password updated for ${emailNorm}`);
 
     return NextResponse.json({ success: true });

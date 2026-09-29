@@ -3,6 +3,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import { useMyAccess } from "@/lib/useMyAccess";
+import { logoutAdmin } from "@/lib/logout";
 import AccessLoading from "@/components/AccessLoading";
 import NoAccess from "@/components/NoAccess";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -4643,7 +4644,7 @@ function WalkInPage() {
             setNavKey(key);
             router.push(path);
           }}
-          onLogout={() => router.push("/admin/login")}
+          onLogout={() => { void logoutAdmin().finally(() => router.push("/admin-login")); }}
         />
         <div
           style={{

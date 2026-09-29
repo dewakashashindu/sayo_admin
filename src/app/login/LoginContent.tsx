@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { safeInternalPath } from '@/lib/safeNext';
 import {
   tokens,
   globalCss,
@@ -62,7 +63,7 @@ export default function LoginContent() {
       // user store needed. Full-page navigation so the booking page loads
       // with the fresh session.
       const redirectTo = searchParams.get('redirect');
-      window.location.href = redirectTo && redirectTo.startsWith('/') ? redirectTo : '/booking';
+      window.location.href = safeInternalPath(redirectTo, '/booking');
       return;
 
     } catch {

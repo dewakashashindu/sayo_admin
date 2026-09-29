@@ -1,7 +1,57 @@
 // prisma/seed.ts
+//
+// 2026-09-29 fix (AUTH_SECURITY_REVIEW.md #12)
+//   The five demo users used to be created with their passwords in CLEAR TEXT
+//   (`PSW: 'admin123'` …). Two things were wrong with that:
+//     • the sign-in route compares with bcrypt, so those accounts could never
+//       actually log in — the hash check failed and the screen just said
+//       "invalid username or password";
+//     • the password was readable by anybody who could open the table.
+//   Now every password is bcrypt-hashed, and NO password is hard-coded: set
+//   SEED_PASSWORD_ADMIN / _MANAGER / _TECH1 / _RECEPTION / _TECH2, otherwise a
+//   random one is generated and printed once at the end of the seed.
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
+import { passwordProblem } from '../src/lib/passwordPolicy';
 
 const prisma = new PrismaClient();
+
+/** 8 letters + 8 digits, shuffled — always satisfies the app password rule. */
+function randomPassword(): string {
+  const letters = 'abcdefghijkmnpqrstuvwxyz';
+  const digits = '23456789';
+  let out = '';
+  for (let i = 0; i < 8; i++) out += letters[crypto.randomInt(0, letters.length)];
+  for (let i = 0; i < 8; i++) out += digits[crypto.randomInt(0, digits.length)];
+  const chars = out.split('');
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
+
+const generatedPasswords: Array<{ login: string; password: string }> = [];
+
+/** Password for a seeded account: from the environment, else newly generated. */
+function seedPassword(envKey: string, login: string): string {
+  const fromEnv = (process.env[envKey] || '').trim();
+  if (fromEnv) {
+    const problem = passwordProblem(fromEnv);
+    if (problem) throw new Error(`${envKey} does not satisfy the password rule: ${problem}`);
+    return fromEnv;
+  }
+  const generated = randomPassword();
+  const problem = passwordProblem(generated);   // never ship a password that would be refused
+  if (problem) throw new Error(`generated password rejected: ${problem}`);
+  generatedPasswords.push({ login, password: generated });
+  return generated;
+}
+
+async function hashPassword(plain: string): Promise<string> {
+  return bcrypt.hash(plain, 12);
+}
 
 const padId = (prefix: string, num: number, len: number = 10) => {
   const strNum = num.toString().padStart(len - prefix.length, '0');
@@ -81,11 +131,12 @@ async function main() {
   ];
   await prisma.tbl_technicianspecilities.createMany({ data: specialities, skipDuplicates: true });
 
-  // 8. Users
+  // 8. Users — the passwords are hashed, never stored as typed
   const users = [
     {
       UserId: 'USR0000001', NIC: '901234567V', LogName: 'admin',
-      PSW: 'admin123', GroupId: 'GRP0000001', UserName: 'Kamal Perera',
+      PSW: await hashPassword(seedPassword('SEED_PASSWORD_ADMIN', 'admin')),
+      GroupId: 'GRP0000001', UserName: 'Kamal Perera',
       Address: 'No 12, Temple Road, Colombo 05', WorkingLocID: 'LOC0000001',
       ContNo: '0771234567', Email: 'kamal@sayo.lk',
       DOB: new Date('1990-03-15'), DOJ: new Date('2020-01-01'), DOL: new Date('1900-01-01'),
@@ -93,7 +144,8 @@ async function main() {
     },
     {
       UserId: 'USR0000002', NIC: '856789012V', LogName: 'manager01',
-      PSW: 'manager123', GroupId: 'GRP0000002', UserName: 'Nadeeka Silva',
+      PSW: await hashPassword(seedPassword('SEED_PASSWORD_MANAGER', 'manager01')),
+      GroupId: 'GRP0000002', UserName: 'Nadeeka Silva',
       Address: 'No 45, Lake Drive, Kandy', WorkingLocID: 'LOC0000002',
       ContNo: '0777654321', Email: 'nadeeka@sayo.lk',
       DOB: new Date('1985-07-22'), DOJ: new Date('2020-03-15'), DOL: new Date('1900-01-01'),
@@ -101,7 +153,8 @@ async function main() {
     },
     {
       UserId: 'USR0000003', NIC: '952345678V', LogName: 'tech.amali',
-      PSW: 'tech123', GroupId: 'GRP0000004', UserName: 'Amali Fernando',
+      PSW: await hashPassword(seedPassword('SEED_PASSWORD_TECH1', 'tech.amali')),
+      GroupId: 'GRP0000004', UserName: 'Amali Fernando',
       Address: 'No 78, Main Street, Galle', WorkingLocID: 'LOC0000004',
       ContNo: '0712345678', Email: 'amali@sayo.lk',
       DOB: new Date('1995-11-10'), DOJ: new Date('2021-06-01'), DOL: new Date('1900-01-01'),
@@ -109,7 +162,8 @@ async function main() {
     },
     {
       UserId: 'USR0000004', NIC: '881234567V', LogName: 'recep.saman',
-      PSW: 'recep123', GroupId: 'GRP0000003', UserName: 'Saman Kumara',
+      PSW: await hashPassword(seedPassword('SEED_PASSWORD_RECEPTION', 'recep.saman')),
+      GroupId: 'GRP0000003', UserName: 'Saman Kumara',
       Address: 'No 33, Peradeniya Road, Kandy', WorkingLocID: 'LOC0000002',
       ContNo: '0769876543', Email: 'saman@sayo.lk',
       DOB: new Date('1988-04-05'), DOJ: new Date('2022-01-10'), DOL: new Date('1900-01-01'),
@@ -117,7 +171,8 @@ async function main() {
     },
     {
       UserId: 'USR0000005', NIC: '972233445V', LogName: 'tech.dilani',
-      PSW: 'tech456', GroupId: 'GRP0000004', UserName: 'Dilani Rathnayake',
+      PSW: await hashPassword(seedPassword('SEED_PASSWORD_TECH2', 'tech.dilani')),
+      GroupId: 'GRP0000004', UserName: 'Dilani Rathnayake',
       Address: 'No 55, Hospital Road, Jaffna', WorkingLocID: 'LOC0000005',
       ContNo: '0751122334', Email: 'dilani@sayo.lk',
       DOB: new Date('1997-09-18'), DOJ: new Date('2021-09-01'), DOL: new Date('1900-01-01'),
@@ -125,6 +180,8 @@ async function main() {
     },
   ];
 
+  /* An existing row keeps its password: the seed never overwrites a password
+     somebody has already changed (the upsert below leaves it alone). */
   for (const user of users) {
     await prisma.tbl_userdetails.upsert({
       where: { UserId: user.UserId },
@@ -209,6 +266,19 @@ async function main() {
   await prisma.tbl_ItemMaster.createMany({ data: itemsData, skipDuplicates: true });
 
   console.log('✅ Successfully seeded all master data!');
+
+  if (generatedPasswords.length > 0) {
+    console.log('');
+    console.log('  Sign-in details for the demo accounts created just now');
+    console.log('  (only shown once — save them somewhere safe and change them):');
+    console.log('');
+    for (const row of generatedPasswords) console.log(`    ${row.login.padEnd(14)} ${row.password}`);
+    console.log('');
+    console.log('  To choose your own instead, set SEED_PASSWORD_ADMIN, SEED_PASSWORD_MANAGER,');
+    console.log('  SEED_PASSWORD_TECH1, SEED_PASSWORD_RECEPTION or SEED_PASSWORD_TECH2 before');
+    console.log('  `npm run db:seed`. An account that already exists keeps its old password.');
+    console.log('');
+  }
 }
 
 main()

@@ -11,6 +11,7 @@ import React, {
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
 import { useMyAccess } from "@/lib/useMyAccess";
+import { logoutAdmin } from "@/lib/logout";
 import AccessLoading from "@/components/AccessLoading";
 
 interface ServiceSchedule {
@@ -3426,7 +3427,7 @@ export default function AppointmentsPage() {
             setNavKey(key);
             router.push(path);
           }}
-          onLogout={() => router.push("/admin/login")}
+          onLogout={() => { void logoutAdmin().finally(() => router.push("/admin-login")); }}
         />
 
         <div
@@ -3572,7 +3573,7 @@ export default function AppointmentsPage() {
                 S
               </div>
               {profileOpen && (
-                <ProfileMenu onLogout={() => router.push("/admin/login")} />
+                <ProfileMenu onLogout={() => { void logoutAdmin().finally(() => router.push("/admin-login")); }} />
               )}
             </div>
           </header>

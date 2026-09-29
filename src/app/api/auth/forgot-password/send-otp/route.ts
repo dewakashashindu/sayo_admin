@@ -1,9 +1,22 @@
+// src/app/api/auth/forgot-password/send-otp/route.ts
+// POST { email } — step 1 of the CUSTOMER reset (a booking account).
+//
+// 2026-09-29 fixes:
+//   • the code is stored in MySQL (Tbl_CustomerOtpReset), BCrypt-hashed —
+//     before it lived in a server-memory Map (lost on every restart / not
+//     shared between workers) and, in the legacy Tbl_OtpStore table, in clear
+//     text.
+//   • counters moved to MySQL (rateLimitStrong) so a restart cannot reset them.
+//   • the answer never says whether the address exists (no enumeration).
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { otpStore, generateOtpCode, OTP_TTL_MS, sweepOtps } from "@/lib/otpStore";
-import { rateLimit, rateMessage } from "@/lib/rateLimit";
+import { newCustomerOtp, saveCustomerOtp } from "@/lib/customerOtp";
+import { rateLimitStrong } from "@/lib/rateLimitDb";
+import { rateMessage } from "@/lib/rateLimit";
 import { clientIp, ipForLog } from "@/lib/clientIp";
+import { sendMail, codeMailHtml, mailConfigured, mailMissingEnv } from "@/lib/mailer";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -29,7 +42,7 @@ function escapeHtml(value: string): string {
 export async function POST(req: NextRequest) {
   try {
     const caller = clientIp(req);
-    const byIp = rateLimit({
+    const byIp = await rateLimitStrong({
       bucket: "otp-send:ip",
       key: caller,
       limit: OTP_SEND_IP_LIMIT,
@@ -43,13 +56,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email } = (await req.json()) as { email?: string };
+    const { email } = (await req.json().catch(() => ({}))) as { email?: string };
     if (!email?.trim())
       return NextResponse.json({ error: "Email is required." }, { status: 400 });
 
-    const emailNorm = email.trim().toLowerCase();
+    const emailNorm = email.trim().toLowerCase().slice(0, 200);
 
-    const byEmail = rateLimit({
+    const byEmail = await rateLimitStrong({
       bucket: "otp-send:email",
       key: emailNorm,
       limit: OTP_SEND_EMAIL_LIMIT,
@@ -63,9 +76,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    sweepOtps();   // expired codes are dropped instead of living in memory
-
- // Find user in Tbl_CustomerMaster
+    /* Find the booking account (Tbl_CustomerMaster) */
     let user: { CusCode: string; CusName: string } | null = null;
     try {
       user = await prisma.tbl_CustomerMaster.findFirst({
@@ -76,56 +87,48 @@ export async function POST(req: NextRequest) {
       console.error("[send-otp] lookup error:", errMsg(err));
     }
 
-    // security: email නැතිනම්ත් success return කරනවා (email enumeration prevent)
+    /* security: an unknown address gets the same answer as a known one */
     if (!user) {
       return NextResponse.json({ success: true });
     }
 
- // Generate OTP
-    const code = generateOtpCode();                 // crypto.randomInt — never Math.random
-    const expiresAt = Date.now() + OTP_TTL_MS;
-    otpStore.set(emailNorm, { code, expiresAt, attempts: 0 });
+    if (!mailConfigured()) {
+      console.error(`[send-otp] SMTP is not configured (${mailMissingEnv().join(", ")} are empty)`);
+      return NextResponse.json(
+        {
+          error:
+            "E-mail is not set up on this server, so the reset code cannot be sent. Please call the salon.",
+        },
+        { status: 503 },
+      );
+    }
 
-    await sendOtpEmail(emailNorm, user.CusName, code);
+    const code = newCustomerOtp();          // crypto.randomInt — never Math.random
+    await saveCustomerOtp(emailNorm, code);
+
+    try {
+      await sendMail({
+        to: emailNorm,
+        subject: "Your SAYO password reset code",
+        text: `Your SAYO password reset code is ${code}. It expires in 10 minutes.`,
+        html: codeMailHtml(
+          "SAYO Beauty",
+          `Hi ${escapeHtml(user.CusName ?? "there")}, your password reset code is:`,
+          code,
+          "This code expires in <strong>10 minutes</strong>.",
+        ),
+      });
+    } catch (err) {
+      console.error("[send-otp] mail failed:", errMsg(err));
+      return NextResponse.json(
+        { error: "The reset code could not be sent. Please try again in a moment." },
+        { status: 503 },
+      );
+    }
 
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("[send-otp POST]", err);
     return NextResponse.json({ error: "Unexpected server error." }, { status: 500 });
-  }
-}
-
-async function sendOtpEmail(to: string, name: string, code: string) {
-  if (process.env.SMTP_HOST) {
-    const nodemailer = await import("nodemailer");
-    const transporter = nodemailer.default.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT ?? 587),
-      secure: process.env.SMTP_SECURE === "true",
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    });
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM ?? '"SAYO Beauty" <no-reply@sayobeauty.com>',
-      to,
-      subject: "Your SAYO Password Reset Code",
-      html: `
-        <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-          <h2 style="color:#B8860B">SAYO Beauty</h2>
-          <p>Hi ${escapeHtml(name)},</p>
-          <p>Your password reset code is:</p>
-          <div style="font-size:2.5rem;font-weight:700;letter-spacing:0.4em;
-                      color:#B8860B;text-align:center;padding:1.5rem 0">${code}</div>
-          <p style="color:#666;font-size:0.85rem">
-            This code expires in <strong>10 minutes</strong>.
-          </p>
-        </div>
-      `,
-    });
-  } else {
-    /* NO code in the log, not even in development — a log file is readable by
-       anyone with server access and often lives on for months. */
-    console.warn(
-      "[send-otp] SMTP is not configured (SMTP_HOST / SMTP_USER / SMTP_PASS), so the reset mail was not sent.",
-    );
   }
 }

@@ -2,19 +2,49 @@
  * Admin session tokens — HMAC-SHA256 signed, edge-runtime compatible.
  * Uses the Web Crypto API so it works both in Next.js middleware (edge)
  * and in Node route handlers. No external JWT dependency required.
+ *
+ * ── 2026-09-29, two security fixes live in this file ────────────────────────
+ *
+ * 1. AUDIENCE (`aud`). The customer cookie used to be signed by exactly the
+ *    same functions as the admin cookie, so a token handed out by the PUBLIC
+ *    /api/auth/register endpoint was accepted as an admin session (renaming the
+ *    cookie was enough). Every token now carries `aud: 'admin' | 'customer'`
+ *    and the verifier only accepts the audience it asked for. Old tokens have
+ *    no `aud` and are therefore refused — everyone signs in once more.
+ *
+ * 2. SESSION VERSION (`sv`). A token carries a short fingerprint of the stored
+ *    password hash it was created from. Node-side checks (src/lib/sessionGuard.ts
+ *    and /api/security/my-access) compare it with the row, so changing a
+ *    password — or an admin deleting/disabling the account — kills the old
+ *    cookie immediately. (The edge middleware cannot read MySQL, so it still
+ *    goes by signature + expiry alone; every API that returns data goes through
+ *    the Node-side check.)
  */
 
 export const ADMIN_COOKIE = 'sayo_admin_session';
-export const SESSION_HOURS = 8;
+
+/** How long a session lives. Override with SESSION_HOURS in .env (1–24). */
+export const SESSION_HOURS = (() => {
+  const raw = Number(process.env.SESSION_HOURS);
+  if (!Number.isFinite(raw) || raw < 1) return 4;
+  return Math.min(24, Math.floor(raw));
+})();
+
+export type SessionAudience = 'admin' | 'customer';
 
 export type AdminSessionPayload = {
-  uid: string;   // UserId (tbl_userdetails) or CusCode (customers)
-  log: string;   // LogName (staff) or e-mail (customers)
-  name: string;  // display name
-  exp: number;   // expiry epoch ms
+  uid: string;                // UserId (tbl_userdetails) or CusCode (customers)
+  log: string;                // LogName (staff) or e-mail (customers)
+  name: string;               // display name
+  aud: SessionAudience;       // who this token is for
+  exp: number;                // expiry epoch ms
+  sv?: string;                // password fingerprint (staff tokens)
   phone?: string;
   gender?: string;
 };
+
+/** What callers pass in — exp/aud are added by createSessionToken(). */
+export type NewSessionInput = Omit<AdminSessionPayload, 'exp' | 'aud'>;
 
 function getSecret(): Uint8Array | null {
   const s = process.env.AUTH_SECRET;
@@ -50,13 +80,31 @@ async function hmacKey(secret: Uint8Array): Promise<CryptoKey> {
   );
 }
 
+/**
+ * Short fingerprint of a stored password hash. Only used to notice that the
+ * password changed — it never leaves the server inside a readable form and it
+ * is useless without the signature over it.
+ */
+export async function sessionVersion(passwordHash: string): Promise<string> {
+  const bytes = new TextEncoder().encode(`sayo-sv|${String(passwordHash ?? '').trim()}`);
+  const digest = await crypto.subtle.digest('SHA-256', bytes as unknown as BufferSource);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 16);
+}
+
 /** Creates a signed session token. Returns null if AUTH_SECRET is not configured. */
-export async function createSessionToken(p: Omit<AdminSessionPayload, 'exp'>): Promise<string | null> {
+export async function createSessionToken(
+  p: NewSessionInput,
+  aud: SessionAudience = 'admin',
+): Promise<string | null> {
   const secret = getSecret();
   if (!secret) return null;
 
   const payload: AdminSessionPayload = {
     ...p,
+    aud,
     exp: Date.now() + SESSION_HOURS * 60 * 60 * 1000,
   };
 
@@ -66,13 +114,20 @@ export async function createSessionToken(p: Omit<AdminSessionPayload, 'exp'>): P
   return `${body}.${b64urlEncode(new Uint8Array(sig))}`;
 }
 
-/** Verifies signature + expiry. Returns the payload or null. */
-export async function verifySessionToken(token: string | undefined | null): Promise<AdminSessionPayload | null> {
+/**
+ * Verifies signature, expiry AND audience. Returns the payload or null.
+ * `aud` defaults to 'admin', so every existing caller keeps working — and a
+ * customer token can no longer pass for an admin one.
+ */
+export async function verifySessionToken(
+  token: string | undefined | null,
+  aud: SessionAudience = 'admin',
+): Promise<AdminSessionPayload | null> {
   if (!token) return null;
   const secret = getSecret();
   if (!secret) return null;
 
-  const parts = token.split('.');
+  const parts = String(token).split('.');
   if (parts.length !== 2) return null;
   const [body, sig] = parts;
 
@@ -93,6 +148,11 @@ export async function verifySessionToken(token: string | undefined | null): Prom
     const payload = JSON.parse(new TextDecoder().decode(b64urlDecode(body)!)) as AdminSessionPayload;
     if (typeof payload.exp !== 'number' || payload.exp < Date.now()) return null;
     if (!payload.uid || !payload.log) return null;
+    /* THE fix for the customer→admin token swap: the audience is inside the
+       signed body, so a customer token can never be presented as an admin one
+       (and vice versa). Tokens minted before this change carry no `aud` and
+       are refused — a fresh sign-in is required, which is intended. */
+    if (payload.aud !== aud) return null;
     return payload;
   } catch {
     return null;

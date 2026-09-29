@@ -22,6 +22,7 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { ensureAuthTables } from "@/lib/authTables";
 import { sendSms, normalizePhoneSriLanka, maskPhoneForUser } from "@/lib/sms";
 import { readPhone, readEmail } from "@/lib/secureContact";
 import type { AdminSessionPayload } from "@/lib/adminSession";
@@ -152,16 +153,9 @@ export function generateAdminOtp(): string {
   return String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
 }
 
+/** The table is created once per process (src/lib/authTables.ts). */
 export async function ensureAdminOtpTable(): Promise<void> {
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS Tbl_AdminLoginOtp (
-      UserId    CHAR(10)     NOT NULL PRIMARY KEY,
-      OtpHash   VARCHAR(100) NOT NULL,
-      ExpiresAt DATETIME     NOT NULL,
-      Attempts  TINYINT      NOT NULL DEFAULT 0,
-      CreatedAt DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `);
+  await ensureAuthTables();
 }
 
 /** 0771096131 → 94 7 7 1 0 9 6 1 3 1 (Text.lk wants 947XXXXXXXX) */

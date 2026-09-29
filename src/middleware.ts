@@ -2,7 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminToken, ADMIN_COOKIE } from '@/lib/adminSession';
 
 /* Pages anyone can open without logging in */
-const PUBLIC_PAGES = ['/booking', '/admin-login', '/login', '/register', '/forgot-password'];
+const PUBLIC_PAGES = [
+  '/booking',
+  '/admin-login',
+  /* the staff "Forgot password" screen — it is reached from /admin-login and
+     the person using it is by definition not signed in yet. Without this line
+     the link did a loop:  /admin-login/forgot-password → /admin-login?next=… */
+  '/admin-login/forgot-password',
+  '/login',
+  '/register',
+  '/forgot-password',
+];
 
 /* API routes the public booking flow needs (method-aware) */
 const PUBLIC_API: { path: string; methods: string[] }[] = [
@@ -21,6 +31,10 @@ const PUBLIC_API: { path: string; methods: string[] }[] = [
   { path: '/api/auth/admin-login/verify-otp', methods: ['POST'] },
   { path: '/api/auth/admin-login/resend-otp', methods: ['POST'] },
   { path: '/api/auth/admin-logout',     methods: ['GET', 'POST'] },
+  /* staff (tbl_userdetails) password reset — username + OTP to the saved phone
+     number / e-mail. Same reason as the page above: the caller has no session. */
+  { path: '/api/auth/forgot-password',        methods: ['POST'] },
+  { path: '/api/auth/reset-password',         methods: ['POST'] },
   /* Customer (booking) authentication */
   { path: '/api/auth/login',                  methods: ['POST'] },
   { path: '/api/auth/register',               methods: ['POST'] },
