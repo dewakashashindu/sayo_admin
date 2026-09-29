@@ -18,7 +18,7 @@
 //   Email     v1:… AES-256-GCM  (same for the e-mail)
 //   Enable    1
 //
-// No row is added to tbl_usergroups and none to Tbl_UserAccess_StdProfile:
+// No row is added to tbl_usergroups and no access rows are kept for this account:
 // /api/security/my-access hands this account every permission and every
 // location directly, so nothing can accidentally lock it out.
 //

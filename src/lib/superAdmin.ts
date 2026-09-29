@@ -3,9 +3,9 @@
 // The ONE hidden super administrator.
 //
 // Rules this file exists to keep true, everywhere in the app:
-//   • the account has every permission and every location (never read from
-//     Tbl_UserAccess_StdProfile / Tbl_UserLocAccess — those can be wiped by
-//     accident and would lock the owner out of his own panel);
+//   • the account has every permission and every location (never from the
+//     access-profile tables — a profile can be deleted by accident and would
+//     lock the owner out of his own panel);
 //   • the account is never listed on any screen and can never be edited or
 //     deleted through the API — it only exists as a row in tbl_userdetails;
 //   • a password alone is not enough to sign in: an OTP (SMS + e-mail) is

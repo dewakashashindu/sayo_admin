@@ -1,6 +1,15 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 --  SAYO Admin — the authentication / permission tables
 --
+--  2026-09-29: how access works now —
+--    * a PROFILE is a named object (APF0000001 …). Its ticks live in
+--      Tbl_UserAccess_StdProfile, keyed by the profile code, with the name in
+--      the ApfDes column;
+--    * a PERSON holds one or more profiles. Their own rows live in
+--      Tbl_UserAuthorization: the union of those profiles, adjustable per person.
+--  No new tables are created for any of this, and Tbl_UserLocAccess is left
+--  alone. Nothing here removes data — see scripts/tidy-access-rows.sql.
+--
 --  WHEN YOU NEED THIS FILE
 --    Usually you do not. The application creates these tables itself, once per
 --    server start-up, the first time a feature needs them
@@ -65,39 +74,45 @@ CREATE TABLE IF NOT EXISTS Tbl_RateLimit (
   KEY Tbl_RateLimit_window_idx (WindowStart)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 5. A single user's own permissions (screen + action, e.g. 'USERS.SAVE').
-CREATE TABLE IF NOT EXISTS Tbl_UserAuthorization (
-  UserID  CHAR(10)     NOT NULL,
-  FuncID  VARCHAR(200) NOT NULL,
-  Auth    TINYINT(1)   NOT NULL DEFAULT 0,
-  Module  VARCHAR(50)  NOT NULL DEFAULT 'RT',
-  ACCESS  VARCHAR(50)  NOT NULL DEFAULT '',
-  PRIMARY KEY (UserID, FuncID)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- NOTE on COLLATE: these tables are pinned to utf8mb4_unicode_ci — the collation
+-- every table Prisma created for this app uses. On MariaDB 11 a bare
+-- DEFAULT CHARSET=utf8mb4 means utf8mb4_uca1400_ai_ci, and comparing the two
+-- families gives "Illegal mix of collations" (error 1267).
 
--- 6. The same shape, used as the template a user group is built from.
+-- 5. THE PROFILES — one row per screen per profile. UserID carries the profile
+--    code (APF0000001 …) and ApfDes carries the profile's name.
+--    This is the table the shop already had; if it exists, this statement does
+--    nothing (the app adds the ApfDes column by itself when it is missing).
 CREATE TABLE IF NOT EXISTS Tbl_UserAccess_StdProfile (
-  UserID  CHAR(10)     NOT NULL,
-  FuncID  VARCHAR(200) NOT NULL,
-  Auth    TINYINT(1)   NOT NULL DEFAULT 0,
-  Module  VARCHAR(50)  NOT NULL DEFAULT 'RT',
-  ACCESS  VARCHAR(50)  NOT NULL DEFAULT '',
+  UserID CHAR(10)     NOT NULL,
+  FuncID VARCHAR(200) NOT NULL,
+  Auth   TINYINT(1)   NOT NULL DEFAULT 0,
+  Module VARCHAR(50)  NOT NULL DEFAULT 'RT',
+  ACCESS VARCHAR(50)  NOT NULL DEFAULT '',
+  ApfDes VARCHAR(100) NULL,
   PRIMARY KEY (UserID, FuncID)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 7. Which branches a user may work in.
-CREATE TABLE IF NOT EXISTS Tbl_UserLocAccess (
-  OwnerId CHAR(10) NOT NULL,
-  LocCode CHAR(10) NOT NULL,
-  Allow   CHAR(1)  NOT NULL DEFAULT 'Y',
-  PRIMARY KEY (OwnerId, LocCode)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 5b. Only needed once, and only if the app could not do it (no ALTER right):
+--     the profile NAME column. Run it by hand if the column is missing.
+-- ALTER TABLE Tbl_UserAccess_StdProfile ADD COLUMN ApfDes VARCHAR(100) NULL;
 
--- ── Check: all seven should be listed ──────────────────────────────────────
+-- 6. A PERSON'S OWN ROWS — the union of the profiles assigned to them, written
+--    by Assign Profiles and adjustable per person. One row per screen, one per
+--    branch (Module = 'LOC'), one per profile held (Module = 'APF').
+CREATE TABLE IF NOT EXISTS Tbl_UserAuthorization (
+  UserID CHAR(10)     NOT NULL,
+  FuncID VARCHAR(200) NOT NULL,
+  Auth   TINYINT(1)   NOT NULL DEFAULT 0,
+  Module VARCHAR(50)  NOT NULL DEFAULT 'RT',
+  ACCESS VARCHAR(50)  NOT NULL DEFAULT '',
+  PRIMARY KEY (UserID, FuncID)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── Check: all six should be listed ──────────────────────────────────────
 SELECT TABLE_NAME
 FROM information_schema.TABLES
 WHERE TABLE_SCHEMA = DATABASE()
   AND TABLE_NAME IN ('Tbl_AdminLoginOtp','Tbl_PswReset','Tbl_CustomerOtpReset',
-                     'Tbl_RateLimit','Tbl_UserAuthorization',
-                     'Tbl_UserAccess_StdProfile','Tbl_UserLocAccess')
+                     'Tbl_RateLimit','Tbl_UserAccess_StdProfile','Tbl_UserAuthorization')
 ORDER BY TABLE_NAME;

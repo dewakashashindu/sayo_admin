@@ -36,6 +36,11 @@ export async function GET(req: NextRequest) {
   const bag = await loadAccessForUser(session.uid);
   let keys = [...bag.keys];
   let locations = bag.locations;
+  /* "profiles" = the union of the assigned profiles, "custom" = rows without an
+     assigned profile, "none" = nothing assigned,
+     "super" = the override below is in force (the account above ignores the
+     profile tables on purpose). */
+  let source: "profiles" | "custom" | "none" | "super" = bag.source;
 
   // Never-locked-out roles: the hidden super administrator (by user id or by
   // group id) and the built-in Administrator group. They get every key in the
@@ -45,6 +50,7 @@ export async function GET(req: NextRequest) {
   if (isSuperAdmin({ userId: bag.userId, groupId: bag.groupId }) || hasNeverLockedOutPower(bag.groupId)) {
     keys = allAccessKeys();
     locations = await allLocationCodes();
+    source = "super";
   }
 
   return NextResponse.json({
@@ -55,7 +61,7 @@ export async function GET(req: NextRequest) {
       name: session.name,
       groupId: bag.groupId,
       workingLocId: bag.workingLocId,
-      source: bag.source,
+      source,
       keys,
       locations,
     },

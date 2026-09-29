@@ -12,6 +12,7 @@ import AccessProfilePrintSheet, { ACCESS_PROFILE_PRINT_CSS } from '@/components/
 interface UserRow {
   userId: string; logName: string; userName: string; groupId: string; groupDes: string;
   nic: string; contNo: string; email: string; workingLocID: string; enable: boolean; rmks: string;
+  profiles: string[];            // access profile codes assigned on "Assign Profiles"
 }
 interface GroupOpt { groupId: string; groupDes: string }
 interface LocOpt { LocCode: string; LocDes: string }
@@ -137,18 +138,23 @@ function UsersPageContent() {
   }
 
   const [printData, setPrintData] = useState<{ subject: string; keys: { screenCode: string; actionCode: string }[]; locations: string[] } | null>(null);
+  /* What this person may do = every access profile assigned to them, added up.
+     The old per-user "role customization" (and the button that opened it) is
+     gone: profiles are created on Access Profile Creation and handed out on
+     Assign Profiles. This button only PRINTS the result. */
   async function handlePrintAccess() {
     if (!current) return;
     try {
-      const res = await fetch(`/api/security/users/${encodeURIComponent(current.userId)}/access`, { cache: 'no-store' });
-      const json = await res.json() as { success?: boolean; data?: { keys?: { screenCode: string; actionCode: string }[]; locations?: string[] }; message?: string };
-      if (!res.ok || !json?.success) throw new Error(json?.message || 'Could not load the profile');
+      const res = await fetch(`/api/security/users/${encodeURIComponent(current.userId)}/effective-access`, { cache: 'no-store' });
+      const json = await res.json() as { success?: boolean; data?: { keys?: { screenCode: string; actionCode: string }[]; locations?: string[]; profiles?: string[] }; message?: string };
+      if (!res.ok || !json?.success) throw new Error(json?.message || 'Could not load the permissions');
       const gname = groups.find((g) => g.groupId === current.groupId)?.groupDes ?? current.groupId;
       const locLabels = locations
         .filter((l) => (json.data?.locations ?? []).map((x) => String(x).trim()).includes(l.LocCode.trim()))
         .map((l) => `${l.LocDes.trim()} (${l.LocCode.trim()})`);
+      const profileLine = (json.data?.profiles ?? []).length > 0 ? (json.data?.profiles ?? []).join(', ') : 'none';
       setPrintData({
-        subject: `User: ${current.userName} (${current.userId}) · Role: ${gname} (${current.groupId})`,
+        subject: `User: ${current.userName} (${current.userId}) · Group: ${gname} (${current.groupId}) · Profiles: ${profileLine}`,
         keys: json.data?.keys ?? [],
         locations: locLabels,
       });
@@ -184,7 +190,7 @@ function UsersPageContent() {
 
       {printData && (
         <AccessProfilePrintSheet
-          title="USER ROLE CUSTOMIZATION"
+          title="USER ACCESS (ALL PROFILES)"
           subject={printData.subject}
           keys={printData.keys}
           locations={printData.locations}
@@ -219,6 +225,9 @@ function UsersPageContent() {
                     <span className="row-mid">
                       <span className="row-name">{u.userName}</span>
                       <span className="row-sub">{u.logName}{u.groupDes ? ` · ${u.groupDes}` : ' · (no group)'}</span>
+                    </span>
+                    <span className={`chip ${u.profiles?.length ? 'ok' : 'warn'}`}>
+                      {u.profiles?.length ? `${u.profiles.length} profile(s)` : 'No profile'}
                     </span>
                     <span className={`chip ${u.enable ? 'ok' : 'warn'}`}>{u.enable ? 'Enabled' : 'Disabled'}</span>
                   </button>
@@ -287,6 +296,14 @@ function UsersPageContent() {
                   <input type="checkbox" checked={form.enable} onChange={(e) => set({ enable: e.target.checked })} />
                   <span>Enabled — the user can log in</span>
                 </label>
+                {!isNew && current && (
+                  <div className="prof-note">
+                    Access profiles: {current.profiles?.length
+                      ? <b>{current.profiles.join(', ')}</b>
+                      : <b className="prof-warn">none — this person can sign in but sees an empty panel</b>}
+                    <span className="prof-sub"> — give them one on System Settings → User Settings → <b>Assign Profiles</b>. The group above only labels the person; it no longer carries permissions.</span>
+                  </div>
+                )}
               </div>
 
               <div className="actions">
@@ -297,14 +314,15 @@ function UsersPageContent() {
                 {!isNew && current && (
                   <button
                     className="btn"
-                    onClick={() => router.push(`/settings/access-profiles?user=${encodeURIComponent(current.userId)}`)}
-                    title="Adjust this user's role-based permissions on the Access Profiles screen"
+                    onClick={() => router.push('/settings/assign-profiles')}
+                    disabled={busy}
+                    title="Access profiles are given to a person on System Settings → User Settings → Assign Profiles"
                   >
-                    Customize Role
+                    Assign Profiles
                   </button>
                 )}
                 {!isNew && current && (
-                  <button className="btn" onClick={() => void handlePrintAccess()} disabled={busy} title="Print a report of this user's permissions">
+                  <button className="btn" onClick={() => void handlePrintAccess()} disabled={busy} title="Print every permission this person gets from their assigned profiles">
                     Print Access
                   </button>
                 )}
@@ -360,6 +378,10 @@ const CSS = `
   .mono{font-family:ui-monospace,monospace;font-weight:700}
   .check{display:flex;align-items:center;gap:9px;grid-column:span 2;font-size:13px;color:#1e3a40;font-weight:600;cursor:pointer}
   .check input{width:17px;height:17px;accent-color:#1e3a40}
+  .prof-note{grid-column:span 2;font-size:12.5px;color:#3c5a60;background:#fff;border:1px solid rgba(30,58,64,0.12);border-radius:10px;padding:9px 12px;line-height:1.6}
+  .prof-note b{color:#1e3a40}
+  .prof-warn{color:#b91c1c}
+  .prof-sub{color:#7d8f94}
   .actions{display:flex;gap:10px;align-items:center;border-top:1px solid rgba(30,58,64,0.12);padding-top:16px}
   .actions .flex{flex:1}
   .btn{height:38px;padding:0 18px;border:1px solid rgba(30,58,64,0.2);border-radius:9px;background:#fff;color:#1e3a40;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit}

@@ -8,8 +8,8 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { isSuperAdminUserId } from "@/lib/superAdmin";
 import { forgetAccountState, requireAdminAccess } from "@/lib/sessionGuard";
+import { clearUserAssignments } from "@/lib/accessProfiles";
 import { passwordProblem } from "@/lib/passwordPolicy";
-import { ensureAuthTables } from "@/lib/authTables";
 
 /* The hidden super administrator is invisible through this API: every verb
    answers exactly as it would for an id that does not exist. */
@@ -86,11 +86,6 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
       if (problem) return err(problem);
     }
 
-    const prevRows = await prisma.$queryRaw<{ GroupId: string | null }[]>`
-      SELECT GroupId FROM tbl_userdetails WHERE UserId = ${userId}
-    `;
-    const prevGroupId = trim(prevRows[0]?.GroupId);
-
     if (groupId) {
       const g = await prisma.$queryRaw<{ n: number }[]>`
         SELECT COUNT(*) AS n FROM tbl_usergroups WHERE GroupId = ${groupId}
@@ -119,19 +114,12 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
         `;
     if (Number(n) === 0) return err(`User ${userId} was not found.`, 404);
 
-    /* group changed — re-seed this user's override rows from the NEW group's
-       profile. Tables are ensured once per process, not on every save. */
-    if (groupId && groupId !== prevGroupId) {
-      await ensureAuthTables();
-      await prisma.$executeRaw`DELETE FROM Tbl_UserAuthorization WHERE UserID = ${userId}`;
-      await prisma.$executeRaw`
-        INSERT INTO Tbl_UserAuthorization (UserID, FuncID, Auth, Module, ACCESS)
-        SELECT ${userId}, FuncID, Auth, Module, ACCESS
-        FROM Tbl_UserAccess_StdProfile WHERE UserID = ${groupId}
-      `;
-    }
-    /* a new password, a disabled account or a new group must invalidate the
-       cached state at once, so old cookies stop working immediately */
+    /* 2026-09-29: switching the group does NOT touch permissions any more.
+       Creating/saving a user only writes tbl_userdetails; what a person may do
+       comes from the access profiles assigned to them
+       (System Settings → User Settings → Assign Profiles).
+       (A new password or a disabled account still invalidates the session at
+       once, so old cookies stop working immediately.) */
     forgetAccountState(userId);
     return ok({ userId });
   } catch (e) {
@@ -154,10 +142,8 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ userId:
     if (isSuperAdminUserId(userId)) return hiddenUser(`User ${userId} was not found.`);
     const n = await prisma.$executeRaw`DELETE FROM tbl_userdetails WHERE UserId=${userId}`;
     if (Number(n) === 0) return err(`User ${userId} was not found.`, 404);
-    // drop the deleted user's override rows too
-    await ensureAuthTables();
-    await prisma.$executeRaw`DELETE FROM Tbl_UserAuthorization WHERE UserID = ${userId}`;
-    await prisma.$executeRaw`DELETE FROM Tbl_UserLocAccess WHERE OwnerId = ${userId}`;
+    // drop the deleted user's profile assignments too
+    await clearUserAssignments(userId);
     forgetAccountState(userId);
     return ok({ userId });
   } catch (e) {

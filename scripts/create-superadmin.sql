@@ -27,12 +27,11 @@ WHERE UserId = 'USR0000000';
 
 -- ── 2. What must NOT be there ──────────────────────────────────────────────
 -- (both must return 0 — the account is never listed as a user group and never
---  gets profile rows; /api/security/my-access grants it everything directly)
+--  needs access rows of its own; /api/security/my-access grants it everything
+--  directly, so nothing can lock it out of its own panel)
 SELECT COUNT(*) AS usergroups_rows_expected_0 FROM tbl_usergroups WHERE GroupId = 'GRP0000000';
-SELECT COUNT(*) AS profile_rows_expected_0
-FROM Tbl_UserAccess_StdProfile WHERE UserID = 'GRP0000000';
-SELECT COUNT(*) AS user_override_rows_expected_0
-FROM Tbl_UserAuthorization WHERE UserID = 'USR0000000';
+SELECT COUNT(*) AS user_rows_expected_0 FROM Tbl_UserAuthorization WHERE UserID = 'USR0000000';
+
 
 -- ── 3. The sign-in OTP table (created by the app on the first login) ───────
 SELECT UserId, ExpiresAt, Attempts, CreatedAt FROM Tbl_AdminLoginOtp;

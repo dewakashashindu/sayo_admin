@@ -1,13 +1,18 @@
 'use client';
-// User Groups — System Settings > User Settings > User Groups
+// User Groups — Administration > User Creation > User Groups
 // Saves straight into tbl_usergroups (GroupId char(10) PK, GroupDes).
+//
+// 2026-09-29 — a group no longer carries permissions, so this screen no longer
+// prints a profile: permissions now live in named Access Profiles, which are
+// created on System Settings → User Settings → Access Profile Creation and
+// given to a person on … → Assign Profiles. A group is only a label now (it is
+// still saved on the user row and shown next to their name).
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
 import { useMyAccess } from "@/lib/useMyAccess";
 import NoAccess from "@/components/NoAccess";
 import AccessLoading from "@/components/AccessLoading";
-import AccessProfilePrintSheet, { ACCESS_PROFILE_PRINT_CSS } from '@/components/AccessProfilePrintSheet';
 
 interface GroupRow { groupId: string; groupDes: string; users: number }
 
@@ -91,32 +96,6 @@ function UserGroupsPageContent() {
     }
   }
 
-  const [printData, setPrintData] = useState<{ subject: string; keys: { screenCode: string; actionCode: string }[]; locations: string[] } | null>(null);
-  async function handlePrintAccess() {
-    if (!current) return;
-    try {
-      const [ares, lres] = await Promise.all([
-        fetch(`/api/security/groups/${encodeURIComponent(current.groupId)}/access`, { cache: 'no-store' }),
-        fetch('/api/locations', { cache: 'no-store' }),
-      ]);
-      const aJson = await ares.json() as { success?: boolean; data?: { keys?: { screenCode: string; actionCode: string }[]; locations?: string[] }; message?: string };
-      const lJson = await lres.json() as { success?: boolean; data?: { LocCode: string; LocDes: string }[] };
-      if (!ares.ok || !aJson?.success) throw new Error(aJson?.message || 'Could not load the profile');
-      const allowed = (aJson.data?.locations ?? []).map((x) => String(x).trim());
-      const locLabels = (lJson.data ?? [])
-        .filter((l) => allowed.includes(l.LocCode.trim()))
-        .map((l) => `${l.LocDes.trim()} (${l.LocCode.trim()})`);
-      setPrintData({
-        subject: `Role: ${current.groupDes} (${current.groupId})`,
-        keys: aJson.data?.keys ?? [],
-        locations: locLabels,
-      });
-      setTimeout(() => window.print(), 60);
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : 'Could not print', true);
-    }
-  }
-
   async function handleDelete() {
     if (!current) { showToast('Select a group first', true); return; }
     if (!window.confirm(`Delete group ${current.groupId} (${current.groupDes})?`)) return;
@@ -138,17 +117,7 @@ function UserGroupsPageContent() {
   return (
     <>
       <style>{SIDEBAR_CSS}</style>
-      <style>{ACCESS_PROFILE_PRINT_CSS}</style>
       <style>{CSS}</style>
-
-      {printData && (
-        <AccessProfilePrintSheet
-          title="ROLE ACCESS PROFILE"
-          subject={printData.subject}
-          keys={printData.keys}
-          locations={printData.locations}
-        />
-      )}
 
       {toast && <div className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
 
@@ -158,6 +127,7 @@ function UserGroupsPageContent() {
         <div className="main">
           <header className="head">
             <h1>USER GROUPS</h1>
+            <span className="head-note">A group is only a label now — access comes from the profiles on “Assign Profiles”</span>
             <span className="head-note">{loading ? 'Loading…' : `${groups.length} group(s)`}</span>
           </header>
 
@@ -206,12 +176,7 @@ function UserGroupsPageContent() {
                 )}
                 <div className="flex" />
                 {!isNew && (
-                  <>
-                    <button className="btn danger" onClick={handleDelete} disabled={busy}>Delete</button>
-                    <button className="btn" onClick={() => void handlePrintAccess()} disabled={busy} title="Print a report of this group's permissions">
-                      Print Access
-                    </button>
-                  </>
+                  <button className="btn danger" onClick={handleDelete} disabled={busy}>Delete</button>
                 )}
                 {canSaveG && (
                 <button className="btn primary" onClick={() => void handleSave()} disabled={busy || !dirty}>

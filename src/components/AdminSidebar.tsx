@@ -59,7 +59,7 @@ const ITEM_ACCESS_CODE: Record<string, string> = {
   'admin-schedules': 'ADSCH', 'admin-hours': 'ADHRS', 'settings-user-groups': 'UGROUPS', 'settings-users': 'USERS',
   'promo-coupons': 'PRCOUP', 'promo-packages': 'PRPACK', 'promo-rewards': 'PRREWRD', 'promo-discounts': 'PRDISC', 'promo-greetings': 'PRGREET',
   'acc-salary': 'ACCSAL', 'acc-raw': 'ACCRAW', 'acc-other': 'ACCOTH', 'acc-revenue': 'ACCREV',
-  'settings-startup': 'SETUP', 'settings-access': 'ACCESSP',
+  'settings-startup': 'SETUP', 'settings-access': 'ACCESSP', 'settings-assign': 'ASSIGNP',
   reports: 'REPORTS',
 };
 // Some nav leaves count for more than one screen code.
@@ -201,12 +201,20 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    /* Mirrors src/lib/accessCatalog.ts exactly: SYSSET → SETUP, and
+       USRSET (User Settings) → ACCESSP + ASSIGNP. */
     key: 'settings',
     label: 'System Settings',
     icon: <IGear />,
     children: [
-      { key: 'settings-startup', label: 'Start-up Settings', path: '/settings/startup'         },
-      { key: 'settings-access',  label: 'Access Profiles',   path: '/settings/access-profiles' },
+      { key: 'settings-startup', label: 'Start-up Settings', path: '/settings/startup' },
+      {
+        key: 'settings-userset', label: 'User Settings', path: '',
+        children: [
+          { key: 'settings-access', label: 'Access Profile Creation', path: '/settings/access-profiles' },
+          { key: 'settings-assign', label: 'Assign Profiles',         path: '/settings/assign-profiles' },
+        ],
+      },
     ],
   },
   {

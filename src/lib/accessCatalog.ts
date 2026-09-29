@@ -135,10 +135,26 @@ export const ACCESS_TREE: AccessNode[] = [
   },
 
   {
+    /* System Settings → Start-up Settings · User Settings → the two profile
+       screens. Mirrors the sidebar exactly (see AdminSidebar NAV_GROUPS).
+       2026-09-29: "Access Profiles" became "Access Profile Creation" and a new
+       "Assign Profiles" screen was added underneath a new "User Settings"
+       header. ACCESSP keeps its code AND its action order, so every profile
+       saved before this change still decodes exactly as it did. */
     code: "SYSSET", name: "System Settings", actions: [ACCESS],
     children: [
-      { code: "SETUP",   name: "Start-up Settings", actions: [ACCESS, A("SAVE")] },
-      { code: "ACCESSP", name: "Access Profiles",   actions: [ACCESS, A("PRINT"), A("SELECT_ALL", "Select All"), A("DESELECT_ALL", "DeSelect All"), A("CANCEL", "Cancel"), A("SAVE")] },
+      { code: "SETUP", name: "Start-up Settings", actions: [ACCESS, A("SAVE")] },
+      {
+        code: "USRSET", name: "User Settings", actions: [ACCESS],
+        children: [
+          { code: "ACCESSP", name: "Access Profile Creation", actions: [ACCESS, A("PRINT"), A("SELECT_ALL", "Select All"), A("DESELECT_ALL", "DeSelect All"), A("CANCEL", "Cancel"), A("SAVE")] },
+          /* Creating a profile uses the ACCESSP chips; handing profiles to a
+             person is its own right, so it gets its own node + chips. Until a
+             profile grants ASSIGNP.ACCESS the screen is visible to the hidden
+             super administrator only. */
+          { code: "ASSIGNP", name: "Assign Profiles", actions: [ACCESS, A("SAVE")] },
+        ],
+      },
     ],
   },
 

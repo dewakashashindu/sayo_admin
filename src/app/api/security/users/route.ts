@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { superAdminUserId, superAdminGroupId } from "@/lib/superAdmin";
 import { requireAdminAccess } from "@/lib/sessionGuard";
+import { assignmentsByUser } from "@/lib/accessProfiles";
 import { passwordProblem } from "@/lib/passwordPolicy";
 
 export const runtime = "nodejs";
@@ -45,11 +46,15 @@ export async function GET(req: NextRequest) {
         AND ${q ? Prisma.sql`(LOWER(RTRIM(u.UserId)) LIKE ${like} OR LOWER(RTRIM(u.UserName)) LIKE ${like} OR LOWER(RTRIM(u.LogName)) LIKE ${like})` : Prisma.sql`1=1`}
       ORDER BY u.UserId
     `;
+    /* which access profiles each person holds — the list screen shows a count,
+       and a warning when it is zero (nobody can do anything without one) */
+    const assignments = await assignmentsByUser();
     return ok(rows.map((r) => ({
       userId: trim(r.UserId), logName: trim(r.LogName), userName: trim(r.UserName),
       groupId: trim(r.GroupId), groupDes: trim(r.GroupDes ?? ""),
       nic: trim(r.NIC), contNo: trim(r.ContNo), email: trim(r.Email),
       workingLocID: trim(r.WorkingLocID), enable: Boolean(Number(r.Enable)), rmks: trim(r.Rmks),
+      profiles: assignments.get(trim(r.UserId)) ?? [],
     })));
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not load the users", 500);

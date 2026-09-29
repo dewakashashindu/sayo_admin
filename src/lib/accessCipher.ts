@@ -1,5 +1,5 @@
 // src/lib/accessCipher.ts
-// Reversible obfuscation for Tbl_UserAccess_StdProfile — VB6-style XOR cipher
+// Reversible obfuscation for the access-profile rows — VB6-style XOR cipher
 // with a base64url safe layer, so FuncID/ACCESS look unreadable in the table
 // but decode back to plain codes without any extra key storage.
 // (obfuscation, not real encryption — anyone with the app source can decode)

@@ -1,88 +1,86 @@
 // src/lib/accessServer.ts
-// Server-side permission resolution against the VB6-style tables.
-// Rule: 1) the user's own overrides (Tbl_UserAuthorization) if any exist,
-//       2) otherwise the role/group profile (Tbl_UserAccess_StdProfile).
-//       Locations work the same way on Tbl_UserLocAccess.
-import { prisma } from "@/lib/prisma";
+// Server-side permission resolution.
+//
+// 2026-09-29 — the rules are:
+//     a PROFILE's ticks live in Tbl_UserAccess_StdProfile (UserID = APF…)
+//     a PERSON's rights live in Tbl_UserAuthorization (UserID = USR…): the
+//     union of the profiles assigned to them, which Assign Profiles writes and
+//     the admin may adjust per person ("customize")
+//     no rows at all      = nothing at all (strict), said plainly in the UI
+//
+// The old "first touch copies the group's profile into the user" behaviour is
+// still gone — nothing is copied behind your back; the rows appear only when
+// somebody presses Save on Assign Profiles.
+//
+// The hidden super administrator keeps its escape hatch — see my-access.
 import { ALL_ACCESS_NODES } from "@/lib/accessCatalog";
-import { ensureAuthTables } from "@/lib/authTables";
-import { decipher } from "@/lib/accessCipher";
+import { resolveUserAccess } from "@/lib/accessProfiles";
+import { prisma } from "@/lib/prisma";
 
 export interface AccessBag {
   userId: string;
   userName: string;
   groupId: string;
   workingLocId: string;
-  source: "user" | "group" | "none";
+  /**
+   * "profiles" = at least one profile is assigned,
+   * "custom"   = the person has rows but no profile assigned (rows written by
+   *              hand, or left over from the old model),
+   * "none"     = no rows at all → nothing is allowed.
+   */
+  source: "profiles" | "custom" | "none";
+  /** the profile codes assigned to this person (for the screens) */
+  profiles: string[];
   keys: Set<string>;           // "APPT.NEW_BOOKING" style
   locations: string[];         // allowed LocCodes
   has: (code: string, action?: string) => boolean;
 }
 
-function decodeKeys(rows: { FuncID: string; ACCESS: string }[]): Set<string> {
-  const nodeByCode = new Map(ALL_ACCESS_NODES.map((n) => [n.code, n]));
+const trim = (v: unknown) => String(v ?? "").trim();
+
+/** Keep the catalog honest: drop keys for screens that no longer exist. */
+function knownKeys(keys: Set<string>): Set<string> {
+  const codes = new Set(ALL_ACCESS_NODES.map((n) => n.code));
   const out = new Set<string>();
-  for (const r of rows) {
-    const code = decipher(String(r.FuncID ?? "").trim());
-    const node = nodeByCode.get(code);
-    if (!node) continue;
-    const mask = decipher(String(r.ACCESS ?? "").trim());
-    node.actions.forEach((a, i) => {
-      if (mask[i] === "1") out.add(`${code}.${a}`);
-    });
+  for (const k of keys) {
+    const [screen] = k.split(".");
+    if (screen && codes.has(screen)) out.add(k);
   }
   return out;
 }
 
 export async function loadAccessForUser(userIdRaw: string): Promise<AccessBag> {
-  const userId = String(userIdRaw ?? "").trim().slice(0, 10);
-  const users = await prisma.$queryRaw<{ UserName: string | null; GroupId: string | null; WorkingLocID: string | null }[]>`
+  const userId = trim(userIdRaw).slice(0, 10);
+
+  const users = await prisma.$queryRaw<
+    { UserName: string | null; GroupId: string | null; WorkingLocID: string | null }[]
+  >`
     SELECT UserName, GroupId, WorkingLocID FROM tbl_userdetails WHERE UserId = ${userId}
   `.catch(() => [] as { UserName: string | null; GroupId: string | null; WorkingLocID: string | null }[]);
   const u = users[0];
-  const groupId = String(u?.GroupId ?? "").trim().slice(0, 10);
+
   const empty: AccessBag = {
-    userId, userName: String(u?.UserName ?? "").trim(), groupId,
-    workingLocId: String(u?.WorkingLocID ?? "").trim(),
-    source: "none", keys: new Set(), locations: [],
+    userId,
+    userName: trim(u?.UserName),
+    groupId: trim(u?.GroupId),
+    workingLocId: trim(u?.WorkingLocID),
+    source: "none",
+    profiles: [],
+    keys: new Set(),
+    locations: [],
     has: () => false,
   };
   if (!u) return empty;
 
-  /* The permission tables are created ONCE per process (src/lib/authTables.ts)
-     instead of on every request — three DDL round-trips per call, and a silent
-     dependency on the CREATE privilege, used to sit on this hot path. */
-  await ensureAuthTables();
-
-  // 1) user overrides?
-  let rows = await prisma.$queryRaw<{ FuncID: string; ACCESS: string }[]>`
-    SELECT FuncID, ACCESS FROM Tbl_UserAuthorization WHERE UserID = ${userId}
-  `;
-  let source: AccessBag["source"] = "user";
-  if (rows.length === 0) {
-    // 2) group profile
-    source = "group";
-    rows = await prisma.$queryRaw<{ FuncID: string; ACCESS: string }[]>`
-      SELECT FuncID, ACCESS FROM Tbl_UserAccess_StdProfile WHERE UserID = ${groupId}
-    `;
-  }
-
-  let locRows = await prisma.$queryRaw<{ LocCode: string }[]>`
-    SELECT LocCode FROM Tbl_UserLocAccess WHERE OwnerId = ${userId} AND UPPER(Allow) = 'Y'
-  `;
-  if (locRows.length === 0 && groupId) {
-    locRows = await prisma.$queryRaw<{ LocCode: string }[]>`
-      SELECT LocCode FROM Tbl_UserLocAccess WHERE OwnerId = ${groupId} AND UPPER(Allow) = 'Y'
-    `;
-  }
-
-  const keys = decodeKeys(rows);
-  const locations = locRows.map((r) => String(r.LocCode).trim()).filter(Boolean);
+  const { profileCodes, keys, locations } = await resolveUserAccess(userId);
+  const known = knownKeys(keys);
+  const hasRows = known.size > 0 || locations.length > 0 || profileCodes.length > 0;
   return {
     ...empty,
-    source: keys.size ? source : "none",
-    keys,
+    source: profileCodes.length > 0 ? "profiles" : hasRows ? "custom" : "none",
+    profiles: profileCodes,
+    keys: known,
     locations,
-    has: (code: string, action = "ACCESS") => keys.has(`${code}.${action}`),
+    has: (code: string, action = "ACCESS") => known.has(`${code}.${action}`),
   };
 }
