@@ -6,6 +6,7 @@ import { newRobustPrisma } from "@/lib/prismaRobust";
 import { timeLabelFromValue } from "@/lib/legacyTime";
 import { sendAppointmentSMS } from "@/lib/sms";
 import { verifyAdminToken, ADMIN_COOKIE } from "@/lib/adminSession";
+import { superAdminUserId } from "@/lib/superAdmin";
 import { logActivity, maskPhoneForLog } from "@/lib/activityLog";
 import {
   composeBookingRemarks,
@@ -657,6 +658,7 @@ export async function GET(req: NextRequest) {
             RTRIM(WorkingLocID) AS WorkingLocID
           FROM tbl_userdetails
           WHERE Enable = 1
+            AND RTRIM(UserId) <> ${superAdminUserId()}
           ORDER BY UserName
         `,
         prisma.$queryRaw<RawTechnicianQualification[]>`

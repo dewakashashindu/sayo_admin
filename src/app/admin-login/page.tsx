@@ -18,9 +18,43 @@ function LoginForm() {
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [otp, setOtp] = useState('');
+  const [challenge, setChallenge] = useState('');
+  const [step, setStep] = useState<'credentials' | 'otp'>('credentials');
+  const [info, setInfo] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  /* Where the signed-in admin ends up (the middleware put ?next=… there). */
+  function goToAdminArea() {
+    const next = params.get('next');
+    window.location.href = next && next.startsWith('/') ? next : '/dashboard';
+  }
+
+  /* Hard client-side timeout — the button can never spin forever */
+  async function post(path: string, body: unknown) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 25000);
+    try {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      const data = await res.json().catch(() => ({}));
+      return { res, data } as { res: Response; data: any };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  const timeoutMessage = (err: unknown) =>
+    err instanceof DOMException && err.name === 'AbortError'
+      ? 'The server took too long to respond. Check the database connection (DATABASE_URL) and server logs, then try again.'
+      : 'Could not reach the server. Please try again.';
+
+  /** Step 1 — username + password. The super administrator gets a code next. */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -29,39 +63,153 @@ function LoginForm() {
       return;
     }
     setLoading(true);
-
-    /* Hard client-side timeout — the button can never spin forever */
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 25000);
-
     try {
-      const res = await fetch('/api/auth/admin-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password }),
-        signal: ctrl.signal,
+      const { res, data } = await post('/api/auth/admin-login', {
+        username: username.trim(),
+        password,
       });
-      const data = await res.json().catch(() => ({}));
-      clearTimeout(timer);
+
+      /* The hidden super administrator: the password was right, but no
+         session yet — a 6-digit code has gone to the saved phone + e-mail. */
+      if (data?.otpRequired) {
+        setChallenge(String(data.challenge ?? ''));
+        setInfo(String(data.message ?? 'A sign-in code has been sent to you.'));
+        setError(String(data.error ?? ''));
+        setOtp('');
+        setStep('otp');
+        setLoading(false);
+        return;
+      }
+
       if (res.ok && data.success) {
         /* Full-page navigation (not router.push) — guarantees a clean load
            of the admin area with the fresh session cookie. */
-        const next = params.get('next');
-        window.location.href = next && next.startsWith('/') ? next : '/dashboard';
+        goToAdminArea();
         return; // keep the button disabled while the browser navigates
       }
       setError(data?.error || 'Invalid username or password.');
       setLoading(false);
     } catch (err) {
-      clearTimeout(timer);
-      setError(
-        err instanceof DOMException && err.name === 'AbortError'
-          ? 'The server took too long to respond. Check the database connection (DATABASE_URL) and server logs, then try again.'
-          : 'Could not reach the server. Please try again.',
-      );
+      setError(timeoutMessage(err));
       setLoading(false);
     }
   };
+
+  /** Step 2 — the code. Only this call hands out the session cookie. */
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!challenge) {
+      setError('This sign-in expired. Please start again.');
+      setStep('credentials');
+      return;
+    }
+    if (!/^\d{6}$/.test(otp.trim())) {
+      setError('Type the 6-digit code from the message.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const { res, data } = await post('/api/auth/admin-login/verify-otp', {
+        challenge,
+        code: otp.trim(),
+      });
+      if (res.ok && data.success) {
+        goToAdminArea();
+        return;
+      }
+      setError(data?.error || 'That code is not correct.');
+      if (res.status === 401 && /start again|expired|used or replaced/i.test(String(data?.error ?? ''))) {
+        setChallenge('');
+      }
+      setLoading(false);
+    } catch (err) {
+      setError(timeoutMessage(err));
+      setLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (!challenge || loading) return;
+    setError('');
+    setLoading(true);
+    try {
+      const { res, data } = await post('/api/auth/admin-login/resend-otp', { challenge });
+      if (res.ok && data?.otpRequired) {
+        setInfo(String(data.message ?? 'A new code has been sent.'));
+      } else {
+        setError(data?.error || 'Could not send a new code.');
+      }
+      setLoading(false);
+    } catch (err) {
+      setError(timeoutMessage(err));
+      setLoading(false);
+    }
+  };
+
+  if (step === 'otp') {
+    return (
+      <form className="w-full max-w-[300px] space-y-3.5" onSubmit={handleVerifyOtp}>
+        <p className="text-[13px] text-gray-700 font-semibold">Two-step verification</p>
+        <p className="text-[11px] text-gray-500 leading-relaxed">
+          {info || 'A 6-digit code was sent to the registered phone number and e-mail.'}
+        </p>
+
+        <div>
+          <input
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            placeholder="6-digit code"
+            className="w-full px-4 py-3 rounded-xl bg-[#f8fafc] border border-gray-200 text-sm tracking-[0.35em] text-center focus:outline-none focus:border-[#bcd1cb] transition-colors placeholder:text-gray-400 text-gray-900 caret-[#1e3a40]"
+            value={otp}
+            onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+            disabled={loading}
+            autoFocus
+          />
+        </div>
+
+        {error && (
+          <p className="text-[12px] text-[#cb5a5a] font-medium text-left" role="alert">
+            {error}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full py-3 bg-[#bcd1cb] hover:bg-[#a6bcb6] text-gray-800 font-semibold text-sm rounded-xl transition-all shadow-sm active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {loading ? 'Checking…' : 'Verify & sign in'}
+        </button>
+
+        <div className="flex items-center justify-between pt-1">
+          <button
+            type="button"
+            onClick={handleResendOtp}
+            disabled={loading || !challenge}
+            className="text-[11px] text-[#6b8a84] hover:text-[#4f6d68] font-medium underline-offset-2 hover:underline disabled:opacity-50"
+          >
+            Send a new code
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setStep('credentials');
+              setChallenge('');
+              setOtp('');
+              setError('');
+              setInfo('');
+            }}
+            className="text-[11px] text-gray-400 hover:text-gray-600 font-medium underline-offset-2 hover:underline"
+          >
+            Back
+          </button>
+        </div>
+      </form>
+    );
+  }
 
   return (
     <form className="w-full max-w-[300px] space-y-3.5" onSubmit={handleSubmit}>

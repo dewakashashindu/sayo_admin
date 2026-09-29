@@ -14,6 +14,12 @@ const PUBLIC_API: { path: string; methods: string[] }[] = [
   { path: '/api/bookings',              methods: ['POST'] },
   { path: '/api/bookings/availability', methods: ['GET'] },
   { path: '/api/auth/admin-login',      methods: ['POST'] },
+  /* Step 2 of the super administrator's sign-in. Public on purpose: the caller
+     has no session yet — the signed challenge in the body is what proves the
+     password step already happened. Nothing is handed back without a valid,
+     unexpired code. */
+  { path: '/api/auth/admin-login/verify-otp', methods: ['POST'] },
+  { path: '/api/auth/admin-login/resend-otp', methods: ['POST'] },
   { path: '/api/auth/admin-logout',     methods: ['GET', 'POST'] },
   /* Customer (booking) authentication */
   { path: '/api/auth/login',                  methods: ['POST'] },

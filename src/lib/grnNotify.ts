@@ -1,5 +1,6 @@
 
 import { normalizeSmsPhone } from "./sms";
+import { isSuperAdminUserId } from "./superAdmin";
 
 export interface GrnNotifyFacts {
   grnNo: string;
@@ -102,6 +103,9 @@ export function notifyContacts(rows: StaffRow[], groups: GroupRow[] = []): Notif
     /* Enable is 1/0 in the table, true/false by the time Prisma has it. Only an
        explicit "no" is skipped — a row that does not carry the flag is kept. */
     if (row.Enable === false || row.Enable === 0) continue;
+
+    /* the hidden super administrator is not offered as a recipient */
+    if (isSuperAdminUserId(row.UserId)) continue;
 
     const rawPhone = trim(row.ContNo);
     if (!isMobileForSms(rawPhone)) continue;

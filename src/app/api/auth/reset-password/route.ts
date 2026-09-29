@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { isSuperAdminUserId } from "@/lib/superAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +29,10 @@ export async function POST(req: NextRequest) {
     const u = users[0];
     if (!u) return NextResponse.json({ success: false, error: "Invalid login name or OTP." }, { status: 400 });
     const userId = String(u.UserId).trim().slice(0, 10);
+    /* the hidden super administrator cannot be reset from here */
+    if (isSuperAdminUserId(userId)) {
+      return NextResponse.json({ success: false, error: "Invalid login name or OTP." }, { status: 400 });
+    }
 
     const rows = await prisma.$queryRaw<{ OtpHash: string; ExpiresAt: Date; Attempts: number }[]>`
       SELECT OtpHash, ExpiresAt, Attempts FROM Tbl_PswReset WHERE UserId = ${userId}

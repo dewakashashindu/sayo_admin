@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { superAdminUserId, superAdminGroupId } from "@/lib/superAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,7 +34,9 @@ export async function GET(req: NextRequest) {
         RTRIM(u.NIC) AS NIC, RTRIM(u.ContNo) AS ContNo, RTRIM(u.Email) AS Email,
         RTRIM(u.WorkingLocID) AS WorkingLocID, u.Enable AS Enable, RTRIM(u.Rmks) AS Rmks
       FROM tbl_userdetails u
-      WHERE ${q ? Prisma.sql`(LOWER(RTRIM(u.UserId)) LIKE ${like} OR LOWER(RTRIM(u.UserName)) LIKE ${like} OR LOWER(RTRIM(u.LogName)) LIKE ${like})` : Prisma.sql`1=1`}
+      WHERE RTRIM(u.UserId) <> ${superAdminUserId()}
+        AND RTRIM(u.GroupId) <> ${superAdminGroupId()}
+        AND ${q ? Prisma.sql`(LOWER(RTRIM(u.UserId)) LIKE ${like} OR LOWER(RTRIM(u.UserName)) LIKE ${like} OR LOWER(RTRIM(u.LogName)) LIKE ${like})` : Prisma.sql`1=1`}
       ORDER BY u.UserId
     `;
     return ok(rows.map((r) => ({

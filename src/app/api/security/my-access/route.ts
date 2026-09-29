@@ -5,6 +5,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { ADMIN_COOKIE, verifySessionToken } from "@/lib/adminSession";
 import { loadAccessForUser } from "@/lib/accessServer";
 import { ALL_ACCESS_NODES } from "@/lib/accessCatalog";
+import { prisma } from "@/lib/prisma";
+import { hasNeverLockedOutPower, allAccessKeys, isSuperAdmin } from "@/lib/superAdmin";
+
+/** Every enabled location — the super administrator is never branch-bound. */
+async function allLocationCodes(): Promise<string[]> {
+  try {
+    const rows = await prisma.$queryRaw<{ LocCode: string }[]>`
+      SELECT RTRIM(LocCode) AS LocCode FROM tbl_locationmaster WHERE Enable = 1
+    `;
+    return rows.map((r) => String(r.LocCode ?? "").trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,11 +31,18 @@ export async function GET(req: NextRequest) {
   }
   const bag = await loadAccessForUser(session.uid);
   let keys = [...bag.keys];
-  // Super-admin safety net: the built-in Administrator group is never gated
-  // out of anything (can never lock itself out of Access Profiles).
-  if (bag.groupId.trim().toUpperCase() === "GRP0000001") {
-    keys = ALL_ACCESS_NODES.flatMap((n) => n.actions.map((a) => `${n.code}.${a}`));
+  let locations = bag.locations;
+
+  // Never-locked-out roles: the hidden super administrator (by user id or by
+  // group id) and the built-in Administrator group. They get every key in the
+  // catalog and every enabled location, whatever the profile tables say — the
+  // profile can be wiped by accident, and this account must not be able to
+  // lock itself out of its own panel.
+  if (isSuperAdmin({ userId: bag.userId, groupId: bag.groupId }) || hasNeverLockedOutPower(bag.groupId)) {
+    keys = allAccessKeys();
+    locations = await allLocationCodes();
   }
+
   return NextResponse.json({
     success: true,
     data: {
@@ -32,7 +53,7 @@ export async function GET(req: NextRequest) {
       workingLocId: bag.workingLocId,
       source: bag.source,
       keys,
-      locations: bag.locations,
+      locations,
     },
   });
 }

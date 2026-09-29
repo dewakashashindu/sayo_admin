@@ -8,6 +8,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ALL_ACCESS_NODES, isKnownAccessKey } from "@/lib/accessCatalog";
 import { cipher, decipher } from "@/lib/accessCipher";
+import { isSuperAdminGroupId } from "@/lib/superAdmin";
+
+/* The super administrator's role has no editable profile — it is always all
+   permissions, all locations (see /api/security/my-access). */
+const hiddenGroup = (groupId: string) =>
+  NextResponse.json({ success: false, message: `Group ${groupId} was not found.` }, { status: 404 });
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,6 +62,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ groupId: s
     const { groupId: raw } = await ctx.params;
     const groupId = trim(raw).slice(0, 10);
     if (!groupId) return err("Group id is missing.");
+    if (isSuperAdminGroupId(groupId)) return hiddenGroup(groupId);
     await ensureTable();
     if (!(await groupExists(groupId))) return err(`Group ${groupId} was not found.`, 404);
 
@@ -89,6 +96,7 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ groupId: st
     const { groupId: raw } = await ctx.params;
     const groupId = trim(raw).slice(0, 10);
     if (!groupId) return err("Group id is missing.");
+    if (isSuperAdminGroupId(groupId)) return hiddenGroup(groupId);
     const body = (await req.json()) as {
       keys?: { screenCode?: unknown; actionCode?: unknown }[];
       locations?: unknown[];

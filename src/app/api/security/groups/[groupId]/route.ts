@@ -3,6 +3,11 @@
 // DELETE /api/security/groups/GRP0000001             → remove (blocks while users belong to it)
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { isSuperAdminGroupId } from "@/lib/superAdmin";
+
+/* The super administrator's role is not a group anybody can rename or delete. */
+const hiddenGroup = (groupId: string) =>
+  NextResponse.json({ success: false, message: `Group ${groupId} was not found.` }, { status: 404 });
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +27,7 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ groupId: st
     const body = (await req.json()) as { groupDes?: string };
     const groupDes = trim(body.groupDes);
     if (!groupId) return err("Group id is missing.");
+    if (isSuperAdminGroupId(groupId)) return hiddenGroup(groupId);
     if (!groupDes) return err("Type the group name first.");
 
     const dup = await prisma.$queryRaw<{ n: number }[]>`
@@ -45,6 +51,7 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ groupId
     const { groupId: raw } = await ctx.params;
     const groupId = trim(raw).slice(0, 10);
     if (!groupId) return err("Group id is missing.");
+    if (isSuperAdminGroupId(groupId)) return hiddenGroup(groupId);
 
     const used = await prisma.$queryRaw<{ n: number }[]>`
       SELECT COUNT(*) AS n FROM tbl_userdetails WHERE RTRIM(GroupId) = RTRIM(${groupId})

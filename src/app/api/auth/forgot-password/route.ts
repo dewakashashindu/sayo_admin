@@ -7,6 +7,8 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { normalizePhoneSriLanka, maskPhoneForUser, sendOtpSms } from "@/lib/sms";
+import { isSuperAdminUserId } from "@/lib/superAdmin";
+import { decryptContact } from "@/lib/secureContact";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,7 +65,12 @@ export async function POST(req: NextRequest) {
     const generic = "If that login name is registered, an OTP has gone out to its contact number.";
     if (!u || Number(u.Enable) !== 1) return NextResponse.json({ success: true, message: generic });
 
-    const phone = normalizePhoneSriLanka((u.ContNo ?? "").trim());
+    /* The hidden super administrator is never reset through this screen —
+       answer exactly as for an unknown login name. (If that ever changes, its
+       ContNo is ciphertext and has to go through decryptContact first.) */
+    if (isSuperAdminUserId(u.UserId)) return NextResponse.json({ success: true, message: generic });
+
+    const phone = normalizePhoneSriLanka(decryptContact(u.ContNo).trim());
     if (!phone) {
       return NextResponse.json({
         success: false,

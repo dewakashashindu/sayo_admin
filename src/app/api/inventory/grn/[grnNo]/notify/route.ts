@@ -19,6 +19,7 @@ import {
   keyVal,
 } from "@/lib/inventoryServer";
 import { invTrim } from "@/lib/inventoryServer";
+import { isSuperAdminUserId } from "@/lib/superAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -157,6 +158,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ grnNo: str
     let phone = typedTo;
     let recipientName = "";
     if (userId) {
+      if (isSuperAdminUserId(userId)) {
+        throw new InvError(`There is no staff member “${userId}” to message.`, 404);
+      }
       const [person] = await prisma.$queryRaw<{ UserName: string | null; ContNo: string | null }[]>`
         SELECT RTRIM(UserName) AS UserName, RTRIM(ContNo) AS ContNo
         FROM tbl_userdetails WHERE ${keySql("UserId")} = ${keyVal(userId)} LIMIT 1

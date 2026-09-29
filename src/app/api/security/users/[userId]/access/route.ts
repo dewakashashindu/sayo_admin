@@ -7,6 +7,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ALL_ACCESS_NODES, isKnownAccessKey } from "@/lib/accessCatalog";
 import { cipher, decipher } from "@/lib/accessCipher";
+import { isSuperAdminUserId } from "@/lib/superAdmin";
+
+/* The hidden super administrator has no editable profile — the API pretends
+   the id does not exist. */
+const hiddenUser = (userId: string) =>
+  NextResponse.json({ success: false, message: `User ${userId} was not found.` }, { status: 404 });
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,6 +86,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ userId: st
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
     if (!userId) return err("User id is missing.");
+    if (isSuperAdminUserId(userId)) return hiddenUser(userId);
     await ensureTables();
     await ensureLocTable();
     const user = await getUser(userId);
@@ -123,6 +130,7 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
     const { userId: raw } = await ctx.params;
     const userId = trim(raw).slice(0, 10);
     if (!userId) return err("User id is missing.");
+    if (isSuperAdminUserId(userId)) return hiddenUser(userId);
     const body = (await req.json()) as {
       keys?: { screenCode?: unknown; actionCode?: unknown }[];
       locations?: unknown[];

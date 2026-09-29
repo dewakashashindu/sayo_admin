@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { superAdminGroupId } from "@/lib/superAdmin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +26,8 @@ export async function GET(req: NextRequest) {
       SELECT RTRIM(g.GroupId) AS GroupId, RTRIM(g.GroupDes) AS GroupDes,
         (SELECT COUNT(*) FROM tbl_userdetails u WHERE RTRIM(u.GroupId)=RTRIM(g.GroupId)) AS Users
       FROM tbl_usergroups g
-      WHERE ${q ? Prisma.sql`(RTRIM(g.GroupId) LIKE ${like} OR RTRIM(g.GroupDes) LIKE ${like})` : Prisma.sql`1=1`}
+      WHERE RTRIM(g.GroupId) <> ${superAdminGroupId()}
+        AND ${q ? Prisma.sql`(RTRIM(g.GroupId) LIKE ${like} OR RTRIM(g.GroupDes) LIKE ${like})` : Prisma.sql`1=1`}
       ORDER BY g.GroupId
     `.catch(() => [] as { GroupId: string; GroupDes: string; Users: number }[]);
     return ok(rows.map((r) => ({ groupId: trim(r.GroupId), groupDes: trim(r.GroupDes), users: Number(r.Users || 0) })));
