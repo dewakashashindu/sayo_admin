@@ -9,7 +9,12 @@ import { useMyAccess } from '@/lib/useMyAccess';
 import AccessLoading from '@/components/AccessLoading';
 import NoAccessHome from '@/components/NoAccessHome';
 
-interface AdminUser    { name: string; email: string; }
+interface FilterOption { Code: string; Des: string; }
+interface DashboardFilters {
+  locations:    { LocCode: string; LocDes: string }[];
+  categories:   FilterOption[];
+  bookingTypes: FilterOption[];
+}
 interface ServiceItem  { name: string; price: string; duration: string; category: string; }
 interface ProviderItem { name: string; role: string; }
 interface Booking {
@@ -32,6 +37,7 @@ interface ActivityEntry {
 interface DashboardData {
   date: string; stats: DashboardStats; providers: string[];
   timeSlots: string[]; bookings: Booking[]; activities?: ActivityEntry[];
+  filters?: DashboardFilters;
 }
 interface ProductStock {
   id: number; name: string; category: string; stock: number;
@@ -862,7 +868,11 @@ function NotifDropdown({ onScrollToLow, onClose }: { onScrollToLow:()=>void; onC
    the link for the same reason). */
 function DashboardInner() {
   const router = useRouter();
-  const [admin,       setAdmin]       = useState<AdminUser|null>(null);
+  /* who is signed in — the header and the greeting print the person's own name.
+     (It used to be a hard-coded “MR. SAYO” read out of a localStorage key that
+     nothing ever wrote, so every account saw the same wrong name.) */
+  const access = useMyAccess();
+  const admin  = { name: access.displayName, email: '' };
   const [navKey,      setNavKey]      = useState('dashboard');
   const [viewTab,     setViewTab]     = useState<'schedule'|'bookings'>('schedule');
   const [period,      setPeriod]      = useState<'today'|'week'|'month'>('today');
@@ -876,32 +886,54 @@ function DashboardInner() {
   const [notifOpen,   setNotifOpen]   = useState(false);
   const [bellKey,     setBellKey]     = useState(0);
 
+  /* The three boxes above the schedule. Their lists come from the shop's own
+     tables (branches, service categories, booking types) and picking one really
+     filters the day — cards, schedule and bookings tab alike. */
+  const [filterLoc,  setFilterLoc]  = useState('ALL');
+  const [filterCat,  setFilterCat]  = useState('ALL');
+  const [filterMode, setFilterMode] = useState('ALL');
+  const [filters,    setFilters]    = useState<DashboardFilters>({ locations: [], categories: [], bookingTypes: [] });
+
   const searchWrapRef = useRef<HTMLDivElement>(null);
   const notifRef      = useRef<HTMLDivElement>(null);
   const lowStockRef   = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('admin');
-      setAdmin(raw ? JSON.parse(raw) : { name: 'MR. SAYO', email: 'admin@sayo.com' });
-    } catch {
-      setAdmin({ name: 'MR. SAYO', email: 'admin@sayo.com' });
-    }
-  }, []);
-
-  useEffect(() => {
     let active = true;
     setLoadError(false);
-    fetch(`/api/dashboard?date=${encodeURIComponent(date)}`)
+    const params = new URLSearchParams({ date });
+    if (filterLoc  !== 'ALL') params.set('locCode', filterLoc);
+    if (filterCat  !== 'ALL') params.set('catCode', filterCat);
+    if (filterMode !== 'ALL') params.set('mode',    filterMode);
+
+    fetch(`/api/dashboard?${params.toString()}`)
       .then(r => r.json())
       .then(j => {
         if (!active) return;
-        if (j?.success) setData({ ...emptyData(date), ...j, activities: j.activities || [] });
-        else setLoadError(true);
+        if (j?.success) {
+          setData({ ...emptyData(date), ...j, activities: j.activities || [] });
+          /* Remember the lists; keep the last good ones if a response has none
+             (an older server, or a shop without the category table). */
+          if (j.filters) {
+            setFilters({
+              locations:    j.filters.locations    ?? [],
+              categories:   j.filters.categories   ?? [],
+              bookingTypes: j.filters.bookingTypes ?? [],
+            });
+          }
+        } else setLoadError(true);
       })
       .catch(() => { if (active) setLoadError(true); });
     return () => { active = false; };
-  }, [date]);
+  }, [date, filterLoc, filterCat, filterMode]);
+
+  /* A person who may only use ONE branch should land on it, the way the
+     appointments screen does — “All Locations” over a single outlet is noise. */
+  useEffect(() => {
+    if (filterLoc === 'ALL' && filters.locations.length === 1) {
+      setFilterLoc(filters.locations[0].LocCode);
+    }
+  }, [filters.locations, filterLoc]);
 
   useEffect(() => {
     function h(e: MouseEvent) {
@@ -949,12 +981,16 @@ function DashboardInner() {
     let active = true;
     const from = rangeDates[0];
     const to = rangeDates[rangeDates.length - 1];
-    fetch(`/api/dashboard?from=${from}&to=${to}`)
+    const params = new URLSearchParams({ from, to });
+    if (filterLoc  !== 'ALL') params.set('locCode', filterLoc);
+    if (filterCat  !== 'ALL') params.set('catCode', filterCat);
+    if (filterMode !== 'ALL') params.set('mode',    filterMode);
+    fetch(`/api/dashboard?${params.toString()}`)
       .then(r => r.json())
       .then(j => { if (!active) return; if (j?.success) { setRangeGrid(j.counts || {}); setRangeProviders(j.providers || []); } })
       .catch(() => {});
     return () => { active = false; };
-  }, [rangeDates, period]);
+  }, [rangeDates, period, filterLoc, filterCat, filterMode]);
 
   /* Recent Activities = today's bookings + activity log (SMS results, edits) */
   const feed = useMemo(() => {
@@ -1000,8 +1036,8 @@ function DashboardInner() {
     return results.slice(0, 9);
   }, [search, data]);
 
-  const name    = (admin?.name || 'MR. SAYO').toUpperCase();
-  const initial = name.replace('MR. ','').charAt(0);
+  const name    = (admin?.name || 'Admin').toUpperCase();
+  const initial = (access.initial || name.charAt(0) || 'A').toUpperCase();
   const revenue = data.stats.revenueOnline + data.stats.revenueWalkin;
 
   const PAGE  = '#c2d4d4';
@@ -1156,9 +1192,18 @@ function DashboardInner() {
                 >
                   {/* Filters */}
                   <div style={{display:'flex',gap:9,padding:'13px 15px 0',flexWrap:'wrap',flexShrink:0}}>
-                    <select className="f-sel" defaultValue="ALL SERVICES"><option>ALL SERVICES</option><option>HAIR</option><option>NAILS</option><option>MASSAGE</option></select>
-                    <select className="f-sel" defaultValue="COLOMBO"><option>COLOMBO</option><option>KANDY</option><option>GALLE</option></select>
-                    <select className="f-sel" defaultValue="ALL MODE"><option>ALL MODE</option><option>PRE-BOOKED</option><option>WALK-IN</option></select>
+                    <select className="f-sel" value={filterCat} onChange={e => setFilterCat(e.target.value)} title="Service category">
+                      <option value="ALL">All Services</option>
+                      {filters.categories.map(c => <option key={c.Code} value={c.Code}>{c.Des}</option>)}
+                    </select>
+                    <select className="f-sel" value={filterLoc} onChange={e => setFilterLoc(e.target.value)} title="Branch">
+                      <option value="ALL">All Locations</option>
+                      {filters.locations.map(l => <option key={l.LocCode} value={l.LocCode}>{l.LocDes}</option>)}
+                    </select>
+                    <select className="f-sel" value={filterMode} onChange={e => setFilterMode(e.target.value)} title="Booking mode">
+                      <option value="ALL">All Modes</option>
+                      {filters.bookingTypes.map(t => <option key={t.Code} value={t.Code}>{t.Des}</option>)}
+                    </select>
                   </div>
 
                   {/* Date / Range nav */}
@@ -1173,6 +1218,15 @@ function DashboardInner() {
                         </div>
                       )
                     }
+                    {(filterLoc !== 'ALL' || filterCat !== 'ALL' || filterMode !== 'ALL') && (
+                      <button
+                        onClick={() => { setFilterLoc('ALL'); setFilterCat('ALL'); setFilterMode('ALL'); }}
+                        title="Show everything again"
+                        style={{background:'none',border:'none',color:'#1e3a40',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:"'Inter',sans-serif",padding:'4px 6px',textDecoration:'underline'}}
+                      >
+                        Clear filters
+                      </button>
+                    )}
                     <div style={{flex:1}}/>
                     {/* Period toggle */}
                     <div style={{background:'#ccd8d8',borderRadius:9,padding:'3px 4px',display:'flex',gap:2,flexShrink:0}}>

@@ -8,6 +8,7 @@ import React, {
   useEffect,
   useCallback,
 } from "react";
+import UserName from "@/components/UserName";
 import { useRouter } from "next/navigation";
 import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 import AdminSidebar, { SIDEBAR_CSS } from "@/components/AdminSidebar";
@@ -3186,7 +3187,7 @@ function ItemMasterPageContent() {
               }}
             >
               <span style={{ fontSize: 14, fontWeight: 500, color: "#1f2937" }}>
-                MR. SAYO
+                <UserName />
               </span>
               <IChevD />
             </div>

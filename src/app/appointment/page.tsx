@@ -8,6 +8,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import UserName from "@/components/UserName";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
 import { useMyAccess } from "@/lib/useMyAccess";
@@ -3549,7 +3550,7 @@ export default function AppointmentsPage() {
                   setNotificationOpen(false);
                 }}
               >
-                MR. SAYO <Ico.ChevD />
+                <UserName /> <Ico.ChevD />
               </div>
               <div
                 style={{

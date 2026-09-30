@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import UserName from "@/components/UserName";
 import { useRouter } from 'next/navigation';
 import MasterPrintSheet, { MASTER_PRINT_CSS } from '@/components/MasterPrintSheet';
 import AdminSidebar, { SIDEBAR_CSS } from '@/components/AdminSidebar';
@@ -537,7 +538,7 @@ function CategoriesPageContent() {
               <IBell />
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-              <span style={{ fontSize: 14, fontWeight: 500, color: '#1f2937' }}>MR. SAYO</span>
+              <span style={{ fontSize: 14, fontWeight: 500, color: '#1f2937' }}><UserName /></span>
               <IChevD />
             </div>
             <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#5a8a92,#3a6a72)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer', flexShrink: 0 }}>

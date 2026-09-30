@@ -16,6 +16,7 @@
 //     password changed, user deleted …) → drop everything and go to the sign-in
 //     screen instead of showing a half-working panel.
 import { useEffect, useMemo, useState } from "react";
+import { displayNameOf, initialOf } from "@/lib/displayName";
 
 export interface MyAccess {
   loaded: boolean;
@@ -25,12 +26,19 @@ export interface MyAccess {
   locRight: string[];                  // role-granted locations
   workLoc: string;                     // location assigned in user details
   allowedLocCodes: Set<string>;        // workLoc ∪ locRight (the union)
+  userId: string;                      // tbl_userdetails.UserId
+  loginName: string;                   // what they signed in with
+  displayName: string;                 // the name the header prints (no MR./MRS.)
+  initial: string;                     // the letter in the avatar
 }
 
 interface AccessPayload {
   keys: string[];
   locations: string[];
   workingLocId: string;
+  userId: string;
+  name: string;        // the person's own name
+  userName: string;    // the login name
 }
 
 /** The old localStorage key — removed on sight so no stale profile survives. */
@@ -70,22 +78,32 @@ async function loadAccess(): Promise<AccessPayload | null> {
 
       const json = (await res.json()) as {
         success?: boolean;
-        data?: { keys?: string[]; locations?: string[]; workingLocId?: string };
+        data?: {
+          keys?: string[];
+          locations?: string[];
+          workingLocId?: string;
+          userId?: string;
+          name?: string;
+          userName?: string;
+        };
       };
       if (!res.ok || !json?.success || !json.data) {
         /* A refusal/failure must NOT keep the old answer — lock the UI. */
-        cache = { keys: [], locations: [], workingLocId: "" };
+        cache = { keys: [], locations: [], workingLocId: "", userId: "", name: "", userName: "" };
         return cache;
       }
       cache = {
         keys: json.data.keys ?? [],
         locations: json.data.locations ?? [],
         workingLocId: json.data.workingLocId ?? "",
+        userId: json.data.userId ?? "",
+        name: json.data.name ?? "",
+        userName: json.data.userName ?? "",
       };
       return cache;
     } catch {
       /* network failure: lock rather than trust whatever was there before */
-      cache = { keys: [], locations: [], workingLocId: "" };
+      cache = { keys: [], locations: [], workingLocId: "", userId: "", name: "", userName: "" };
       return cache;
     } finally {
       inflight = null;
@@ -150,6 +168,13 @@ export function useMyAccess(): MyAccess {
     const has = (code: string, action = "ACCESS") =>
       loaded && !revoked && perms.has(`${code}.${action}`);
     void version;
-    return { loaded, enforce: loaded, has, perms, locRight, workLoc, allowedLocCodes };
+    const displayName = displayNameOf(cache?.name, cache?.userName);
+    return {
+      loaded, enforce: loaded, has, perms, locRight, workLoc, allowedLocCodes,
+      userId: cache?.userId ?? "",
+      loginName: cache?.userName ?? "",
+      displayName,
+      initial: initialOf(displayName),
+    };
   }, [loaded, version]);
 }

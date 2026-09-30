@@ -644,11 +644,6 @@ function AssignProfilesContent() {
                     </>
                   )}
 
-                  <div className="note">
-                    <b>Save</b> writes this person&apos;s own rows into the database table the panel reads
-                    (<code>Tbl_UserAuthorization</code>): one row per screen, one per branch, and one per profile they
-                    hold. Removing a profile above and pressing Save takes those rights away at once.
-                  </div>
                 </>
               )}
             </section>
@@ -747,8 +742,6 @@ const CSS = `
   .loc-chip:hover{border-color:#1e3a40}
   .loc-chip.on{background:#1e3a40;border-color:#1e3a40;color:#fff}
   .loc-chip .tick{display:inline-flex;width:13px;height:13px;border-radius:4px;border:1.5px solid rgba(30,58,64,0.4);background:#fff;color:#1e3a40;font-size:9px;align-items:center;justify-content:center;font-weight:900}
-  .note{font-size:11.8px;color:#7d8f94;line-height:1.65}
-  .note code{font-family:ui-monospace,monospace;background:#e3ecec;padding:1px 5px;border-radius:5px}
   .modal-back{position:fixed;inset:0;background:rgba(12,28,32,.45);display:flex;align-items:center;justify-content:center;z-index:120}
   .modal{background:#eef4f4;border-radius:16px;width:min(680px,92vw);max-height:82vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,.35);overflow:hidden}
   .modal-head{padding:16px 20px;border-bottom:1px solid rgba(30,58,64,.12)}

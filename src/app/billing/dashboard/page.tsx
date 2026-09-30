@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import UserName from "@/components/UserName";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
 import { useMyAccess } from "@/lib/useMyAccess";
@@ -336,7 +337,7 @@ export default function BillingDashboardPage() {
                 S
               </div>
               <div className="hdr-name" style={{ display: "flex", flexDirection: "column", lineHeight: 1.25 }}>
-                <span style={{ color: "#1f2937", fontSize: 14, fontWeight: 700 }}>MR. SAYO</span>
+                <span style={{ color: "#1f2937", fontSize: 14, fontWeight: 700 }}><UserName /></span>
                 <span style={{ color: "#6b7280", fontSize: 11 }}>Billing</span>
               </div>
             </div>

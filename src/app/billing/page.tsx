@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
+import UserName from "@/components/UserName";
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 /* Payment methods + split-payment maths live in one shared module so the bill
@@ -1212,7 +1213,7 @@ function BillingContent() {
               onMouseLeave={e=>(e.currentTarget.style.background='transparent')}
             ><IBell/></button>
             <div className="hdr-name" style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer'}}>
-              <span style={{fontSize:14,fontWeight:500,color:'#1f2937'}}>MR. SAYO</span><IChevD/>
+              <span style={{fontSize:14,fontWeight:500,color:'#1f2937'}}><UserName /></span><IChevD/>
             </div>
             <div style={{width:34,height:34,borderRadius:'50%',background:'linear-gradient(135deg,#5a8a92,#3a6a72)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontWeight:700,fontSize:14,cursor:'pointer',flexShrink:0}}>S</div>
           </header>

@@ -8,7 +8,9 @@ import { prisma } from '@/lib/prisma';
 import { stripBookingSchedule } from '@/lib/bookingSchedule';
 import { minutesFromRemarks, minutesFromValue } from '@/lib/legacyTime';
 import { BOOKING_SERVICE_DETAIL_FROM } from '@/lib/bookingReadModel';
-import { locationScopeForRequest } from "@/lib/locationScope";
+import { locationScopeForRequest, foreignLocation, locationDeniedMessage } from "@/lib/locationScope";
+import { resolveLegacyColumn, resolveLegacyTable } from "@/lib/legacyColumns";
+import { stripTitle } from "@/lib/displayName";
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -95,6 +97,44 @@ export async function GET(req: NextRequest) {
     const fromDate = isRange ? (from as string) : date;
     const toDate = isRange ? (to as string) : date;
 
+    /* The three filter boxes above the schedule. Their lists are the shop's own
+       reference tables — the same ones the appointments screen uses — and the
+       branch list is narrowed to the branches this person may use, so the box
+       can never offer another outlet. */
+    const ALL = (v: string | null) => {
+      const t = (v ?? '').trim();
+      return !t || t.toUpperCase() === 'ALL' ? '' : t;
+    };
+    const wantLoc  = ALL(searchParams.get('locCode'));
+    const wantCat  = ALL(searchParams.get('catCode'));
+    const wantMode = ALL(searchParams.get('mode'));
+
+    if (wantLoc) {
+      const bad = foreignLocation(scope, [wantLoc]);
+      if (bad) {
+        return NextResponse.json(
+          { success: false, message: locationDeniedMessage(bad) },
+          { status: 403 },
+        );
+      }
+    }
+
+    /* tbl_bookingtypes is spelled differently from shop to shop — the repo's
+       Prisma model even carries the old “BooikingTypeID” typo. Ask the database
+       which spelling this one uses once, then use it. */
+    const bookingTypeIdCol =
+      (await resolveLegacyColumn('tbl_bookingtypes', ['BooikingTypeID', 'BookingTypeID'])) ??
+      'BooikingTypeID';
+
+    /* The same table is written `tbl_LocationMaster` in one place and
+       `tbl_locationmaster` in another — MySQL on Linux treats those as two
+       different tables. Ask the database for the real names once. */
+    const [locationTable, categoryTable, bookingTypeTable] = await Promise.all([
+      resolveLegacyTable('tbl_locationmaster'),
+      resolveLegacyTable('tbl_itemcategory1'),
+      resolveLegacyTable('tbl_bookingtypes'),
+    ]);
+
         const rows = await prisma.$queryRaw<RawRow[]>`
       SELECT
         RTRIM(h.BookingID)        AS BookingID,
@@ -121,25 +161,61 @@ export async function GET(req: NextRequest) {
       ORDER BY h.BookingDate ASC
     `;
 
-        const visibleRows = rows.filter((r) => mayUse(r.LocCode));
+        let visibleRows = rows.filter((r) => mayUse(r.LocCode));
+    /* the branch box: one branch chosen means only that branch's work */
+    if (wantLoc) {
+      visibleRows = visibleRows.filter(
+        (r) => String(r.LocCode ?? '').trim().toUpperCase() === wantLoc.toUpperCase(),
+      );
+    }
     const cusCodes = [...new Set(visibleRows.map(r => (r.CusCode || '').trim()).filter(Boolean))];
     const locCodes = [...new Set(visibleRows.map(r => (r.LocCode || '').trim()).filter(Boolean))];
 
-    const [customers, locations] = await Promise.all([
+    const [customers, locations, branchList, categoryList, bookingTypeList] = await Promise.all([
       cusCodes.length
         ? prisma.tbl_CustomerMaster.findMany({ where: { CusCode: { in: cusCodes } }, select: { CusCode: true, CusName: true, Gender: true } })
         : Promise.resolve([] as { CusCode: string; CusName: string; Gender: string | null }[]),
       locCodes.length
         ? prisma.tbl_LocationMaster.findMany({ where: { LocCode: { in: locCodes } }, select: { LocCode: true, LocDes: true } })
         : Promise.resolve([] as { LocCode: string; LocDes: string }[]),
+      /* every branch this person may pick (not only the ones that happen to
+         have a booking today), scope first */
+      prisma
+        .$queryRaw<{ LocCode: string; LocDes: string }[]>`
+          SELECT RTRIM(LocCode) AS LocCode, RTRIM(LocDes) AS LocDes
+          FROM ${Prisma.raw('`' + locationTable.replace(/[^A-Za-z0-9_]/g, '') + '`')}
+          WHERE Enable = 1
+          ORDER BY LocDes
+        `
+        .then((rows) => rows.filter((r) => mayUse(r.LocCode)))
+        .catch(() => [] as { LocCode: string; LocDes: string }[]),
+      prisma
+        /* Code / Des, the same shape as the booking-type list below, so the
+           screen can render both boxes with one piece of code. */
+        .$queryRaw<{ Code: string; Des: string }[]>`
+          SELECT RTRIM(CatCode) AS Code, RTRIM(CatDes) AS Des
+          FROM ${Prisma.raw('`' + categoryTable.replace(/[^A-Za-z0-9_]/g, '') + '`')}
+          WHERE Enable = 1
+          ORDER BY CatDes
+        `
+        .catch(() => [] as { Code: string; Des: string }[]),
+      prisma
+        .$queryRawUnsafe<{ Code: string; Des: string }[]>(
+          `SELECT RTRIM(${bookingTypeIdCol}) AS Code, RTRIM(BookingTypeDes) AS Des
+             FROM \`${bookingTypeTable.replace(/[^A-Za-z0-9_]/g, '')}\`
+            WHERE Enabel = 1
+            ORDER BY BookingTypeDes`,
+        )
+        .catch(() => [] as { Code: string; Des: string }[]),
     ]);
 
     const cusMap = new Map(customers.map(c => [c.CusCode.trim(), c]));
     const locMap = new Map(locations.map(l => [l.LocCode.trim(), l.LocDes.trim()]));
 
         type B = {
-      BookingId: string; Location: string; ClientName: string; Gender: string;
+      BookingId: string; Location: string; LocCode: string; ClientName: string; Gender: string;
       BookingDate: string; TimeSlot: string; Status: string; BookingMode: string;
+      BookingTypeID: string;
       Categories: string; SpecialNotes: string | null; CreatedAt: string;
       TotalPrice: number; TotalDuration: number;
       services: { name: string; price: string; duration: string; category: string }[];
@@ -169,6 +245,8 @@ export async function GET(req: NextRequest) {
             : minutesFromRemarks(r.Remarks) ?? -1;
         b = {
           BookingId: (r.BookingID || '').trim(),
+          LocCode: (r.LocCode || '').trim(),
+          BookingTypeID: btype,
           Location: locMap.get((r.LocCode || '').trim()) || (r.LocCode || '').trim(),
           ClientName: cusMap.get((r.CusCode || '').trim())?.CusName || 'Customer',
           Gender: cusMap.get((r.CusCode || '').trim())?.Gender || '',
@@ -205,7 +283,9 @@ export async function GET(req: NextRequest) {
       });
       const tech = (r.TechID || '').trim();
       if (tech && tech !== '0') {
-        const name = (r.TechName || '').trim() || tech;
+        /* the column header above a stylist's lane is the stylist's name, not
+           their title: “MR. KAMAL PERERA” reads as KAMAL PERERA */
+        const name = stripTitle((r.TechName || '').trim()) || tech;
         if (!b.providers.some(p => p.name === name)) b.providers.push({ name, role: 'Staff' });
       }
     }
@@ -215,7 +295,20 @@ export async function GET(req: NextRequest) {
       b.Categories = [...new Set(b.services.map(s => s.category).filter(Boolean))].join(', ');
     }
 
-    const all = [...byKey.values()];
+    /* The service box filters on the service's CATEGORY (tbl_itemcategory1 —
+       the same list the appointments screen calls “All Services”), the mode box
+       on the booking's type (tbl_bookingtypes). A booking survives when ANY of
+       its services carries the chosen category, which is what a person expects
+       when they pick “HAIR” and the guest also had a manicure. */
+    const matchesFilters = (b: { Categories: string; BookingTypeID: string }) => {
+      if (wantCat && !b.Categories.split(',')
+        .map((c) => c.trim().toUpperCase())
+        .includes(wantCat.toUpperCase())) return false;
+      if (wantMode && b.BookingTypeID.trim().toUpperCase() !== wantMode.toUpperCase()) return false;
+      return true;
+    };
+
+    const all = [...byKey.values()].filter(matchesFilters);
     const dayBookings = all
       .filter(b => b.BookingDate === date)
       .sort((a, b) => a.startMin - b.startMin || a.CreatedAt.localeCompare(b.CreatedAt));
@@ -265,7 +358,7 @@ export async function GET(req: NextRequest) {
       .then(list =>
         list.map(a => ({
           id: a.id,
-          actor: a.adminUsername.trim(),
+          actor: stripTitle(a.adminUsername.trim()),
           section: a.section.trim(),
           action: a.action,
           timestamp: a.timestamp.toISOString(),
@@ -281,6 +374,17 @@ export async function GET(req: NextRequest) {
       timeSlots: buildTimeSlots(),
       bookings: dayBookings,
       activities,
+      /* the boxes above the schedule: what may be picked, and what is picked */
+      filters: {
+        locations:    branchList,
+        categories:   categoryList,
+        bookingTypes: bookingTypeList,
+      },
+      applied: {
+        locCode: wantLoc,
+        catCode: wantCat,
+        mode: wantMode,
+      },
     });
   } catch (error) {
     console.error('[ADMIN_DASHBOARD_API_ERROR]', error);

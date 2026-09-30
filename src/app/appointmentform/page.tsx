@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo, Suspense } from "react";
+import UserName from "@/components/UserName";
 import { useMyAccess } from "@/lib/useMyAccess";
 import { logoutAdmin } from "@/lib/logout";
 import AccessLoading from "@/components/AccessLoading";
@@ -4715,7 +4716,7 @@ function WalkInPage() {
               }}
             >
               <span style={{ fontSize: 14, fontWeight: 500, color: "#1f2937" }}>
-                MR. SAYO
+                <UserName />
               </span>
               <Ico.ChevD />
             </div>
