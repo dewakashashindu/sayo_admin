@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertLocationAllowed } from "@/lib/locationScope";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
@@ -53,6 +54,8 @@ export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
     const locCode = trim(sp.get("locCode"));
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const status = trim(sp.get("status")).toLowerCase();
     const type = trim(sp.get("type")).toLowerCase();
     const q = trim(sp.get("q"));
@@ -148,6 +151,8 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as Record<string, unknown>;
 
     const locCodeRaw = invId(body.locCode, "Location", 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCodeRaw);
     const poNoRaw = trim(body.poNo);
     const supInvNo = trim(body.supInvNo).slice(0, 20);
     const grnDate = invDateField(body.grnDate ?? new Date().toISOString().slice(0, 10), "GRN date");
@@ -161,6 +166,8 @@ export async function POST(req: NextRequest) {
 
     const saved = await prisma.$transaction(async (tx) => {
       const locCode = await findLocation(tx, locCodeRaw);
+      /* branch guard — only a location this caller was given */
+      await assertLocationAllowed(req, locCode);
       if (!locCode) throw new InvError(`Unknown location “${locCodeRaw}”.`, 400);
 
             let poNo = "";

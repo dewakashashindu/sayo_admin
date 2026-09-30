@@ -1,4 +1,5 @@
 // POST /api/inventory/supplier-return/:srnNo/confirm  body:{ locCode }
+import { assertLocationAllowed } from "@/lib/locationScope";
 // Confirms a pending SRN: updates tbl_grndetails RET* cumulatively, deducts StockBalance,
 // writes Tbl_TxnMovement. Multiple returns against same GRN are allowed — remaining is GRNQty-RETQTY.
 import { NextRequest, NextResponse } from 'next/server';
@@ -23,6 +24,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const { srnNo: raw } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const locCode = invId(body.locCode, 'Location', 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const srnNo = invId(raw, 'SRN number', 15);
     const result = await prisma.$transaction(async (tx) => {
       const head = await tx.$queryRaw<{ SRNNO: string; Confirmed: string; SupID: string; NetTotal: number }[]>`SELECT RTRIM(SRNNO) AS SRNNO, UPPER(Confirmed) AS Confirmed, RTRIM(SupID) AS SupID, NetTotal FROM tbl_srnheader WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('SRNNO')}=${keyVal(srnNo)} FOR UPDATE`;

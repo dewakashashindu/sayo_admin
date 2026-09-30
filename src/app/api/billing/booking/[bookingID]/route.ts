@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { locationGuard } from "@/lib/locationScope";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { timeLabelFromValue } from "@/lib/legacyTime";
@@ -113,7 +114,7 @@ function isBilled(value: Date | string | null): boolean {
   return time > Date.parse("1900-01-02T00:00:00Z");
 }
 
-export async function GET(_req: NextRequest, { params }: Ctx) {
+export async function GET(req: NextRequest, { params }: Ctx) {
   try {
     const bookingID = trim(decodeURIComponent((await params).bookingID));
     if (!bookingID) {
@@ -154,6 +155,12 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     }
 
     const locCode = trim(header.LocCode);
+    /* branch guard — the booking's location must be one this caller was given */
+    {
+      const stop = await locationGuard(req, locCode);
+      if (stop) return stop;
+    }
+
 
     /* The booking detail rows are read WITHOUT the item-master join on purpose:
        a join on the item code returns the same detail row once per matching

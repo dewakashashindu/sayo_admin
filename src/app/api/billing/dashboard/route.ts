@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { timeLabelFromValue } from "@/lib/legacyTime";
@@ -9,6 +9,7 @@ import {
   type ItemCodeIndex,
 } from "@/lib/itemCode";
 import { describeDbTarget } from "@/lib/dbHealth";
+import { locationScopeForRequest } from "@/lib/locationScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,9 +84,18 @@ function modeFromConfirmationType(raw: string): "walkin" | "pre_booked" {
   return "pre_booked";
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const headers = await prisma.$queryRaw<HeaderRow[]>`
+    /* branch scope — the billing dashboard lists the branches this person was
+       given (their own + the ones ticked on their access profile). */
+    const resolvedScope = await locationScopeForRequest(req);
+    if (!resolvedScope.ok) return resolvedScope.response;
+    const scope = resolvedScope.scope;
+    const mayUse = (code: unknown) =>
+      scope.unlimited ||
+      [...scope.allowed].some((c) => c.toUpperCase() === String(code ?? "").trim().toUpperCase());
+
+    const headers = (await prisma.$queryRaw<HeaderRow[]>`
       SELECT
         RTRIM(h.BookingID)        AS BookingID,
         RTRIM(h.LocCode)          AS LocCode,
@@ -105,7 +115,7 @@ export async function GET() {
         AND (h.BillingTime IS NULL OR h.BillingTime <= '1900-01-01 00:00:00')
       ORDER BY h.TxnDateTime DESC
       LIMIT 200
-    `;
+    `).filter((r) => mayUse(r.LocCode));
 
     if (headers.length === 0) {
       return NextResponse.json({ success: true, data: [] });

@@ -37,7 +37,8 @@ export async function GET(req: NextRequest) {
     }[]>`
       SELECT RTRIM(u.UserId) AS UserId, RTRIM(u.LogName) AS LogName, RTRIM(u.UserName) AS UserName,
         RTRIM(u.GroupId) AS GroupId,
-        (SELECT RTRIM(g.GroupDes) FROM tbl_usergroups g WHERE RTRIM(g.GroupId)=RTRIM(u.GroupId) LIMIT 1) AS GroupDes,
+        (SELECT RTRIM(g.GroupDes) FROM tbl_usergroups g
+          WHERE CONVERT(RTRIM(g.GroupId) USING utf8mb4) COLLATE utf8mb4_general_ci = CONVERT(RTRIM(u.GroupId) USING utf8mb4) COLLATE utf8mb4_general_ci LIMIT 1) AS GroupDes,
         RTRIM(u.NIC) AS NIC, RTRIM(u.ContNo) AS ContNo, RTRIM(u.Email) AS Email,
         RTRIM(u.WorkingLocID) AS WorkingLocID, u.Enable AS Enable, RTRIM(u.Rmks) AS Rmks
       FROM tbl_userdetails u

@@ -6,6 +6,7 @@ import { itemCode } from "./itemCode";
 import { round2, safePrice, safeQty } from "./inventoryTotals";
 import { grnedFlag, poFullyReceived, poReceiptSummary, poReceiptWords } from "./poReceiptState";
 import { itemDetailExpiry, itemDetailQty } from "./itemDetailStock";
+import { foreignLocation, locationDeniedMessage, locationScopeForUser } from "./locationScope";
 
 /** Anything that can run a query: the shared client or a transaction. */
 export type Db = Prisma.TransactionClient | PrismaClient;
@@ -27,6 +28,11 @@ export class InvError extends Error {
 
 /** Turn any thrown value into the JSON the screens show in a toast. */
 export function invFail(err: unknown, tag: string): NextResponse {
+  /* the branch guard throws its own error; answer it as 403, not 500 */
+  if (err instanceof Error && err.name === "LocationDeniedError") {
+    const status = Number((err as { status?: number }).status) || 403;
+    return NextResponse.json({ success: false, message: err.message, error: err.message }, { status });
+  }
   if (err instanceof InvError) {
     return NextResponse.json(
       { success: false, message: err.message, hint: err.hint },
@@ -365,6 +371,23 @@ export async function invActor(req: NextRequest): Promise<InvActor> {
   const token = req.cookies.get(ADMIN_COOKIE)?.value;
   const payload = token ? await verifyAdminToken(token) : null;
   if (!payload) throw new InvError("Your session has expired — please sign in again.", 401);
+
+  /* Branch guard for the LOCATION IN THE QUERY STRING (every inventory screen
+     passes ?locCode= / ?fromLoc= there). A person may only name a branch they
+     were given — their own location plus the ones ticked on their access
+     profile. Scope is cached for 15s, so this is one cheap lookup, not a
+     second round of queries on every call. */
+  const askedLocations = [
+    req.nextUrl?.searchParams?.get("locCode"),
+    req.nextUrl?.searchParams?.get("fromLoc"),
+    req.nextUrl?.searchParams?.get("fromLocCode"),
+  ];
+  if (askedLocations.some((v) => invTrim(v))) {
+    const scope = await locationScopeForUser(payload.uid);
+    const bad = foreignLocation(scope, askedLocations);
+    if (bad) throw new InvError(locationDeniedMessage(bad), 403);
+  }
+
   return {
     userId: invTrim(payload.uid) || "0",
     name: invTrim(payload.name) || invTrim(payload.log) || "admin",

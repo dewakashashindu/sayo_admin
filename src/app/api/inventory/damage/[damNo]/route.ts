@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertLocationAllowed } from "@/lib/locationScope";
 import { PrismaClient } from '@prisma/client';
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invActor, invFail, invChar, invId, InvError, keySql, keyVal } from '@/lib/inventoryServer';
@@ -38,6 +39,8 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const { damNo: rawNo } = await params;
     const damNo = invId(rawNo, 'Damage number', 10).trim();
     const locCode = String(req.nextUrl.searchParams.get('locCode') ?? '').trim();
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     if (!locCode) throw new InvError('locCode is required.', 400);
 
     const head = await loadHeader(locCode, damNo);
@@ -91,6 +94,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       locCode?: string; remarks?: string; txnDate?: string; lines?: DamageLineInput[];
     };
     const locCode = String(body.locCode ?? '').trim();
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     if (!locCode) throw new InvError('Location is required.', 400);
 
     const lines = (Array.isArray(body.lines) ? body.lines : [])
@@ -143,11 +148,13 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
 }
 
 // DELETE — only while still pending.
-export async function DELETE(_req: NextRequest, { params }: Ctx) {
+export async function DELETE(req: NextRequest, { params }: Ctx) {
   try {
     const { damNo: rawNo } = await params;
     const damNo = invId(rawNo, 'Damage number', 10).trim();
-    const locCode = String(_req.nextUrl.searchParams.get('locCode') ?? '').trim();
+    const locCode = String(req.nextUrl.searchParams.get('locCode') ?? '').trim();
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     if (!locCode) throw new InvError('locCode is required.', 400);
 
     await prisma.$transaction(async (tx) => {

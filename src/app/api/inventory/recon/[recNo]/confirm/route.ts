@@ -1,4 +1,5 @@
 // src/app/api/inventory/recon/[recNo]/confirm/route.ts
+import { assertLocationAllowed } from "@/lib/locationScope";
 // POST /api/inventory/recon/:recNo/confirm  body:{ locCode }
 // Mirrors VB6 Stocks.StockAsItIs — for every applicable line of the saved
 // recon, writes Tbl_TxnMovement and sets tbl_itemmaster.StockBalance = RecQty.
@@ -28,6 +29,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const { recNo: raw } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const locCode = invId(body.locCode, 'Location', 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const recNo = invId(raw, 'Recon number', 10).trim();
 
     const result = await prisma.$transaction(async (tx) => {

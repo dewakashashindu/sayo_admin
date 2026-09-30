@@ -28,7 +28,8 @@ export async function GET(req: NextRequest) {
     const like = `%${q}%`;
     const rows = await prisma.$queryRaw<{ GroupId: string; GroupDes: string; Users: number }[]>`
       SELECT RTRIM(g.GroupId) AS GroupId, RTRIM(g.GroupDes) AS GroupDes,
-        (SELECT COUNT(*) FROM tbl_userdetails u WHERE RTRIM(u.GroupId)=RTRIM(g.GroupId)) AS Users
+        (SELECT COUNT(*) FROM tbl_userdetails u
+          WHERE CONVERT(RTRIM(u.GroupId) USING utf8mb4) COLLATE utf8mb4_general_ci = CONVERT(RTRIM(g.GroupId) USING utf8mb4) COLLATE utf8mb4_general_ci) AS Users
       FROM tbl_usergroups g
       WHERE RTRIM(g.GroupId) <> ${superAdminGroupId()}
         AND ${q ? Prisma.sql`(RTRIM(g.GroupId) LIKE ${like} OR RTRIM(g.GroupDes) LIKE ${like})` : Prisma.sql`1=1`}

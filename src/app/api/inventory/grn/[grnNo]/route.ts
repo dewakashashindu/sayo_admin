@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertLocationAllowed } from "@/lib/locationScope";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
@@ -144,6 +145,8 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   try {
     const { grnNo } = await ctx.params;
     const locCode = invId(req.nextUrl.searchParams.get("locCode"), "Location", 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
 
     const head = await prisma.$queryRaw<
       {
@@ -284,6 +287,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     const body = (await req.json()) as Record<string, unknown>;
 
     const locCodeRaw = invId(body.locCode, "Location", 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCodeRaw);
     const supInvNo = trim(body.supInvNo).slice(0, 20);
     const grnDate = invDateField(body.grnDate, "GRN date");
     const remarks = trim(body.remarks).slice(0, 400);
@@ -293,6 +298,8 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
 
     const result = await prisma.$transaction(async (tx) => {
       const locCode = await findLocation(tx, locCodeRaw);
+      /* branch guard — only a location this caller was given */
+      await assertLocationAllowed(req, locCode);
       if (!locCode) throw new InvError(`Unknown location “${locCodeRaw}”.`, 400);
 
       const header = await lockHeader(tx, locCode, invId(grnNo, "GRN number", 15));
@@ -372,9 +379,13 @@ export async function DELETE(req: NextRequest, ctx: Ctx) {
     const actor = await invActor(req);
     const { grnNo } = await ctx.params;
     const locCodeRaw = invId(req.nextUrl.searchParams.get("locCode"), "Location", 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCodeRaw);
 
     const result = await prisma.$transaction(async (tx) => {
       const locCode = await findLocation(tx, locCodeRaw);
+      /* branch guard — only a location this caller was given */
+      await assertLocationAllowed(req, locCode);
       if (!locCode) throw new InvError(`Unknown location “${locCodeRaw}”.`, 400);
 
       const header = await lockHeader(tx, locCode, invId(grnNo, "GRN number", 15));

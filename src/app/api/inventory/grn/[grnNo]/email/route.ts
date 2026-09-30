@@ -1,4 +1,5 @@
 // POST /api/inventory/grn/:grnNo/email  body:{ locCode, to?, copy?, subject?, message? }
+import { assertLocationAllowed } from "@/lib/locationScope";
 // Emails the GRN / Direct GRN sheet to supplier — like PO email (PDF attachment, SMTP)
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma, PrismaClient } from '@prisma/client';
@@ -23,6 +24,8 @@ export async function POST(req:NextRequest, ctx:Ctx){
     const { grnNo: raw }=await ctx.params;
     const body=await req.json().catch(()=>({})) as Record<string,unknown>;
     const locCode=invId(body.locCode,'Location',10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const grnNo=invId(raw,'GRN number',15);
     const copy:PoPrintCopy = trim(body.copy)==='supplier' ? 'supplier' : 'standard';
     const toOverride=trim(body.to);

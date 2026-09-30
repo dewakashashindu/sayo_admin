@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma';
 import { stripBookingSchedule } from '@/lib/bookingSchedule';
 import { minutesFromRemarks, minutesFromValue } from '@/lib/legacyTime';
 import { BOOKING_SERVICE_DETAIL_FROM } from '@/lib/bookingReadModel';
+import { locationScopeForRequest } from "@/lib/locationScope";
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -77,6 +78,15 @@ interface RawRow {
 
 export async function GET(req: NextRequest) {
   try {
+    /* branch scope — a person sees the branches they were given (their own +
+       the ones ticked on their access profile). */
+    const resolvedScope = await locationScopeForRequest(req);
+    if (!resolvedScope.ok) return resolvedScope.response;
+    const scope = resolvedScope.scope;
+    const mayUse = (code: unknown) =>
+      scope.unlimited ||
+      [...scope.allowed].some((c) => c.toUpperCase() === String(code ?? "").trim().toUpperCase());
+
     const { searchParams } = new URL(req.url);
     const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
     const from = searchParams.get('from');
@@ -111,8 +121,9 @@ export async function GET(req: NextRequest) {
       ORDER BY h.BookingDate ASC
     `;
 
-        const cusCodes = [...new Set(rows.map(r => (r.CusCode || '').trim()).filter(Boolean))];
-    const locCodes = [...new Set(rows.map(r => (r.LocCode || '').trim()).filter(Boolean))];
+        const visibleRows = rows.filter((r) => mayUse(r.LocCode));
+    const cusCodes = [...new Set(visibleRows.map(r => (r.CusCode || '').trim()).filter(Boolean))];
+    const locCodes = [...new Set(visibleRows.map(r => (r.LocCode || '').trim()).filter(Boolean))];
 
     const [customers, locations] = await Promise.all([
       cusCodes.length
@@ -137,7 +148,7 @@ export async function GET(req: NextRequest) {
     };
     const byKey = new Map<string, B>();
 
-    for (const r of rows) {
+    for (const r of visibleRows) {
       const key = `${(r.LocCode || '').trim()}|${(r.BookingID || '').trim()}`;
       let b = byKey.get(key);
       if (!b) {

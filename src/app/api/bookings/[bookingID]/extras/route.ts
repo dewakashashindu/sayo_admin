@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { locationGuard } from "@/lib/locationScope";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { createItemCodeIndex, ITEM_CODE_LENGTH } from "@/lib/itemCode";
@@ -88,7 +89,7 @@ async function loadContext(bookingID: string) {
   return { header, checkedIn };
 }
 
-export async function GET(_req: NextRequest, { params }: Ctx) {
+export async function GET(req: NextRequest, { params }: Ctx) {
   try {
     const bookingID = trim(decodeURIComponent((await params).bookingID));
     if (!bookingID) {
@@ -107,6 +108,12 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     }
     const { header, checkedIn } = context;
     const locCode = header.LocCode.trim();
+    /* branch guard — the booking's location must be one this caller was given */
+    {
+      const stop = await locationGuard(req, locCode);
+      if (stop) return stop;
+    }
+
 
     const [addTechRows, recipeRows] = await Promise.all([
       prisma.$queryRaw<AddTechRow[]>`

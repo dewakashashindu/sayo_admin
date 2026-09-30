@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertLocationAllowed } from "@/lib/locationScope";
 import { Prisma, PrismaClient } from '@prisma/client';
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invActor, invFail, invId, InvError, keySql, keyVal, invChar, invDateField } from '@/lib/inventoryServer';
@@ -21,6 +22,8 @@ export async function GET(req: NextRequest) {
     const status = trim(sp.get('status')).toLowerCase(); // confirmed|pending|all
     const q = trim(sp.get('q'));
     const locCode = trim(sp.get('locCode'));
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const limit = Math.min(Math.max(Number(sp.get('limit') || 300) || 300, 1), 500);
     const where: Prisma.Sql[] = [];
     if (locCode) where.push(Prisma.sql`AND ${keySql('h.LocCode')} = ${keyVal(locCode)}`);
@@ -64,6 +67,8 @@ export async function POST(req: NextRequest) {
     const actor = await invActor(req);
     const body = (await req.json()) as Record<string, unknown>;
     const locCodeRaw = invId(body.locCode, 'Location', 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCodeRaw);
     const remarks = trim(body.remarks).slice(0, 400);
     const recDateRaw = body.recDate ? String(body.recDate) : new Date().toISOString().slice(0, 10);
     const recDate = invDateField(recDateRaw, 'Recon date');
@@ -91,6 +96,8 @@ export async function POST(req: NextRequest) {
       const locRows = await tx.$queryRaw<{ LocCode: string }[]>`SELECT RTRIM(LocCode) AS LocCode FROM tbl_locationmaster WHERE ${keySql('LocCode')}=${keyVal(locCodeRaw)} LIMIT 1`;
       if (!locRows.length) throw new InvError(`Unknown location “${locCodeRaw}”.`, 400);
       const locCode = trim(locRows[0].LocCode);
+      /* branch guard — only a location this caller was given */
+      await assertLocationAllowed(req, locCode);
 
       // next REC number — use tbl_serials REC when present, else fallback to max RecNo
       let recNo = '';

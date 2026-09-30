@@ -1,4 +1,5 @@
 
+import { locationGuard } from "@/lib/locationScope";
 import { NextRequest, NextResponse } from "next/server";
 import { PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
@@ -47,6 +48,11 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       );
     }
     const header = access.header;
+    /* branch guard — the booking's location must be one this caller was given */
+    {
+      const stop = await locationGuard(req, header.LocCode);
+      if (stop) return stop;
+    }
 
     if (header.BillingTime !== null) {
       return NextResponse.json({ success: true, billed: true, already: true });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertLocationAllowed } from "@/lib/locationScope";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import nodemailer from "nodemailer";
@@ -44,6 +45,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const { poNo: poNoRaw } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const locCode = invId(body.locCode, "Location", 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const poNo = invId(poNoRaw, "PO number", 10);
     const copy: PoPrintCopy = trim(body.copy) === "supplier" ? "supplier" : "standard";
 

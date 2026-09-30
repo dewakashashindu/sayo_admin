@@ -1,4 +1,5 @@
 // POST /api/inventory/recon/:recNo/email  body:{ locCode, to, copy?, subject?, message? }
+import { assertLocationAllowed } from "@/lib/locationScope";
 // Emails the Stock Reconciliation Note — internal document, To required, PDF like PO.
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma, PrismaClient } from '@prisma/client';
@@ -23,6 +24,8 @@ export async function POST(req:NextRequest, ctx:Ctx){
     const { recNo: raw }=await ctx.params;
     const body=await req.json().catch(()=>({})) as Record<string,unknown>;
     const locCode=invId(body.locCode,'Location',10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const recNo=invId(raw,'Recon number',10);
     const copy:PoPrintCopy = trim(body.copy)==='supplier' ? 'supplier' : 'standard';
     const to=trim(body.to);

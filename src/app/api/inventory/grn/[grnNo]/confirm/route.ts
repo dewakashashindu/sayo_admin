@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertLocationAllowed } from "@/lib/locationScope";
 import { PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
@@ -43,6 +44,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const { grnNo: grnNoRaw } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const locCode = invId(body.locCode, "Location", 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const grnNo = invId(grnNoRaw, "GRN number", 15);
 
     const result = await prisma.$transaction(async (tx) => {

@@ -1,10 +1,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';
+import { requireAdminAccess } from '@/lib/sessionGuard';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
+  /* an Edit Site button — same right as the screen that shows it */
+  const guard = await requireAdminAccess(req, { screen: 'EDITSITE', action: 'ACCESS' });
+  if (!guard.ok) return guard.response;
   try {
     const formData  = await req.formData();
     const file      = formData.get('file')      as File   | null;

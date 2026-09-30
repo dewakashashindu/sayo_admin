@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertLocationAllowed } from "@/lib/locationScope";
 import { Prisma, PrismaClient } from '@prisma/client';
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import {
@@ -81,6 +82,8 @@ export async function POST(req: NextRequest) {
     };
 
     const locCode = String(body.locCode ?? '').trim();
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     if (!locCode) return invFail(new Error('Location is required.'), 'POST /api/inventory/damage');
 
     const lines = (Array.isArray(body.lines) ? body.lines : [])

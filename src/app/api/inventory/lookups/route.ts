@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invFail } from "@/lib/inventoryServer";
 import { loadCompanyLetterhead } from "@/lib/companyLetterhead";
 import { primarySupplierEmail } from "@/lib/poEmail";
 import { ensureLocationExtras } from "@/lib/locationExtras";
+import { locationScopeForRequest } from "@/lib/locationScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,8 +58,13 @@ async function load<T>(
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    /* Only the branches this person was given may appear in a picker. */
+    const resolved = await locationScopeForRequest(req);
+    if (!resolved.ok) return resolved.response;
+    const scope = resolved.scope;
+
     const errors: Record<string, string> = {};
     const company = await loadCompanyLetterhead(prisma);
 
@@ -78,15 +84,23 @@ export async function GET() {
         FROM tbl_locationmaster
         ORDER BY enable DESC, LocDes ASC, LocCode ASC
       `;
-      return rows.map<LookupLocation>((r) => ({
-        code: String(r.code ?? "").trim(),
-        des: String(r.des ?? "").trim(),
-        address: String(r.address ?? "").trim(),
-        enable: Number(r.enable) === 1,
-        mainLoc: Number(r.mainLoc) === 1,
-        subLoc: Number(r.subLoc) === 1,
-        mainLocCode: String(r.mainLocCode ?? "").trim(),
-      }));
+      return rows
+        .map<LookupLocation>((r) => ({
+          code: String(r.code ?? "").trim(),
+          des: String(r.des ?? "").trim(),
+          address: String(r.address ?? "").trim(),
+          enable: Number(r.enable) === 1,
+          mainLoc: Number(r.mainLoc) === 1,
+          subLoc: Number(r.subLoc) === 1,
+          mainLocCode: String(r.mainLocCode ?? "").trim(),
+        }))
+        .filter(
+          (l) =>
+            scope.unlimited ||
+            [...scope.allowed].some(
+              (code) => code.toUpperCase() === l.code.toUpperCase(),
+            ),
+        );
     });
 
     const suppliers = await load(errors, "suppliers", async () => {

@@ -1,6 +1,16 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireAdminAccess } from '@/lib/sessionGuard';
+
+/* The website's content. Reading AND writing it is the "Edit Site" right
+   (System Settings → Start-up Settings → Edit Site) — one permission, ACCESS,
+   exactly as the shop asked. The middleware already demands a signed-in
+   admin; this adds the screen check. */
+async function editSiteGuard(req: NextRequest) {
+  const guard = await requireAdminAccess(req, { screen: 'EDITSITE', action: 'ACCESS' });
+  return guard.ok ? null : guard.response;
+}
 export const dynamic   = 'force-dynamic';
 export const revalidate = 0;
 
@@ -172,6 +182,9 @@ function getErrorMessage(err: unknown): string {
 
 export async function GET(req: NextRequest) {
   const section = req.nextUrl.searchParams.get('section');
+  const denied = await editSiteGuard(req);
+  if (denied) return denied;
+
 
   try {
 
@@ -403,6 +416,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const section = req.nextUrl.searchParams.get('section');
+  const denied = await editSiteGuard(req);
+  if (denied) return denied;
+
 
   try {
     const body = await req.json();
@@ -631,6 +647,9 @@ export async function POST(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   const section = req.nextUrl.searchParams.get('section');
+  const denied = await editSiteGuard(req);
+  if (denied) return denied;
+
   const idParam = req.nextUrl.searchParams.get('id');
 
   if (section !== 'feedback')
@@ -664,6 +683,9 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
   const section = req.nextUrl.searchParams.get('section');
+  const denied = await editSiteGuard(req);
+  if (denied) return denied;
+
   const idParam = req.nextUrl.searchParams.get('id');
 
   if (section !== 'feedback')

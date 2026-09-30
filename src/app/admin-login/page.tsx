@@ -3,6 +3,7 @@
 import React, { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { safeInternalPath } from '@/lib/safeNext';
+import { allowedNavLeaves, firstAllowedPath } from '@/components/AdminSidebar';
 
 const BACKGROUND_IMAGE =
   "url('https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?q=80&w=1920&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D')";
@@ -26,10 +27,30 @@ function LoginForm() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  /* Where the signed-in admin ends up (the middleware put ?next=… there).
+  /* Where the signed-in admin ends up.
+     Before: always /dashboard — so somebody whose access profile does not
+     include the Dashboard landed on a page they cannot use and read it as "the
+     panel is broken". Now: the ?next= the middleware asked for is honoured
+     first; otherwise we ask the server what this person may open and send them
+     to the first screen in MENU ORDER (Dashboard first, exactly as before, for
+     anybody who has it). If the question cannot be answered, /dashboard — which
+     now has its own "no access, here is what you can open" screen.
      safeInternalPath: "//evil.com" also starts with "/" but is another site. */
-  function goToAdminArea() {
-    window.location.href = safeInternalPath(params.get('next'), '/dashboard');
+  async function goToAdminArea() {
+    const asked = params.get('next');
+    if (asked) {
+      window.location.href = safeInternalPath(asked, '/dashboard');
+      return;
+    }
+    try {
+      const res = await fetch('/api/security/my-access', { cache: 'no-store' });
+      const json = (await res.json()) as { success?: boolean; data?: { keys?: string[] } };
+      const keys = new Set(json?.data?.keys ?? []);
+      const first = firstAllowedPath(keys, true) ?? allowedNavLeaves(keys, true)[0]?.path ?? null;
+      window.location.href = first ?? '/dashboard';
+    } catch {
+      window.location.href = '/dashboard';   /* the dashboard explains itself now */
+    }
   }
 
   /* Hard client-side timeout — the button can never spin forever */
@@ -85,7 +106,7 @@ function LoginForm() {
       if (res.ok && data.success) {
         /* Full-page navigation (not router.push) — guarantees a clean load
            of the admin area with the fresh session cookie. */
-        goToAdminArea();
+        void goToAdminArea();
         return; // keep the button disabled while the browser navigates
       }
       setError(data?.error || 'Invalid username or password.');
@@ -116,7 +137,7 @@ function LoginForm() {
         code: otp.trim(),
       });
       if (res.ok && data.success) {
-        goToAdminArea();
+        void goToAdminArea();
         return;
       }
       setError(data?.error || 'That code is not correct.');

@@ -7,6 +7,13 @@ import { timeLabelFromValue } from "@/lib/legacyTime";
 import { sendAppointmentSMS } from "@/lib/sms";
 import { verifyAdminToken, ADMIN_COOKIE } from "@/lib/adminSession";
 import { superAdminUserId } from "@/lib/superAdmin";
+import {
+  foreignLocation,
+  locationDeniedMessage,
+  locationGuard,
+  locationScopeForRequest,
+  scopeHas,
+} from "@/lib/locationScope";
 import { logActivity, maskPhoneForLog } from "@/lib/activityLog";
 import {
   composeBookingRemarks,
@@ -379,9 +386,24 @@ interface RawSMSBooking {
 async function readHeaders(
   locCode?: string | null,
   requestedDate?: string | null,
+  allowedLocations?: string[] | null,
 ): Promise<RawHeader[]> {
   const hasLocationFilter = Boolean(locCode && locCode !== "ALL");
   const hasDateFilter = Boolean(requestedDate);
+  /* null = the super administrator (no branch limit). An EMPTY array is not
+     "no limit" — it means this person was given no branch at all and must see
+     nothing. */
+  const scoped = Array.isArray(allowedLocations);
+  const scopeList = scoped
+    ? (allowedLocations as string[]).map((c) => String(c ?? "").trim()).filter(Boolean)
+    : [];
+  /* Built OUTSIDE the big template: an empty allow-list must become `1 = 0`,
+     never `IN ()`. */
+  const scopeCondition: Prisma.Sql = !scoped
+    ? Prisma.empty
+    : scopeList.length === 0
+      ? Prisma.sql`AND 1 = 0`
+      : Prisma.sql`AND RTRIM(h.LocCode) IN (${Prisma.join(scopeList.map((c) => Prisma.sql`${c}`))})`;
   const locationValue = locCode?.trim() || "";
   const dateValue = requestedDate?.trim() || "";
   const legacyDatePattern = `%Date:${dateValue}%`;
@@ -422,6 +444,7 @@ async function readHeaders(
      AND RTRIM(t.BookingID) = RTRIM(h.BookingID)
     WHERE
       (${hasLocationFilter ? 1 : 0} = 0 OR RTRIM(h.LocCode) = ${locationValue})
+      ${scopeCondition}
       AND (
         ${hasDateFilter ? 1 : 0} = 0
         OR DATE(h.BookingDate) = ${dateValue}
@@ -606,6 +629,24 @@ export async function GET(req: NextRequest) {
   const requestedDate = searchParams.get("date");
   const locCode = searchParams.get("locCode");
 
+  /* Branch scope — a person only ever sees the locations they were given
+     (their own + the ones ticked on their access profiles). The super
+     administrator is unlimited. */
+  const resolvedScope = await locationScopeForRequest(req);
+  if (!resolvedScope.ok) return resolvedScope.response;
+  const scope = resolvedScope.scope;
+  const scopeList = scope.unlimited ? null : [...scope.allowed];
+
+  if (locCode && locCode !== "ALL") {
+    const bad = foreignLocation(scope, [locCode]);
+    if (bad) {
+      return NextResponse.json(
+        { success: false, error: locationDeniedMessage(bad), message: locationDeniedMessage(bad) },
+        { status: 403 },
+      );
+    }
+  }
+
   /* The appointment grid only tracks work that still has to be done: once the
      technician marks a booking DONE it leaves the grid and moves to the Billing
      Dashboard, which is the only place it can be picked up again.
@@ -621,6 +662,12 @@ export async function GET(req: NextRequest) {
      has to guess. An unresolvable value is answered with `technician: null`
      and hides nothing — a wrong or unknown name can never empty the screen. */
   const technicianParam = (searchParams.get("technician") || "").trim();
+
+  /* Technician rule: without TECHAPPT.CHANGE_TECH this screen is the person's
+     OWN list — a `technician=` naming somebody else is ignored here, not just
+     hidden in the UI. With the right, the whole day of the branches above. */
+  const canChangeTechnician = scopeHas(scope, "TECHAPPT", "CHANGE_TECH");
+  const effectiveTechnician = canChangeTechnician ? technicianParam : scope.userId;
 
   if (searchParams.get("meta") === "filters") {
     try {
@@ -690,7 +737,28 @@ export async function GET(req: NextRequest) {
         qualificationsByUser.set(userID, current);
       });
 
-      const enrichedTechnicians = technicians.map((technician) => {
+      /* Branch-filtered pickers: the location list only offers what this person
+         may use, and the technician list only the staff who work in those
+         branches (plus the person themselves — they must always find their own
+         name even if their branch was left blank on user details). */
+      const visibleLocations = scope.unlimited
+        ? locations
+        : locations.filter((row) =>
+            [...scope.allowed].some(
+              (code) => code.toUpperCase() === trimValue(row.LocCode).toUpperCase(),
+            ),
+          );
+      const visibleTechnicians = scope.unlimited
+        ? technicians
+        : technicians.filter(
+            (technician) =>
+              trimValue(technician.UserId).toUpperCase() === scope.userId.toUpperCase() ||
+              (scopeList ?? []).some((code) =>
+                technicianBelongsToBranch(technician.WorkingLocID, code),
+              ),
+          );
+
+      const enrichedTechnicians = visibleTechnicians.map((technician) => {
         const userID = trimValue(technician.UserId);
         const qualifications = qualificationsByUser.get(userID) || {
           codes: [],
@@ -708,7 +776,7 @@ export async function GET(req: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        locations,
+        locations: visibleLocations,
         categories,
         bookingTypes,
         technicians: enrichedTechnicians,
@@ -723,7 +791,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const headers = await readHeaders(locCode, requestedDate);
+    const headers = await readHeaders(locCode, requestedDate, scopeList);
 
     // BookingDate is now the source of truth. The Remarks fallback keeps old
     // rows created before BookingDate was added visible on the calendar.
@@ -1092,15 +1160,15 @@ export async function GET(req: NextRequest) {
         let technician: { userId: string; name: string } | null = null;
     let rows = data;
 
-    if (technicianParam) {
+    if (effectiveTechnician) {
       const technicianRows = await prisma.$queryRaw<RawTechnician[]>`
         SELECT
           RTRIM(UserId) AS UserId,
           RTRIM(UserName) AS UserName,
           RTRIM(WorkingLocID) AS WorkingLocID
         FROM tbl_userdetails
-        WHERE UPPER(RTRIM(UserId)) = ${technicianParam.toUpperCase()}
-           OR UPPER(RTRIM(UserName)) = ${technicianParam.toUpperCase()}
+        WHERE UPPER(RTRIM(UserId)) = ${effectiveTechnician.toUpperCase()}
+           OR UPPER(RTRIM(UserName)) = ${effectiveTechnician.toUpperCase()}
         LIMIT 1
       `;
       const foundTechnician = technicianRows[0];
@@ -1112,10 +1180,15 @@ export async function GET(req: NextRequest) {
         rows = data.filter((appointment) =>
           isTechnicianAppointment(
             appointment as unknown as TechAppointment,
-            technicianParam,
+            effectiveTechnician,
             technician ? technician.userId : undefined,
           ),
         );
+      } else if (!canChangeTechnician) {
+        /* their own name is not in the staff list: show nothing rather than
+           the whole branch's day */
+        technician = { userId: scope.userId, name: "" };
+        rows = [];
       }
     }
 
@@ -1197,6 +1270,12 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
     const bookingID = trimValue(body.bookingID);
     const locCode = trimValue(body.locCode);
+    /* branch guard — the booking's location must be one this caller was given */
+    {
+      const stop = await locationGuard(req, locCode);
+      if (stop) return stop;
+    }
+
 
     if (!bookingID || !locCode) {
       return NextResponse.json(

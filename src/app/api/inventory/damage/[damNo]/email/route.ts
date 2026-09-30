@@ -1,4 +1,5 @@
 // POST /api/inventory/damage/:damNo/email  body:{ locCode, to, copy?, subject?, message? }
+import { assertLocationAllowed } from "@/lib/locationScope";
 // Emails the Damage Note sheet — internal document, so To must be supplied (no supplier). PDF like PO.
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma, PrismaClient } from '@prisma/client';
@@ -23,6 +24,8 @@ export async function POST(req:NextRequest, ctx:Ctx){
     const { damNo: raw }=await ctx.params;
     const body=await req.json().catch(()=>({})) as Record<string,unknown>;
     const locCode=invId(body.locCode,'Location',10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const damNo=invId(raw,'Damage number',10);
     const copy:PoPrintCopy = trim(body.copy)==='supplier' ? 'supplier' : 'standard';
     const to=trim(body.to);

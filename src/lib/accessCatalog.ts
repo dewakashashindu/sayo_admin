@@ -55,6 +55,9 @@ export const ACCESS_TREE: AccessNode[] = [
           { code: "CAT",  name: "Categories",       actions: MASTER_ACTIONS },
           { code: "ITEM", name: "Item Master",      actions: [...MASTER_ACTIONS, A("RECIPE", "Recipe Management")] },
           { code: "UNIT", name: "Unit Master",      actions: MASTER_ACTIONS },
+          /* Booking Types · Payment Modes · Payment Groups — one screen,
+             three tabs (Inventory → Reference → Modes). */
+          { code: "MODES", name: "Modes",           actions: MASTER_ACTIONS },
           { code: "SUP",  name: "Supplier Master",  actions: MASTER_ACTIONS },
         ],
       },
@@ -143,7 +146,17 @@ export const ACCESS_TREE: AccessNode[] = [
        saved before this change still decodes exactly as it did. */
     code: "SYSSET", name: "System Settings", actions: [ACCESS],
     children: [
-      { code: "SETUP", name: "Start-up Settings", actions: [ACCESS, A("SAVE")] },
+      /* Start-up Settings is a group now: what it holds is the site editor
+         ("Edit Site" → /admin). Its own ACCESS/SAVE chips are kept from the
+         first cut so previously saved masks stay valid; the page an admin
+         actually opens is gated by EDITSITE, which has ONE action (ACCESS) —
+         the shop asked for "only the access permission" there. */
+      {
+        code: "SETUP", name: "Start-up Settings", actions: [ACCESS, A("SAVE")],
+        children: [
+          { code: "EDITSITE", name: "Edit Site", actions: [ACCESS] },
+        ],
+      },
       {
         code: "USRSET", name: "User Settings", actions: [ACCESS],
         children: [
@@ -152,7 +165,12 @@ export const ACCESS_TREE: AccessNode[] = [
              person is its own right, so it gets its own node + chips. Until a
              profile grants ASSIGNP.ACCESS the screen is visible to the hidden
              super administrator only. */
-          { code: "ASSIGNP", name: "Assign Profiles", actions: [ACCESS, A("SAVE")] },
+          { code: "ASSIGNP", name: "Assign Profiles", actions: [ACCESS, A("SAVE"),
+            /* 2026-09-30 — the screen's five buttons. APPENDED (never
+               re-ordered): an already-saved mask counts the actions from
+               the left, so ACCESS + Save must stay in slots 1 and 2. */
+            A("ADD_PROFILE", "+ Add Profile"), A("CUSTOMIZE", "Customize"),
+            A("PRINT", "Print Access"), A("REMOVE_ALL", "Remove All")] },
         ],
       },
     ],

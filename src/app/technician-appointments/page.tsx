@@ -232,7 +232,12 @@ export default function TechnicianAppointmentsPage() {
   const [usingSample, setUsingSample] = useState(false);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const toastCounter = useRef(0);
-  const { loaded, enforce, has } = useMyAccess();
+  const { loaded, enforce, has, perms, allowedLocCodes } = useMyAccess();
+  /* "Change Technician" right: without it this screen is the person's OWN
+     appointments — the picker disappears and the server ignores any other
+     technician asked for. With it they may look after (and change) the
+     technicians of the branches they were given. */
+  const canChangeTech = perms.has("TECHAPPT.CHANGE_TECH");
 
   const showToast = useCallback((text: string, type: ToastMsg["type"] = "info") => {
     const id = ++toastCounter.current;
@@ -266,6 +271,30 @@ export default function TechnicianAppointmentsPage() {
       return match ? match.UserId : "ALL";
     };
 
+    /* Resolve the signed-in staff member's own row. */
+    const resolveMine = () =>
+      fetch("/api/auth/admin-me")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json) => {
+          const me = (json?.user || {}) as { userId?: string; name?: string };
+          const mine = techDirectory.find(
+            (t) =>
+              technicianIdentityMatches(t, me.userId || "") ||
+              technicianIdentityMatches(t, me.name || ""),
+          );
+          finish(mine ? mine.UserId : canChangeTech ? savedChoice() : (me.userId || ""));
+        })
+        .catch(() => finish(canChangeTech ? savedChoice() : ""));
+
+    /* No Change Technician right: always my own list — ?technician= from the
+       address bar and the name saved on this device are ignored. */
+    if (!canChangeTech) {
+      void resolveMine();
+      return () => {
+        cancelled = true;
+      };
+    }
+
     if (typeof window !== "undefined") {
       const fromUrl = new URLSearchParams(window.location.search).get("technician") || "";
       const match = techDirectory.find((t) => technicianIdentityMatches(t, fromUrl));
@@ -275,30 +304,19 @@ export default function TechnicianAppointmentsPage() {
       }
     }
 
-    fetch("/api/auth/admin-me")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((json) => {
-        const me = (json?.user || {}) as { userId?: string; name?: string };
-        const mine = techDirectory.find(
-          (t) =>
-            technicianIdentityMatches(t, me.userId || "") ||
-            technicianIdentityMatches(t, me.name || ""),
-        );
-        finish(mine ? mine.UserId : savedChoice());
-      })
-      .catch(() => finish(savedChoice()));
+    void resolveMine();
 
     return () => {
       cancelled = true;
     };
-  }, [techDirectory, choiceResolved]);
+  }, [techDirectory, choiceResolved, canChangeTech]);
 
   const selectedTech = useMemo(
     () => techDirectory.find((t) => t.UserId === techChoice),
     [techDirectory, techChoice],
   );
   const chosenName = selectedTech?.UserName || techChoice;
-  const viewAll = techChoice === "ALL" || autoAll;
+  const viewAll = canChangeTech && (techChoice === "ALL" || autoAll);
   const techName = viewAll ? "All technicians" : chosenName;
   const myUserId = viewAll ? undefined : techChoice;
 
@@ -380,6 +398,10 @@ export default function TechnicianAppointmentsPage() {
     () =>
       appointments.filter((a) => {
         if (a.date !== date) return false;
+        /* a last line of defence: never render a branch the person was not
+           given (the API already narrows the day to those branches) */
+        if (enforce && !allowedLocCodes.has(String(a.locCode ?? "").trim()))
+          return false;
         if (!viewAll && !serverFiltered && !isTechnicianAppointment(a, techName, myUserId))
           return false;
         if (
@@ -389,7 +411,17 @@ export default function TechnicianAppointmentsPage() {
           return false;
         return true;
       }),
-    [appointments, date, viewAll, serverFiltered, techName, myUserId, search],
+    [
+      appointments,
+      date,
+      viewAll,
+      serverFiltered,
+      techName,
+      myUserId,
+      search,
+      enforce,
+      allowedLocCodes,
+    ],
   );
 
   /* A technician with nothing on this date must not stare at an empty screen
@@ -397,6 +429,7 @@ export default function TechnicianAppointmentsPage() {
      to the whole day once and say so. */
   useEffect(() => {
     if (
+      canChangeTech &&
       choiceResolved &&
       !viewAll &&
       !loading &&
@@ -406,7 +439,7 @@ export default function TechnicianAppointmentsPage() {
     ) {
       setAutoAll(true);
     }
-  }, [choiceResolved, viewAll, loading, autoAll, mine, dayRows]);
+  }, [canChangeTech, choiceResolved, viewAll, loading, autoAll, mine, dayRows]);
 
   const stats = useMemo(
     () => ({
@@ -474,23 +507,30 @@ export default function TechnicianAppointmentsPage() {
               />
             </div>
             <div style={{ flex: 1 }} />
-            {/* Whose list is this? Always visible, always switchable. */}
-            <select
-              className="tech-pick"
-              value={viewAll ? "ALL" : techChoice}
-              onChange={(e) => {
-                setAutoAll(false);
-                setTechChoice(e.target.value);
-              }}
-              title="Whose appointments to show"
-            >
-              <option value="ALL">All technicians</option>
-              {techDirectory.map((t) => (
-                <option key={t.UserId} value={t.UserId}>
-                  {t.UserName}
-                </option>
-              ))}
-            </select>
+            {/* Whose list is this? Switchable only with Change Technician —
+                otherwise the screen says plainly that it is your own list. */}
+            {canChangeTech ? (
+              <select
+                className="tech-pick"
+                value={viewAll ? "ALL" : techChoice}
+                onChange={(e) => {
+                  setAutoAll(false);
+                  setTechChoice(e.target.value);
+                }}
+                title="Whose appointments to show"
+              >
+                <option value="ALL">All technicians</option>
+                {techDirectory.map((t) => (
+                  <option key={t.UserId} value={t.UserId}>
+                    {t.UserName}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="tech-pick" title="Only Change Technician holders may look at another technician's list">
+                {chosenName || "My appointments"}
+              </span>
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div
                 style={{

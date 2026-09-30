@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation';
 import { logoutAdmin } from "@/lib/logout";
 import Image from 'next/image';
 import AdminSidebar from '@/components/AdminSidebar';
+import { useMyAccess } from '@/lib/useMyAccess';
+import AccessLoading from '@/components/AccessLoading';
+import NoAccessHome from '@/components/NoAccessHome';
 
 interface AdminUser    { name: string; email: string; }
 interface ServiceItem  { name: string; price: string; duration: string; category: string; }
@@ -854,7 +857,10 @@ function NotifDropdown({ onScrollToLow, onClose }: { onScrollToLow:()=>void; onC
   );
 }
 
-export default function AdminDashboardPage() {
+/* The dashboard itself is a right: without DASH.ACCESS the page shows the
+   "what you can open" card instead of the shop's figures (the sidebar hides
+   the link for the same reason). */
+function DashboardInner() {
   const router = useRouter();
   const [admin,       setAdmin]       = useState<AdminUser|null>(null);
   const [navKey,      setNavKey]      = useState('dashboard');
@@ -1301,4 +1307,17 @@ export default function AdminDashboardPage() {
       </div>{/* end root flex */}
     </>
   );
+}
+
+export default function AdminDashboardPage() {
+  const { loaded, enforce, has } = useMyAccess();
+  if (!loaded) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}>
+        <AccessLoading />
+      </div>
+    );
+  }
+  if (enforce && !has("DASH", "ACCESS")) return <NoAccessHome screen="the Dashboard" />;
+  return <DashboardInner />;
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ensureLocationExtras } from "@/lib/locationExtras";
+import { locationScopeForRequest } from "@/lib/locationScope";
 
 function ok(data: unknown, status = 200) {
   return NextResponse.json({ success: true, data }, { status });
@@ -130,7 +131,19 @@ export async function GET(req: NextRequest) {
     const search = trim(searchParams.get("search")).toUpperCase();
     const mainsOnly = searchParams.get("mainsOnly") === "1";
 
+    /* Branch scope: a non-super caller only ever sees the locations they were
+       given — their own plus the ones ticked on their access profile. */
+    const resolved = await locationScopeForRequest(req);
+    if (!resolved.ok) return resolved.response;
+    const scope = resolved.scope;
+    const mayUse = (code: unknown) =>
+      scope.unlimited ||
+      [...scope.allowed].some(
+        (c) => c.toUpperCase() === trim(code).toUpperCase(),
+      );
+
     if (locCode) {
+      if (!mayUse(locCode)) return err("Location not found", 404);
       const found = await findLoc(locCode);
       if (!found) return err("Location not found", 404);
       return ok(mapLoc(found));
@@ -149,7 +162,7 @@ export async function GET(req: NextRequest) {
     sql += " ORDER BY CASE WHEN l.MainLocCode<>'' THEN RTRIM(l.MainLocCode) ELSE RTRIM(l.LocCode) END, l.SubLoc, RTRIM(l.LocCode)";
 
     const list = await prisma.$queryRawUnsafe<LocRow[]>(sql, ...params);
-    return ok(list.map(mapLoc));
+    return ok(list.map(mapLoc).filter((l) => mayUse(l.LocCode)));
   } catch (e) {
     console.error("GET /locations error:", e);
     return err("Failed to fetch locations", 500);

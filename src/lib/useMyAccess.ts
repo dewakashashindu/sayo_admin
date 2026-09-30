@@ -24,7 +24,7 @@ export interface MyAccess {
   perms: Set<string>;
   locRight: string[];                  // role-granted locations
   workLoc: string;                     // location assigned in user details
-  allowedLocCodes: Set<string>;        // locRight, else just workLoc
+  allowedLocCodes: Set<string>;        // workLoc ∪ locRight (the union)
 }
 
 interface AccessPayload {
@@ -134,11 +134,17 @@ export function useMyAccess(): MyAccess {
 
   return useMemo(() => {
     const perms = new Set<string>(cache?.keys ?? []);
-    const locRight = cache?.locations ?? [];
-    const workLoc = (cache?.workingLocId ?? "").trim();
-    const allowedLocCodes = new Set<string>(
-      locRight.length ? locRight : workLoc ? [workLoc] : [],
-    );
+  const locRight = cache?.locations ?? [];
+  const workLoc = (cache?.workingLocId ?? "").trim();
+  /* UNION, not fallback: the person's own location always counts, and the
+     locations ticked on their access profiles are added to it. (Before this,
+     ticking one location on a profile threw the person's own branch away.) */
+  const allowedLocCodes = new Set<string>();
+  if (workLoc) allowedLocCodes.add(workLoc);
+  for (const code of locRight) {
+    const c = String(code ?? "").trim();
+    if (c) allowedLocCodes.add(c);
+  }
     /* FAIL CLOSED: no answer yet (or no permission) → no. Before this change a
        slow or failed request left every button enabled. */
     const has = (code: string, action = "ACCESS") =>

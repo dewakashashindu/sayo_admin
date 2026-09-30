@@ -4,21 +4,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadAccessForUser } from "@/lib/accessServer";
 import { ALL_ACCESS_NODES } from "@/lib/accessCatalog";
-import { prisma } from "@/lib/prisma";
 import { hasNeverLockedOutPower, allAccessKeys, isSuperAdmin } from "@/lib/superAdmin";
+import { locationScopeForUser } from "@/lib/locationScope";
 import { requireAdminSession } from "@/lib/sessionGuard";
-
-/** Every enabled location — the super administrator is never branch-bound. */
-async function allLocationCodes(): Promise<string[]> {
-  try {
-    const rows = await prisma.$queryRaw<{ LocCode: string }[]>`
-      SELECT RTRIM(LocCode) AS LocCode FROM tbl_locationmaster WHERE Enable = 1
-    `;
-    return rows.map((r) => String(r.LocCode ?? "").trim()).filter(Boolean);
-  } catch {
-    return [];
-  }
-}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,7 +23,11 @@ export async function GET(req: NextRequest) {
 
   const bag = await loadAccessForUser(session.uid);
   let keys = [...bag.keys];
-  let locations = bag.locations;
+  /* The branches this person may use: their own location UNION the locations
+     ticked on the profiles they hold (see lib/locationScope). The super
+     administrator gets every enabled branch. */
+  const scope = await locationScopeForUser(session.uid);
+  let locations = [...scope.allowed];
   /* "profiles" = the union of the assigned profiles, "custom" = rows without an
      assigned profile, "none" = nothing assigned,
      "super" = the override below is in force (the account above ignores the
@@ -49,7 +41,6 @@ export async function GET(req: NextRequest) {
   // lock itself out of its own panel.
   if (isSuperAdmin({ userId: bag.userId, groupId: bag.groupId }) || hasNeverLockedOutPower(bag.groupId)) {
     keys = allAccessKeys();
-    locations = await allLocationCodes();
     source = "super";
   }
 

@@ -1,11 +1,14 @@
 // src/app/api/security/assign-profiles/route.ts
-// GET /api/security/assign-profiles
+// GET /api/security/assign-profiles[?q=text]
 //   → the people who can sign in, the profiles that exist, and who holds what.
+//     ?q= filters the people IN SQL (name / login / id), so the screen's search
+//     keeps working whatever the client is doing with the rows it already has.
 //
 // Screen: System Settings → User Settings → Assign Profiles.
 // A person may hold several profiles; the rights are the union of them all
 // (see src/lib/accessProfiles.ts → resolveUserAccess).
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { accessOverviewByUser, allProfileAccess, listProfiles } from "@/lib/accessProfiles";
 import { superAdminGroupId, superAdminUserId } from "@/lib/superAdmin";
@@ -24,18 +27,34 @@ export async function GET(req: NextRequest) {
     const guard = await requireAdminAccess(req, { screen: "ASSIGNP", action: "ACCESS" });
     if (!guard.ok) return guard.response;
 
+    /* the screen's search box — filtered here as well as on the client, so a
+       large user list does not depend on the browser holding every row */
+    const q = trim(req.nextUrl.searchParams.get("q")).slice(0, 50);
+    const like = `%${q.toLowerCase()}%`;
+    const filter = q
+      ? Prisma.sql`AND (LOWER(RTRIM(u.UserId)) LIKE ${like}
+                     OR LOWER(RTRIM(u.UserName)) LIKE ${like}
+                     OR LOWER(RTRIM(u.LogName)) LIKE ${like})`
+      : Prisma.sql``;
+
     const users = await prisma.$queryRaw<
       { UserId: string; LogName: string; UserName: string; GroupId: string; GroupDes: string | null; Enable: number }[]
     >`
       SELECT RTRIM(u.UserId) AS UserId, RTRIM(u.LogName) AS LogName, RTRIM(u.UserName) AS UserName,
              RTRIM(u.GroupId) AS GroupId,
-             (SELECT RTRIM(g.GroupDes) FROM tbl_usergroups g WHERE RTRIM(g.GroupId) = RTRIM(u.GroupId) LIMIT 1) AS GroupDes,
+             /* CONVERT … COLLATE: the two tables may have been created with different
+               collations; a plain "=" between them raises "Illegal mix of collations"
+               (error 1267) and the list comes back empty — which reads as "search
+               shows nothing". Comparing on a common collation always works. */
+             (SELECT RTRIM(g.GroupDes) FROM tbl_usergroups g
+               WHERE CONVERT(RTRIM(g.GroupId) USING utf8mb4) COLLATE utf8mb4_general_ci = CONVERT(RTRIM(u.GroupId) USING utf8mb4) COLLATE utf8mb4_general_ci LIMIT 1) AS GroupDes,
              u.Enable AS Enable
       FROM tbl_userdetails u
       WHERE RTRIM(u.UserId) <> ${superAdminUserId()}
         AND RTRIM(u.GroupId) <> ${superAdminGroupId()}
+        ${filter}
       ORDER BY u.UserId
-    `.catch(() => [] as { UserId: string; LogName: string; UserName: string; GroupId: string; GroupDes: string | null; Enable: number }[]);
+    `;
 
     /* one pass over Tbl_UserAuthorization: the profiles each person holds, how
        many permissions their rows grant, their branches, and whether those rows

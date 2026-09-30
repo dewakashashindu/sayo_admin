@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertLocationAllowed } from "@/lib/locationScope";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { logActivity } from "@/lib/activityLog";
@@ -44,6 +45,8 @@ export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
     const locCode = trim(sp.get("locCode"));
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const status = trim(sp.get("status")).toLowerCase();
     const q = trim(sp.get("q"));
     const limit = Math.min(Math.max(Number(sp.get("limit") || 300) || 300, 1), 500);
@@ -127,6 +130,8 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as Record<string, unknown>;
 
     const locCodeRaw = invId(body.locCode, "Location", 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCodeRaw);
     const supIDRaw = invId(body.supID, "Supplier", 10);
     const poDate = invDateField(body.poDate ?? new Date().toISOString().slice(0, 10), "PO date");
     const dueDate = invDateField(body.dueDate ?? poDate, "PO due date");
@@ -141,6 +146,8 @@ export async function POST(req: NextRequest) {
       /* Everything is resolved against the database first: the codes that are
          stored are the ones the tables hold, not the ones the browser sent. */
       const locCode = await findLocation(tx, locCodeRaw);
+      /* branch guard — only a location this caller was given */
+      await assertLocationAllowed(req, locCode);
       if (!locCode) throw new InvError(`Unknown location “${locCodeRaw}”.`, 400);
       const supID = await findSupplier(tx, supIDRaw);
       if (!supID) throw new InvError(`Unknown supplier “${supIDRaw}”.`, 400);

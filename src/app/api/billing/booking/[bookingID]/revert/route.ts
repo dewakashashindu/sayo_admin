@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { locationGuard } from "@/lib/locationScope";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { ADMIN_COOKIE, verifyAdminToken } from "@/lib/adminSession";
@@ -48,6 +49,19 @@ export async function POST(req: NextRequest, { params }: Ctx) {
 
     const body = (await req.json().catch(() => ({}))) as { locCode?: unknown };
     const requestedLoc = trim(body.locCode);
+
+    /* branch guard — only somebody who was given this booking's branch may
+       revert it (the body may leave locCode out, so read the header). */
+    {
+      const branchRows = requestedLoc
+        ? [{ LocCode: requestedLoc }]
+        : await prisma.$queryRaw<{ LocCode: string }[]>`
+            SELECT RTRIM(LocCode) AS LocCode FROM tbl_bookingheder
+            WHERE RTRIM(BookingID) = ${bookingID} LIMIT 1
+          `;
+      const stop = await locationGuard(req, branchRows[0]?.LocCode ?? "");
+      if (stop) return stop;
+    }
 
     // The acting user comes from the signed cookie, never from the body.
     const session = await verifyAdminToken(req.cookies.get(ADMIN_COOKIE)?.value);

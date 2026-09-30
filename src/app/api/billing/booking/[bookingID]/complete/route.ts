@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { locationGuard } from "@/lib/locationScope";
 import { PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { normalisePaymentEntries } from "@/lib/billingPayments";
@@ -81,6 +82,12 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       );
     }
     const locCode = trim(header.LocCode);
+    /* branch guard — the booking's location must be one this caller was given */
+    {
+      const stop = await locationGuard(req, locCode);
+      if (stop) return stop;
+    }
+
 
     // Legacy rows carry the 1900-01-01 zero date instead of NULL for "not billed".
     const billedAt = header.BillingTime

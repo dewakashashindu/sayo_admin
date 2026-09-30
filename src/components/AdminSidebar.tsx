@@ -51,7 +51,7 @@ const ITEM_ACCESS_CODE: Record<string, string> = {
   'appt-dashboard': 'APPT',
   'appt-tech': 'TECHAPPT',
   'billing-dashboard': 'BILLDASH', 'billing-transactions': 'BILLTXN', 'billing-reports': 'BILLREP',
-  'inv-location': 'LOC', 'inv-categories': 'CAT', 'inv-items': 'ITEM', 'inv-units': 'UNIT', 'inv-suppliers': 'SUP',
+  'inv-location': 'LOC', 'inv-categories': 'CAT', 'inv-items': 'ITEM', 'inv-units': 'UNIT', 'inv-modes': 'MODES', 'inv-suppliers': 'SUP',
   'inv-po': 'PO', 'inv-grn': 'GRN', 'inv-srn': 'SRN', 'inv-damage': 'DMG',
   'inv-tr-req': 'TREQ', 'inv-tr-note': 'TNOTE', 'inv-tr-ret': 'TRET',
   'inv-iss-req': 'IREQ', 'inv-iss-note': 'INOTE', 'inv-recon': 'RECON', 'inv-reports': 'INVREP',
@@ -59,7 +59,8 @@ const ITEM_ACCESS_CODE: Record<string, string> = {
   'admin-schedules': 'ADSCH', 'admin-hours': 'ADHRS', 'settings-user-groups': 'UGROUPS', 'settings-users': 'USERS',
   'promo-coupons': 'PRCOUP', 'promo-packages': 'PRPACK', 'promo-rewards': 'PRREWRD', 'promo-discounts': 'PRDISC', 'promo-greetings': 'PRGREET',
   'acc-salary': 'ACCSAL', 'acc-raw': 'ACCRAW', 'acc-other': 'ACCOTH', 'acc-revenue': 'ACCREV',
-  'settings-startup': 'SETUP', 'settings-access': 'ACCESSP', 'settings-assign': 'ASSIGNP',
+  'settings-startup': 'SETUP', 'settings-site': 'EDITSITE',
+  'settings-access': 'ACCESSP', 'settings-assign': 'ASSIGNP',
   reports: 'REPORTS',
 };
 // Some nav leaves count for more than one screen code.
@@ -89,6 +90,32 @@ function visibleNavGroups(perms: Set<string>, loaded: boolean): NavGroup[] {
   return NAV_GROUPS
     .filter((g) => (g.children?.length ? g.children.some((c) => subItemVisible(c, perms)) : leafAllowed(g.key, perms)))
     .map((g) => (g.children ? { ...g, children: filterSubItems(g.children, perms) } : g));
+}
+
+/**
+ * Every leaf the signed-in person may open, in menu order — the dashboard and
+ * the "no access" screen use this to offer something useful instead of a blank
+ * page, and the login screen uses it to land on a screen they can actually use.
+ */
+export interface AllowedLeaf { key: string; label: string; group: string; path: string }
+
+export function allowedNavLeaves(perms: Set<string>, loaded = true): AllowedLeaf[] {
+  if (!loaded) return [];
+  const groups = visibleNavGroups(perms, true);
+  const out: AllowedLeaf[] = [];
+  for (const g of groups) {
+    const leaves = g.path ? [{ key: g.key, path: g.path, label: g.label }] : (g.children ?? []).flatMap(leafItemsOf);
+    for (const leaf of leaves) {
+      if (!leaf.path) continue;
+      out.push({ key: leaf.key, label: leaf.label, group: g.label, path: leaf.path });
+    }
+  }
+  return out;
+}
+
+/** The first screen this person may open (menu order), or null for none. */
+export function firstAllowedPath(perms: Set<string>, loaded = true): string | null {
+  return allowedNavLeaves(perms, loaded)[0]?.path ?? null;
 }
 
 export function IChevDown()  { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>; }
@@ -129,6 +156,7 @@ export const NAV_GROUPS: NavGroup[] = [
         { key: 'inv-categories', label: 'Categories',      path: '/categories' },
         { key: 'inv-items',      label: 'Item Master',     path: '/service'      },
         { key: 'inv-units',      label: 'Unit Master',     path: '/units'      },
+        { key: 'inv-modes',      label: 'Modes',           path: '/inventory/reference/modes' },
         { key: 'inv-suppliers',  label: 'Supplier Master', path: '/suppliers'  },
       ]},
       { key: 'inv-txn',   label: 'Transactions', path: '', children: [
@@ -207,7 +235,12 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'System Settings',
     icon: <IGear />,
     children: [
-      { key: 'settings-startup', label: 'Start-up Settings', path: '/settings/startup' },
+      {
+        key: 'settings-startup', label: 'Start-up Settings', path: '',
+        children: [
+          { key: 'settings-site', label: 'Edit Site', path: '/admin' },
+        ],
+      },
       {
         key: 'settings-userset', label: 'User Settings', path: '',
         children: [
@@ -339,8 +372,8 @@ export const SIDEBAR_CSS = `
 
 
 /** Every (key, path) leaf under an item — used to match the current URL. */
-function leafItemsOf(item: SubItem): { key: string; path: string }[] {
-  if (!item.children?.length) return item.path ? [{ key: item.key, path: item.path }] : [];
+function leafItemsOf(item: SubItem): { key: string; path: string; label: string }[] {
+  if (!item.children?.length) return item.path ? [{ key: item.key, path: item.path, label: item.label }] : [];
   return item.children.flatMap(leafItemsOf);
 }
 

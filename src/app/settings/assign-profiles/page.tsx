@@ -39,7 +39,15 @@ const parseKey = (k: string) => {
 
 function AssignProfilesContent() {
   const access = useMyAccess();
-  const canSave = !access.enforce || access.has("ASSIGNP", "SAVE");
+  /* The five buttons each have their own chip on the ASSIGNP node of the
+     profile tree (Access Profile Creation). Super admin / not-yet-loaded
+     screens keep today's behaviour. */
+  const can = (action: string) => !access.enforce || access.has("ASSIGNP", action);
+  const canSave = can("SAVE");
+  const canAddProfile = can("ADD_PROFILE");
+  const canCustomize = can("CUSTOMIZE");
+  const canPrint = can("PRINT");
+  const canRemoveAll = can("REMOVE_ALL");
 
   const router = useRouter();
   const [toast, setToast] = useState<{ msg: string; err: boolean } | null>(null);
@@ -64,15 +72,26 @@ function AssignProfilesContent() {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(ALL_GROUP_CODES));
   const [picking, setPicking] = useState(false);            // the multi-select popup
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
 
   /* ── data ───────────────────────────────────────────────────────────── */
 
-  const load = useCallback(async (keepSelection = true) => {
+  /* ── 🐞 the search box ────────────────────────────────────────────────
+     The shop reported "typing in the search shows nothing". Two causes were
+     possible and both are handled now:
+       1. the list never arrived (a failed query was swallowed by a catch and
+          the panel just showed "No users match") — a failure is now SHOWN, with
+          the server's own message and a Try again button;
+       2. the filtering itself — it now happens on the server as well (?q=), so
+          the rows are narrowed in SQL and the browser only draws what came back.
+     The client-side filter stays on top, so the list reacts instantly while the
+     round-trip is in flight. */
+  const load = useCallback(async (keepSelection = true, q = '') => {
     setLoading(true);
     try {
       const [aRes, lRes] = await Promise.all([
-        fetch('/api/security/assign-profiles', { cache: 'no-store' }),
+        fetch(`/api/security/assign-profiles${q ? `?q=${encodeURIComponent(q)}` : ''}`, { cache: 'no-store' }),
         fetch('/api/locations', { cache: 'no-store' }),
       ]);
       const aJson = await aRes.json() as {
@@ -82,17 +101,28 @@ function AssignProfilesContent() {
       if (!aRes.ok || !aJson?.success) throw new Error(aJson?.message || 'Could not load this screen');
       setUsers(aJson.data?.users ?? []);
       setProfiles(aJson.data?.profiles ?? []);
+      setLoadError('');
       const lJson = await lRes.json() as { success?: boolean; data?: LocOpt[] };
       if (lJson?.success) setLocations(lJson.data ?? []);
       if (!keepSelection) { setSelected(''); setPicked([]); setSaved([]); }
     } catch (e) {
-      showToast(e instanceof Error ? e.message : 'Could not load this screen', true);
+      const msg = e instanceof Error ? e.message : 'Could not load this screen';
+      setLoadError(msg);
+      showToast(msg, true);
     } finally {
       setLoading(false);
     }
   }, [showToast]);
 
   useEffect(() => { void load(false); }, [load]);
+
+  /* typing in the box asks the server again (250 ms after the last keystroke) */
+  useEffect(() => {
+    const q = search.trim();
+    const t = setTimeout(() => { void load(true, q); }, 250);
+    return () => clearTimeout(t);
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [search]);
 
   /** The ticks the person has in the database right now (their own rows). */
   const loadUserTicks = useCallback(async (userId: string) => {
@@ -277,10 +307,26 @@ function AssignProfilesContent() {
 
   /* ── the permission tree (only shown under "Customize") ──────────────── */
 
+  /* The chips are stored in mask order (ACCESS and Save first, for every
+     profile saved before 2026-09-30); they are SHOWN in the order the shop
+     asked for. */
+  const CHIP_ORDER: Record<string, string[]> = {
+    ASSIGNP: ["ACCESS", "ADD_PROFILE", "CUSTOMIZE", "PRINT", "REMOVE_ALL", "SAVE"],
+  };
+  function orderedActions(node: AccessNode) {
+    const order = CHIP_ORDER[node.code];
+    if (!order) return node.actions;
+    const rank = (code: string) => {
+      const i = order.indexOf(code);
+      return i === -1 ? order.length : i;
+    };
+    return [...node.actions].sort((a, b) => rank(a.code) - rank(b.code));
+  }
+
   function ActionChips({ node }: { node: AccessNode }) {
     return (
       <div className="row-actions">
-        {node.actions.map((a) => {
+        {orderedActions(node).map((a) => {
           const on = treeKeys.has(key(node.code, a.code));
           return (
             <button
@@ -406,15 +452,59 @@ function AssignProfilesContent() {
           <div className="body">
             <aside className="panel">
               <div className="panel-search">
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search users…" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search users…"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                {search && (
+                  <button type="button" className="panel-clear" onClick={() => setSearch('')} title="Clear the search">×</button>
+                )}
               </div>
               <label className="filter">
                 <input type="checkbox" checked={onlyWithout} onChange={(e) => setOnlyWithout(e.target.checked)} />
                 <span>Only people with no profile</span>
               </label>
+              <div className="count-line">
+                {loading ? ' ' : search.trim()
+                  ? `${filtered.length} of ${users.length} shown`
+                  : `${users.length} user(s)`}
+              </div>
               <div className="list">
                 {loading && <div className="empty">Loading…</div>}
-                {!loading && filtered.length === 0 && <div className="empty">No users match.</div>}
+                {!loading && loadError && (
+                  <div className="empty err">
+                    {loadError}
+                    <button className="retry" onClick={() => void load(true, search.trim())}>Try again</button>
+                  </div>
+                )}
+                {!loading && !loadError && users.length === 0 && (
+                  <div className="empty">
+                    {search.trim() ? (
+                      <>
+                        No user matches “{search.trim()}”.
+                        <br />
+                        <button className="retry" onClick={() => { setSearch(''); void load(true, ''); }}>
+                          Clear the search
+                        </button>
+                      </>
+                    ) : onlyWithout ? (
+                      'Everyone already holds at least one profile ✓'
+                    ) : (
+                      <>No users to assign yet.<br />Create them in <b>Administration → User Creation → Users</b>.</>
+                    )}
+                  </div>
+                )}
+                {!loading && !loadError && users.length > 0 && filtered.length === 0 && (
+                  <div className="empty">
+                    {onlyWithout && !search.trim()
+                      ? 'Everyone already holds at least one profile ✓'
+                      : <>No user matches “{search}”.</>}
+                  </div>
+                )}
                 {filtered.map((u) => (
                   <button key={u.userId} className={`prow ${selected === u.userId ? 'on' : ''}`} onClick={() => pick(u)} disabled={busy}>
                     <span className="prow-id">{u.userId}</span>
@@ -494,22 +584,30 @@ function AssignProfilesContent() {
                   </div>
 
                   <div className="actions">
-                    <button className="btn" onClick={() => setPicking(true)} disabled={busy || profiles.length === 0}>
-                      + Add Profile
-                    </button>
-                    <button className={`btn ${showTree ? 'primary' : ''}`} onClick={() => setShowTree((v) => !v)} disabled={busy}>
-                      {showTree ? 'Hide Ticks' : 'Customize'}
-                    </button>
+                    {canAddProfile && (
+                      <button className="btn" onClick={() => setPicking(true)} disabled={busy || profiles.length === 0}>
+                        + Add Profile
+                      </button>
+                    )}
+                    {canCustomize && (
+                      <button className={`btn ${showTree ? 'primary' : ''}`} onClick={() => setShowTree((v) => !v)} disabled={busy}>
+                        {showTree ? 'Hide Ticks' : 'Customize'}
+                      </button>
+                    )}
                     {isCustom && (
                       <button className="btn" onClick={resetToProfiles} disabled={busy} title="Throw away the hand-ticked changes and use the profiles again">
                         Reset to Profiles
                       </button>
                     )}
-                    <button className="btn" onClick={() => void handlePrint()} disabled={busy}>Print Access</button>
+                    {canPrint && (
+                      <button className="btn" onClick={() => void handlePrint()} disabled={busy}>Print Access</button>
+                    )}
                     <div className="flex" />
-                    <button className="btn danger" disabled={busy || (!dirty)} onClick={() => { setPicked([]); setTreeKeys(new Set()); setTreeLocs(new Set()); }}>
-                      Remove All
-                    </button>
+                    {canRemoveAll && (
+                      <button className="btn danger" disabled={busy || (!dirty)} onClick={() => { setPicked([]); setTreeKeys(new Set()); setTreeLocs(new Set()); }}>
+                        Remove All
+                      </button>
+                    )}
                     {canSave && (
                       <button className="btn primary" onClick={() => void handleSave()} disabled={busy || !dirty}>
                         {busy ? 'Saving…' : 'Save'}
@@ -569,11 +667,21 @@ const CSS = `
   .head-note{font-size:12px;color:#6b7280;margin-left:auto}
   .body{flex:1;display:flex;gap:12px;min-height:0}
   .panel{width:360px;flex-shrink:0;background:#eef4f4;border:1px solid rgba(0,0,0,0.06);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px;min-height:0}
-  .panel-search input{width:100%;height:38px;border:1px solid rgba(30,58,64,0.18);border-radius:9px;padding:0 12px;font-size:13px;outline:none;font-family:inherit}
+  .panel-search{position:relative}
+  .panel-search input{width:100%;height:38px;border:1px solid rgba(30,58,64,0.20);border-radius:9px;padding:0 34px 0 12px;font-size:13px;outline:none;font-family:inherit;background:#fff;color:#16333a}
+  .panel-search input::placeholder{color:#8fa3a8}
+  .panel-search input::-webkit-search-cancel-button,
+  .panel-search input::-webkit-search-decoration{-webkit-appearance:none;appearance:none;display:none}
+  .panel-search input:focus{border-color:#1e3a40;box-shadow:0 0 0 3px rgba(30,58,64,0.10)}
+  .panel-clear{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:24px;height:24px;border:none;border-radius:999px;background:rgba(30,58,64,.10);color:#1e3a40;font-size:14px;line-height:1;cursor:pointer;font-family:inherit}
+  .panel-clear:hover{background:#1e3a40;color:#fff}
+  .count-line{font-size:11px;color:#7d8f94;font-weight:700;letter-spacing:.03em;padding:0 2px}
   .filter{display:flex;align-items:center;gap:8px;font-size:12px;color:#3c5a60;font-weight:600;padding:0 2px}
   .filter input{width:16px;height:16px;accent-color:#1e3a40}
   .list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
-  .empty{text-align:center;color:#8496a0;font-size:12.5px;padding:26px 8px}
+  .empty{text-align:center;color:#8496a0;font-size:12.5px;line-height:1.6;padding:22px 8px}
+  .empty.err{color:#b91c1c;background:#fff5f5;border:1px dashed #f0a9a9;border-radius:10px}
+  .retry{display:block;margin:10px auto 0;height:30px;padding:0 14px;border:1px solid #e2503c;border-radius:8px;background:#fff;color:#b91c1c;font-weight:700;font-size:12px;cursor:pointer;font-family:inherit}
   .prow{text-align:left;background:#fff;border:1px solid rgba(30,58,64,0.14);border-radius:11px;padding:9px 12px;display:grid;grid-template-columns:86px 1fr auto;gap:8px;align-items:center;cursor:pointer;font-family:inherit}
   .prow:hover{border-color:#1e3a40}
   .prow.on{border-color:#1e3a40;background:#eaf3f2;box-shadow:0 2px 10px rgba(30,58,64,0.10)}
@@ -614,9 +722,9 @@ const CSS = `
   .btn:disabled{opacity:.5;cursor:not-allowed}
   .btn.primary{background:#1e3a40;border-color:#1e3a40;color:#fff}
   .btn.danger{background:#fff;border-color:#e2503c;color:#e2503c}
-  .tree{background:#fff;border:1px solid rgba(30,58,64,0.12);border-radius:12px;padding:6px 8px;max-height:46vh;overflow-y:auto}
+  .tree{background:#fff;border:1px solid rgba(30,58,64,0.12);border-radius:12px;padding:6px 10px;max-height:44vh;overflow-y:auto}
   .loc-box{max-height:none}
-  .row{display:flex;align-items:center;gap:16px;padding:7px 12px;border-bottom:1px solid rgba(30,58,64,0.07);border-radius:9px}
+  .row{display:flex;align-items:center;gap:14px;min-height:38px;padding:5px 10px;border-radius:8px}
   .row.grp{background:rgba(30,58,64,0.04)}
   .row-name{flex:1;min-width:210px;display:flex;align-items:center;gap:11px;background:none;border:none;padding:0;font:inherit;font-size:12.5px;font-weight:700;color:#16333a;cursor:pointer;text-align:left;font-family:inherit}
   .row.leaf .row-name{cursor:default;font-weight:600}
@@ -662,6 +770,11 @@ const CSS = `
 export default function AssignProfilesPage() {
   const { loaded, enforce, has } = useMyAccess();
   if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#c2d4d4" }}><AccessLoading /></div>;
-  if (enforce && !(has("SYSSET", "ACCESS") && has("ASSIGNP", "ACCESS"))) return <NoAccess screen="Assign Profiles" />;
+  /* 2026-09-30 — ASSIGNP.ACCESS alone opens this screen. It used to also need
+     SYSSET.ACCESS, a key the profile tree never offered, so a non-super user
+     could never reach it however many chips they were given. SYSSET.ACCESS is
+     still accepted, so nothing that worked before stops working. */
+  if (enforce && !(has("ASSIGNP", "ACCESS") || has("SYSSET", "ACCESS")))
+    return <NoAccess screen="Assign Profiles" />;
   return <AssignProfilesContent />;
 }

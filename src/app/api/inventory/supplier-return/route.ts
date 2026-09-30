@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertLocationAllowed } from "@/lib/locationScope";
 import { Prisma, PrismaClient } from '@prisma/client';
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { invActor, invFail, invId, InvError, keySql, keyVal, invChar, invDateField } from '@/lib/inventoryServer';
@@ -21,6 +22,8 @@ export async function GET(req: NextRequest) {
     const status = trim(sp.get('status')).toLowerCase();
     const q = trim(sp.get('q'));
     const locCode = trim(sp.get('locCode'));
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCode);
     const limit = Math.min(Math.max(Number(sp.get('limit') || 300) || 300, 1), 500);
     const where: Prisma.Sql[] = [];
     if (locCode) where.push(Prisma.sql`AND ${keySql('h.LocCode')}=${keyVal(locCode)}`);
@@ -64,6 +67,8 @@ export async function POST(req: NextRequest) {
     const actor = await invActor(req);
     const body = (await req.json()) as Record<string, unknown>;
     const locCodeRaw = invId(body.locCode, 'Location', 10);
+    /* branch guard — only a location this caller was given */
+    await assertLocationAllowed(req, locCodeRaw);
     const grnNoRaw = invId(body.grnNo, 'GRN number', 15);
     const supInvNo = trim(body.supInvNo).slice(0, 20);
     const remarks = trim(body.remarks).slice(0, 400);
@@ -90,6 +95,8 @@ export async function POST(req: NextRequest) {
       const locRows = await tx.$queryRaw<{ LocCode: string }[]>`SELECT RTRIM(LocCode) AS LocCode FROM tbl_locationmaster WHERE ${keySql('LocCode')}=${keyVal(locCodeRaw)} LIMIT 1`;
       if (!locRows.length) throw new InvError(`Unknown location “${locCodeRaw}”.`, 400);
       const locCode = trim(locRows[0].LocCode);
+      /* branch guard — only a location this caller was given */
+      await assertLocationAllowed(req, locCode);
       // grn header — must exist and be confirmed
       const grnRows = await tx.$queryRaw<{ GRNNO: string; SupID: string; Confirmed: string }[]>`SELECT RTRIM(GRNNO) AS GRNNO, RTRIM(SupID) AS SupID, UPPER(Confirmed) AS Confirmed FROM tbl_grnheader WHERE ${keySql('LocCode')}=${keyVal(locCode)} AND ${keySql('GRNNO')}=${keyVal(grnNoRaw)} LIMIT 1`;
       if (!grnRows.length) throw new InvError(`GRN ${grnNoRaw} not found at ${locCode}.`, 404);
