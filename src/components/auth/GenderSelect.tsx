@@ -3,14 +3,14 @@
 import { CSSProperties, useState } from 'react';
 import { tokens } from '@/components/auth/shared';
 
-export const GENDER_OPTIONS = [
-  { value: 'male',              label: 'Male'               },
-  { value: 'female',            label: 'Female'             },
-  { value: 'prefer_not_to_say', label: 'Prefer not to say' },
-  { value: 'other',             label: 'Other'              },
-] as const;
+/* One source of truth. This component used to keep its own copy of the list
+   and drifted from src/lib/genderOptions.ts (the API validated one list while
+   the screen offered another), so both now read the same constant. */
+export { GENDER_OPTIONS } from '@/lib/genderOptions';
+import { GENDER_OPTIONS as GENDER_LIST, type GenderValue as GenderStored } from '@/lib/genderOptions';
 
-export type GenderValue = typeof GENDER_OPTIONS[number]['value'] | '';
+/** The stored value, plus '' for "not chosen yet" (a form's empty state). */
+export type GenderValue = GenderStored | '';
 
 interface GenderSelectProps {
   value:    GenderValue;
@@ -110,7 +110,7 @@ export default function GenderSelect({
           Select your gender
         </option>
 
-        {GENDER_OPTIONS.map(opt => (
+        {GENDER_LIST.map(opt => (
           <option
             key={opt.value}
             value={opt.value}

@@ -1,5 +1,5 @@
 // src/app/api/auth/forgot-password/reset/route.ts
-// POST { email, otp, newPassword } — step 2 of the CUSTOMER reset.
+// POST { phone, otp, newPassword } — step 2 of the CUSTOMER reset.
 //
 // 2026-09-29 fixes:
 //   • the code is read from MySQL (Tbl_CustomerOtpReset, bcrypt-hashed) instead
@@ -7,6 +7,9 @@
 //   • the new password must pass the app-wide rule (src/lib/passwordPolicy.ts) —
 //     it used to be "at least 6 characters" here and "3" on the staff side.
 //   • rate limit counters live in MySQL and are cleared on success.
+//
+// 2026-10-01: the account is found by its PHONE number, and the code is keyed
+//   on the canonical number so it matches what /send-otp stored.
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
@@ -15,6 +18,12 @@ import { rateLimitStrong, clearRateStrong } from "@/lib/rateLimitDb";
 import { rateMessage } from "@/lib/rateLimit";
 import { clientIp, ipForLog } from "@/lib/clientIp";
 import { passwordProblem } from "@/lib/passwordPolicy";
+import {
+  canonicalPhone,
+  findCustomerByPhone,
+  isUsablePhone,
+  phoneForLog,
+} from "@/lib/customerIdentity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,22 +53,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email, otp, newPassword } = (await req.json().catch(() => ({}))) as {
+    const { phone, email, otp, newPassword } = (await req.json().catch(() => ({}))) as {
+      phone?: string;
       email?: string;
       otp?: string;
       newPassword?: string;
     };
 
-    if (!email?.trim())
-      return NextResponse.json({ error: "Email is required." }, { status: 400 });
+    const phoneRaw = (phone ?? "").trim();
+    const emailRaw = (email ?? "").trim();
+
+    if (!phoneRaw && !emailRaw)
+      return NextResponse.json({ error: "Phone number is required." }, { status: 400 });
+    if (phoneRaw && !isUsablePhone(phoneRaw))
+      return NextResponse.json({ error: "Enter a valid phone number." }, { status: 400 });
     if (!otp || otp.trim().length !== 6)
       return NextResponse.json({ error: "A 6-digit OTP is required." }, { status: 400 });
 
     const problem = passwordProblem(String(newPassword ?? ""), "customer");
     if (problem) return NextResponse.json({ error: problem }, { status: 400 });
 
-    const emailNorm = email.trim().toLowerCase().slice(0, 200);
-    const verdict = await verifyCustomerOtp(emailNorm, otp);
+    /* the SAME key /send-otp stored the code under */
+    const otpKey = phoneRaw ? canonicalPhone(phoneRaw) : emailRaw.toLowerCase().slice(0, 200);
+    const verdict = await verifyCustomerOtp(otpKey, otp);
 
     if (!verdict.ok) {
       const message =
@@ -76,12 +92,15 @@ export async function POST(req: NextRequest) {
 
     const hashedPSW = await bcrypt.hash(String(newPassword), 12);
     try {
-      const user = await prisma.tbl_CustomerMaster.findFirst({
-        where: { CusEmail: emailNorm },
-        select: { CusCode: true },
-      });
+      const user = phoneRaw
+        ? await findCustomerByPhone(phoneRaw)
+        : await prisma.tbl_CustomerMaster.findFirst({
+            where: { CusEmail: emailRaw.toLowerCase() },
+            select: { CusCode: true },
+          });
+
       if (!user) {
-        await deleteCustomerOtp(emailNorm);
+        await deleteCustomerOtp(otpKey);
         return NextResponse.json({ error: "This reset is no longer valid. Please start again." }, { status: 400 });
       }
       await prisma.tbl_CustomerMaster.update({
@@ -89,14 +108,16 @@ export async function POST(req: NextRequest) {
         data: { PSW: hashedPSW },
       });
     } catch (err) {
-      console.error("[reset] update error:", errMsg(err));
+      console.error(`[reset] update error: ${errMsg(err)}`);
       return NextResponse.json({ error: "Password reset failed." }, { status: 500 });
     }
 
-    await deleteCustomerOtp(emailNorm);
-    await clearRateStrong("otp-send:email", emailNorm);
-    await clearRateStrong("customer-login:account", emailNorm);
-    console.log(`[reset] password updated for ${emailNorm}`);
+    await deleteCustomerOtp(otpKey);
+    /* the send-otp counter used to live under "otp-send:email" */
+    await clearRateStrong("otp-send:account", otpKey);
+    await clearRateStrong("otp-send:email", otpKey);
+    await clearRateStrong("customer-login:account", otpKey);
+    console.log(`[reset] password updated for ${phoneRaw ? phoneForLog(phoneRaw) : otpKey}`);
 
     return NextResponse.json({ success: true });
   } catch (err) {

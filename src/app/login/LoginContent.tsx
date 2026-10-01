@@ -15,6 +15,7 @@ import {
   Checkbox,
   Divider,
   isValidEmail,
+  isValidPhone,
   mainStyle,
   overlayStyle,
   pageWrapStyle,
@@ -25,22 +26,26 @@ export default function LoginContent() {
   const router       = useRouter();
   const searchParams = useSearchParams();
 
-  const [email,    setEmail]    = useState('');
+  /* The account is identified by its phone number (src/lib/customerIdentity).
+     An address is still accepted — an account made before this change signs in
+     either way — and the server is told which one was typed. */
+  const [phone,    setPhone]    = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
   const [loading,  setLoading]  = useState(false);
   const [apiError, setApiError] = useState('');
 
-  const [tEmail,    setTEmail]    = useState(false);
+  const [tPhone,    setTPhone]    = useState(false);
   const [tPassword, setTPassword] = useState(false);
 
-  const errEmail    = tEmail    && !isValidEmail(email)   ? 'Enter a valid email address.'             : '';
+  const typedIsEmail   = phone.includes('@');
+  const errPhone    = tPhone    && !typedIsEmail && !isValidPhone(phone) ? 'Enter a valid phone number.'   : '';
   const errPassword = tPassword && password.length < 6    ? 'Password must be at least 6 characters.'  : '';
-  const canSubmit   = isValidEmail(email) && password.length >= 6;
+  const canSubmit   = (typedIsEmail ? isValidEmail(phone) : isValidPhone(phone)) && password.length >= 6;
 
     const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setTEmail(true);
+    setTPhone(true);
     setTPassword(true);
     setApiError('');
     if (!canSubmit) return;
@@ -50,7 +55,9 @@ export default function LoginContent() {
       const res  = await fetch('/api/auth/login', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email, password }),
+        body:    JSON.stringify(
+          typedIsEmail ? { email: phone, password } : { phone, password },
+        ),
       });
       const data = await res.json();
 
@@ -148,17 +155,17 @@ export default function LoginContent() {
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.25rem' }}>
 
-                  {/* email */}
+                  {/* phone number (an address is accepted too) */}
                   <div>
-                    <FieldLabel text="Email Address" />
+                    <FieldLabel text="Phone Number" />
                     <div style={{ position: 'relative' }}>
                       <input
-                        className={`sayo-input${errEmail ? ' err' : ''}`}
-                        type="email"
-                        placeholder="you@example.com"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        onBlur={() => setTEmail(true)}
+                        className={`sayo-input${errPhone ? ' err' : ''}`}
+                        type={typedIsEmail ? 'email' : 'tel'}
+                        placeholder="+94 77 000 0000"
+                        value={phone}
+                        onChange={e => setPhone(e.target.value)}
+                        onBlur={() => setTPhone(true)}
                         style={{ paddingLeft: '2.5rem' }}
                       />
                       <div style={{
@@ -166,10 +173,13 @@ export default function LoginContent() {
                         transform: 'translateY(-50%)', color: tokens.color.whiteFaint,
                         pointerEvents: 'none',
                       }}>
-                        <Ico.Mail s={14} />
+                        {typedIsEmail ? <Ico.Mail s={14} /> : <Ico.Phone s={14} />}
                       </div>
                     </div>
-                    {errEmail && <p className="field-err">{errEmail}</p>}
+                    {errPhone && <p className="field-err">{errPhone}</p>}
+                    <p style={{ color: tokens.color.whiteFaint, fontSize: '0.72rem', marginTop: '0.3rem', fontFamily: tokens.font.family }}>
+                      The number you registered with. An e-mail address works too.
+                    </p>
                   </div>
 
                   {/* password */}

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { genderFromMof, type GenderValue } from '@/lib/genderOptions';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -70,7 +71,9 @@ interface CatalogService {
   durationMin: number;
   category: string;
   itemCode: string;
-  mof: string;
+  locCode: string;
+  /** male / female / other — read from tbl_itemmaster.MOF. */
+  gender: GenderValue;
 }
 
 interface CatalogProvider {
@@ -83,14 +86,14 @@ interface CatalogProvider {
 
 export async function GET() {
   try {
-    const [locations, items, category1, users, specialities, assignments] =
+    const [locations, items, category1, category2, category3, category4, users, specialities, assignments] =
       await Promise.all([
         prisma.tbl_LocationMaster.findMany({
           where: { Enable: true },
           orderBy: { LocCode: 'asc' },
         }),
         prisma.tbl_ItemMaster.findMany({
-          where: { Enable: true },
+          where: { Enable: true, ServiceItem: true },
           select: {
             LocCode: true,
             ItemCode: true,
@@ -107,6 +110,9 @@ export async function GET() {
           },
         }),
         prisma.tbl_ItemCategory1.findMany({ where: { Enable: true } }),
+        prisma.tbl_ItemCategory2.findMany({ where: { Enable: true } }),
+        prisma.tbl_ItemCategory3.findMany({ where: { Enable: true } }),
+        prisma.tbl_ItemCategory4.findMany({ where: { Enable: true } }),
         prisma.tbl_userdetails.findMany({ where: { Enable: true } }),
         prisma.tbl_technicianspecilities.findMany(),
         prisma.tbl_technicianspecilityassignment.findMany(),
@@ -119,44 +125,58 @@ export async function GET() {
       locMap.set(code, name || code);
     }
 
+    /* One lookup for all four category levels. An item may be filed under
+       Category1..Category4, and the deepest level that actually holds a code
+       is the one the customer should see ("Hair > Treatment > Protein"). */
     const catDesMap = new Map<string, string>();
-    for (const row of category1) {
-      catDesMap.set(clean(row.CatCode).toUpperCase(), clean(row.CatDes));
+    for (const level of [category1, category2, category3, category4]) {
+      for (const row of level) {
+        catDesMap.set(clean(row.CatCode).toUpperCase(), clean(row.CatDes));
+      }
     }
 
-    const seenCodes = new Set<string>();
-    // The booking page identifies a service by `name + price` (how it toggles
-    // selection). Collapse rows that resolve to the exact same display name and
-    // price so the UI never shows two indistinguishable entries — the master
-    // table can hold several rows with the same ItemPrintDes but different
-    // seconds/volumes. Distinct-by-price rows are kept.
+    // Dedupe per BRANCH, not per code: the same service carries its own price,
+    // duration and availability in every location, and the booking page shows
+    // only the chosen branch. Collapsing across branches (as this route used
+    // to) kept the first row seen and showed another branch's price.
+    const seenKeys = new Set<string>();
     const seenServiceKeys = new Set<string>();
     const services: CatalogService[] = [];
 
     for (const item of items) {
-      const serviceItem = Boolean(item.ServiceItem);
-      if (!serviceItem) continue;
+      const locCode = clean(item.LocCode).toUpperCase();
+      if (!locMap.has(locCode)) continue;   // item filed under a disabled branch
 
       const itemCode = clean(item.ItemCode);
       if (!itemCode) continue;
 
-      // The booking page shows one service list independent of branch, so
-      // deduplicate by ItemCode and prefer the first row we see.
-      if (seenCodes.has(itemCode)) continue;
-      seenCodes.add(itemCode);
+      const key = `${locCode}|${itemCode.toUpperCase()}`;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
 
-      const catRaw =
-        clean(item.Category1) !== '' && clean(item.Category1).toUpperCase() !== ' '
-          ? catDesMap.get(clean(item.Category1).toUpperCase()) || item.Category1
-          : item.ItemDes;
+      /* Category1 is the top-level group the page's tabs follow; Category2-4
+         are refinements of it. Using the DEEPEST populated level instead put
+         "Protein Treatment" under SKIN (the word "treatment" is a SKIN
+         keyword) and "Aroma Massage" under BODY while its parent said HAIR —
+         the branch's own grouping is the one the customer recognises. */
+      const chain = [item.Category1, item.Category2, item.Category3, item.Category4];
+      let catLabel = '';
+      for (const raw of chain) {
+        const code = clean(raw);
+        if (!code) continue;
+        catLabel = catDesMap.get(code.toUpperCase()) || code;
+        break;
+      }
+      if (!catLabel) catLabel = clean(item.ItemDes) || itemCode;
 
-      const category = normalizeCategory(catRaw || item.Category1 || item.ItemDes);
+      const category = normalizeCategory(catLabel);
       const durationMin = Math.max(0, Math.floor(Number(item.SerDuration) || 0));
       const name = clean(item.ItemPrintDes) || clean(item.ItemDes) || itemCode;
       const price = formatPrice(item.Retailprice);
 
-      const serviceKey = `${name.toLowerCase()}||${price.toLowerCase()}`;
-      if (seenServiceKeys.has(serviceKey)) continue; // identical display row
+      // Identical display rows inside one branch would be indistinguishable.
+      const serviceKey = `${key}|${name.toLowerCase()}|${price.toLowerCase()}`;
+      if (seenServiceKeys.has(serviceKey)) continue;
       seenServiceKeys.add(serviceKey);
 
       services.push({
@@ -166,7 +186,8 @@ export async function GET() {
         durationMin,
         category,
         itemCode,
-        mof: clean(item.MOF || 'O').toUpperCase().slice(0, 1) || 'O',
+        locCode,
+        gender: genderFromMof(item.MOF),
       });
     }
 
@@ -214,7 +235,10 @@ export async function GET() {
       providersByLocation[branchName] = branchProviders;
     }
 
-    // Category tabs: known categories first, then any derived/extra codes.
+    // Category tabs: known categories first, then any derived/extra codes. The
+    // union is taken over every branch on purpose — the page narrows the list
+    // again for the chosen branch and gender, and a tab that vanished when a
+    // branch was picked read as a bug.
     const serviceCategories = Array.from(
       new Set(services.map((service) => service.category)),
     );

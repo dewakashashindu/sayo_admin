@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { customerPhoneMatchSql } from '@/lib/customerIdentity';
 import { logActivity, maskPhoneForLog } from '@/lib/activityLog';
 import { timeLabelFromValue } from '@/lib/legacyTime';
 import {
@@ -522,7 +523,12 @@ async function assertNoProviderCapacityConflict(
      AND ${Prisma.raw(itemCodeJoinSql('i.ItemCode', 'd.ServiceItemID'))}
     WHERE RTRIM(h.LocCode) = ${locCode.trim()}
       AND DATE(h.BookingDate) = ${date}
-      AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL')
+      /* PENDING is a request, not a confirmed chair: the "with confirmation"
+         flow saves one on purpose and the salon confirms it by phone. Holding
+         capacity for it blocked a real without-confirmation booking for a slot
+         nobody had agreed to. The availability screen already skips the same
+         statuses, so the two now agree. */
+      AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL', 'PENDING')
     FOR UPDATE
   `;
 
@@ -867,7 +873,9 @@ function isDuplicateKeyError(error: any): boolean {
 ─────────────────────────────────────────────────────────────────────────────── */
 function validateBookingBody(body: Partial<BookingRequestBody>): string | null {
   if (!body.name?.trim())     return 'Name is required.';
-  if (!body.email?.trim())    return 'Email is required.';
+  /* The e-mail is optional on a booking account (it is not a key any more —
+     the phone number is), so a customer without one can still book. */
+  if (body.email && !body.email.trim()) return 'Email address is not valid.';
   if (!body.phone?.trim())    return 'Phone number is required.';
   if (!body.location?.trim()) return 'Location is required.';
   if (!body.date?.trim())     return 'Date is required.';
@@ -1779,11 +1787,23 @@ export async function POST(req: NextRequest) {
         await lockBookingIDNamespaceTx(tx, branch.LocCode.trim());
 
         // Resolve (or create) the customer under the transaction lock so
-        // concurrent submissions for the same e-mail cannot duplicate rows.
+        // concurrent submissions for the same person cannot duplicate rows.
+        //
+        // The PHONE is the key. This used to be CusEmail, which is now
+        // optional: an empty e-mail matched the first customer whose address
+        // column was still blank and then overwrote their name, number and
+        // gender. The number is compared on its digits (customerIdentity.ts),
+        // so "+94 77 …" finds the row saved as "077…".
         const emailNorm = email.trim().toLowerCase();
-        const locked = await tx.$queryRaw<{ CusCode: string }[]>`
-          SELECT CusCode FROM tbl_customermaster WHERE CusEmail = ${emailNorm} FOR UPDATE
-        `;
+        const phoneMatch = customerPhoneMatchSql(phone);
+        const locked = phoneMatch
+          ? await tx.$queryRaw<{ CusCode: string }[]>(Prisma.sql`
+              SELECT CusCode FROM tbl_customermaster
+              WHERE ${phoneMatch} FOR UPDATE
+            `)
+          : await tx.$queryRaw<{ CusCode: string }[]>`
+              SELECT CusCode FROM tbl_customermaster WHERE CusEmail = ${emailNorm} FOR UPDATE
+            `;
         if (locked.length > 0) {
           customer = await tx.tbl_CustomerMaster.update({
             where: { CusCode: locked[0].CusCode },
@@ -1794,15 +1814,16 @@ export async function POST(req: NextRequest) {
             },
           });
         } else {
-          const placeholderHash = await bcrypt.hash(
-            `guest_${emailNorm}_${Date.now()}`,
-            10,
-          );
+            const placeholderHash = await bcrypt.hash(
+              `guest_${phone.trim() || emailNorm}_${Date.now()}`,
+              10,
+            );
           customer = await tx.tbl_CustomerMaster.create({
             data: {
               CusCode: await generateCusCode(tx),
               CusName: name.trim(),
-              CusEmail: emailNorm,
+              /* CusEmail is NOT NULL and defaults to a blank space */
+              CusEmail: emailNorm || ' ',
               RegTel: phone.trim().slice(0, 15),
               PSW: placeholderHash,
               Gender: gender?.trim().slice(0, 50) ?? null,

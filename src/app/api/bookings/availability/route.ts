@@ -1,5 +1,6 @@
 // src/app/api/bookings/availability/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { decodeBookingSchedule } from '@/lib/bookingSchedule';
 import { BOOKING_SERVICE_DETAIL_FROM } from '@/lib/bookingReadModel';
@@ -12,6 +13,15 @@ const PUBLIC_TIME_SLOTS = [
   '05:00 PM', '05:30 PM', '06:00 PM',
 ];
 
+/* A booking that is not CONFIRMED yet does not hold a chair. The "with
+   confirmation" flow is a REQUEST: it is saved PENDING precisely because the
+   salon calls the customer and agrees the time, and two requests for the same
+   slot are normal (that is the whole point of the mode). Counting them here
+   made half the day read as "booked" on the without-confirmation screen and,
+   worse, the server guard rejected a real walk-in for a slot nobody had
+   confirmed. CANCELLED/CANCEL are still ignored. */
+const NON_BLOCKING_STATUSES = ['CANCELLED', 'CANCEL', 'PENDING'];
+
 interface LegacyAvailabilityRow {
   BookingID: string;
   StartMin: number;
@@ -19,6 +29,8 @@ interface LegacyAvailabilityRow {
   ServiceItemID: string;
   ProviderName: string | null;
   Remarks: string | null;
+  ScheduleStartMin: number | null;
+  ScheduleEndMin: number | null;
   DurationMin: number;
   Qty: string | number | null;
 }
@@ -81,12 +93,14 @@ async function loadLegacyBookings(date: string, locCode?: string): Promise<Legac
         RTRIM(d.ServiceItemID) AS ServiceItemID,
         RTRIM(u.UserName) AS ProviderName,
         h.Remarks AS Remarks,
+        d.ScheduleStartMin AS ScheduleStartMin,
+        d.ScheduleEndMin AS ScheduleEndMin,
         COALESCE(NULLIF(i.SerDuration, 0), 30) AS DurationMin,
         d.Qty AS Qty
       ${BOOKING_SERVICE_DETAIL_FROM}
       WHERE DATE(h.BookingDate) = ${date}
         AND RTRIM(h.LocCode) = ${locCode}
-        AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL')
+        AND UPPER(RTRIM(h.Status)) NOT IN (${Prisma.join(NON_BLOCKING_STATUSES)})
     `;
   }
 
@@ -98,17 +112,58 @@ async function loadLegacyBookings(date: string, locCode?: string): Promise<Legac
       RTRIM(d.ServiceItemID) AS ServiceItemID,
       RTRIM(u.UserName) AS ProviderName,
       h.Remarks AS Remarks,
+      d.ScheduleStartMin AS ScheduleStartMin,
+      d.ScheduleEndMin AS ScheduleEndMin,
       COALESCE(NULLIF(i.SerDuration, 0), 30) AS DurationMin,
       d.Qty AS Qty
     ${BOOKING_SERVICE_DETAIL_FROM}
     WHERE DATE(h.BookingDate) = ${date}
-      AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL')
+      AND UPPER(RTRIM(h.Status)) NOT IN (${Prisma.join(NON_BLOCKING_STATUSES)})
   `;
 }
 
+/** Every bookable specialist of a branch, by the display name the page uses. */
+async function loadBranchProviderNames(locCode: string): Promise<string[]> {
+  const [locations, users, specialities, assignments] = await Promise.all([
+    prisma.tbl_LocationMaster.findMany({ where: { Enable: true }, select: { LocCode: true } }),
+    prisma.tbl_userdetails.findMany({ where: { Enable: true }, select: { UserId: true, UserName: true, WorkingLocID: true, Rmks: true } }),
+    prisma.tbl_technicianspecilities.findMany(),
+    prisma.tbl_technicianspecilityassignment.findMany(),
+  ]);
+
+  const locMap = new Map<string, string>();
+  for (const location of locations) {
+    locMap.set(String(location.LocCode ?? '').trim().toUpperCase(), String(location.LocCode ?? '').trim().toUpperCase());
+  }
+
+  const specByID = new Map<string, string>();
+  for (const spec of specialities) {
+    specByID.set(String(spec.SpecAreaID ?? '').trim().toUpperCase(), String(spec.Specilities ?? '').trim());
+  }
+
+  const bookable = new Set<string>();
+  for (const assignment of assignments) {
+    const specID = String(assignment.SpecAreaID ?? '').trim().toUpperCase();
+    if (specByID.get(specID)) bookable.add(String(assignment.UserID ?? '').trim().toUpperCase());
+  }
+
+  const names: string[] = [];
+  for (const user of users) {
+    const userID = String(user.UserId ?? '').trim().toUpperCase();
+    if (!bookable.has(userID)) continue;
+    const working = String(user.WorkingLocID ?? '').trim().toUpperCase();
+    if (!locMap.has(working)) continue;
+    const display = String(user.UserName ?? '').trim();
+    if (display) names.push(display);
+  }
+  return Array.from(new Set(names));
+}
+
 /* GET /api/bookings/availability
-   Only the without-confirmation public flow uses this endpoint. Its response
-   is derived from the same legacy bookings used by the server-side guard. */
+   Only the without-confirmation public flow uses this endpoint, and it has to
+   agree with the server-side guard (assertNoProviderCapacityConflict) row for
+   row — the page shows what this returns and the API rejects on anything
+   hidden here. */
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -145,7 +200,11 @@ export async function GET(req: NextRequest) {
       locCode = branch.LocCode.trim();
     }
 
-    const rows = await loadLegacyBookings(date, locCode);
+    const [rows, branchProviders] = await Promise.all([
+      loadLegacyBookings(date, locCode),
+      locCode ? loadBranchProviderNames(locCode) : Promise.resolve([] as string[]),
+    ]);
+
     const grouped = new Map<string, {
       startMin: number;
       durationMin: number;
@@ -168,17 +227,26 @@ export async function GET(req: NextRequest) {
         String(row.ProviderName || techID).trim(),
         requestedProviderNames,
       );
-      const storedSchedule = decodeBookingSchedule(row.Remarks);
-      const scheduled = storedSchedule.find((entry) =>
-        entry.itemCode &&
-        entry.itemCode.toLowerCase() === String(row.ServiceItemID || '').trim().toLowerCase(),
-      );
 
-      if (scheduled) {
-        // Persisted split/swap schedules contain the exact service start. Do
-        // not collapse that service back to the booking's overall start.
+      /* Same priority as the server guard: the per-service placement columns
+         win, the legacy Remarks metadata is the fallback. Reading only Remarks
+         (as this used to) showed a green slot for a service that is actually
+         placed later, and the submit then failed with 409. */
+      const columnStart = Number(row.ScheduleStartMin);
+      const columnEnd = Number(row.ScheduleEndMin);
+      const storedSchedule = decodeBookingSchedule(row.Remarks);
+      const legacyScheduled = storedSchedule.find((entry) =>
+        entry.itemCode &&
+        normalizeLookup(entry.itemCode) === normalizeLookup(row.ServiceItemID),
+      );
+      const scheduledStart =
+        Number.isFinite(columnStart) && Number.isFinite(columnEnd) && columnEnd > columnStart
+          ? columnStart
+          : legacyScheduled?.startMin;
+
+      if (scheduledStart !== undefined && Number.isFinite(scheduledStart)) {
         scheduledBookings.push({
-          startMin: scheduled.startMin,
+          startMin: scheduledStart,
           durationMin,
           providerName,
         });
@@ -208,6 +276,7 @@ export async function GET(req: NextRequest) {
       for (const slot of PUBLIC_TIME_SLOTS) {
         const slotStart = slotToMinutes(slot);
         if (
+          slotStart >= 0 &&
           overlaps(slotStart, 30, booking.startMin, booking.durationMin) &&
           !slots.includes(slot)
         ) {
@@ -218,9 +287,24 @@ export async function GET(req: NextRequest) {
       providerSlots[booking.providerName] = slots;
     }
 
+    /* A slot nobody at the branch can take at all. This used to be hardcoded
+       `[]`, which left the evaluator's first guard (a globally blocked slot)
+       unreachable — the page had no way to mark a whole branch as full. */
+    const roster = branchProviders.length > 0 ? branchProviders : [];
+    const bookedSlots: string[] = [];
+    if (roster.length > 0) {
+      for (const slot of PUBLIC_TIME_SLOTS) {
+        const someoneFree = roster.some((name) => {
+          const busy = providerSlots[name] || providerSlots[providerDisplayName(name, requestedProviderNames)] || [];
+          return !busy.includes(slot);
+        });
+        if (!someoneFree) bookedSlots.push(slot);
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      bookedSlots: [],
+      bookedSlots,
       providerSlots,
     });
   } catch (error) {

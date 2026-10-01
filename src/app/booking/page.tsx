@@ -5,6 +5,8 @@ import { useState, useEffect, useRef, useMemo, createContext, useContext, type D
 import { useRouter } from 'next/navigation';
 import {
   buildCatalogFromApi,
+  filterServicesFor,
+  locCodeForName,
   type Catalog,
   type CatalogApiResponse,
   type CatalogService,
@@ -24,7 +26,7 @@ import {
   t, svc as svcName, role as roleName, cat as catName, loc as locName,
   monthNames, dayNames, formatDateL, durStr, fmtDur, type Lang,
 } from '@/i18n/translations';
-import { GENDER_OPTIONS } from '@/lib/genderOptions';
+import { GENDER_OPTIONS, type GenderValue } from '@/lib/genderOptions';
 
 interface SessionUser {
   userId:      string;
@@ -61,9 +63,8 @@ const tokens = {
 
 type BookingMode = 'confirmed' | 'without_confirmation';
 type Step        = 1 | 2;
-type GenderValue = 'male' | 'female' | 'prefer_not_to_say' | 'other';
 
-interface ServiceItem { name: string; price: string; duration: string; category: string; }
+interface ServiceItem { name: string; price: string; duration: string; category: string; itemCode?: string; locCode?: string; gender?: string; }
 interface Provider    { name: string; role: string; avatar: string; expertise: string[]; }
 
 const CATEGORIES = ['WAX', 'HAIR', 'SKIN', 'NAIL', 'BODY', 'BRIDAL'];
@@ -176,6 +177,9 @@ const DEFAULT_CATALOG: Catalog = {
   categories: CATEGORIES,
   // The curated service/provider entries carry exactly the fields the UI reads.
   servicesByCategory: ALL_SERVICES as unknown as Record<string, CatalogService[]>,
+  // The curated entries carry no branch/gender of their own, so they are
+  // offered at every branch and for every gender (see the filter below).
+  services: Object.values(ALL_SERVICES).flat() as unknown as CatalogService[],
   providersByLocation: PROVIDERS as unknown as Record<string, CatalogProvider[]>,
 };
 
@@ -396,10 +400,12 @@ const globalCss = `
   .info-box-green{background:rgba(34,197,94,0.08); border:1px solid rgba(34,197,94,0.3); border-radius:0.625rem;padding:0.65rem 0.9rem;font-size:0.75rem;color:rgba(255,255,255,0.65);font-family:var(--app-font);line-height:1.55;}
   .api-error{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.35);border-radius:0.625rem;padding:0.7rem 1rem;font-size:0.78rem;color:#ef4444;font-family:var(--app-font);line-height:1.55;margin-bottom:1rem;}
   .divider{height:1px;background:rgba(255,255,255,0.09);margin:1.2rem 0;}
-  .loc-cards-wrap{display:flex;gap:0.65rem;overflow-x:auto;flex-wrap:nowrap;padding:0.1rem 0.1rem 0.55rem;scroll-snap-type:x proximity;scrollbar-width:none;}
-  .loc-cards-wrap::-webkit-scrollbar{display:none;}
-  .loc-cards-wrap .loc-card{flex:0 0 auto;scroll-snap-align:start;}
-  .loc-card{cursor:pointer;border-radius:0.875rem;border:1.5px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);padding:0.9rem 1.1rem;display:flex;align-items:center;justify-content:space-between;gap:0.75rem;transition:all 0.22s;flex:0 0 auto;min-width:9.75rem;}
+  /* Was a single nowrap row with overflow-x:auto: with more branches than fit
+     the rest were only reachable by scrolling sideways, and nothing said so.
+     It is a wrapping grid now — every branch is on screen, and the strip grows
+     downwards instead of hiding rows off the right edge. */
+  .loc-cards-wrap{display:grid;grid-template-columns:repeat(auto-fit,minmax(10.5rem,1fr));gap:0.65rem;padding:0.1rem;}
+  .loc-card{cursor:pointer;border-radius:0.875rem;border:1.5px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);padding:0.9rem 1.1rem;display:flex;align-items:center;justify-content:space-between;gap:0.75rem;transition:all 0.22s;min-width:0;}
   .loc-card:hover{border-color:rgba(184,134,11,0.5);background:rgba(184,134,11,0.08);transform:translateY(-1px);}
   .loc-card-active{border-color:#B8860B !important;background:rgba(184,134,11,0.14) !important;}
   .spinner-sm{width:1rem;height:1rem;border:2px solid rgba(34,197,94,0.3);border-top-color:#22c55e;border-radius:50%;display:inline-block;animation:spin 0.7s linear infinite;}
@@ -416,8 +422,7 @@ const globalCss = `
     .time-grid{grid-template-columns:repeat(3,1fr) !important;}
     .appt-header-right{align-items:flex-start !important;text-align:left !important;}
     .phone-plain-input{text-align:left !important;}
-    .loc-cards-wrap{padding-bottom:0.7rem;}
-    .loc-card{min-width:8.75rem;}
+    .loc-cards-wrap{grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));}
     .time-section-header{flex-direction:column;align-items:flex-start;}   
   }
 
@@ -773,16 +778,78 @@ function PhoneInline({ phone, autoFilled, onChange, lang }: { phone: string; aut
   );
 }
 
-function GenderPhoneCorner({ gender, onGenderChange, phone, onPhoneChange, phoneAutoFilled, lang }: {
-  gender: GenderValue | ''; onGenderChange: (v: GenderValue) => void;
+/* Gender used to sit in the header corner, above the branch cards, while the
+   service list below was filtered by it — so the customer picked a gender
+   before knowing which branch they were at. It now lives under the branch
+   cards, and the corner carries the contact number only. */
+/* A plain select that matches the dark card styling. The corner widget
+   (GenderInline) is icon-only — fine next to a heading, unreadable as a form
+   field in the body of step 1. */
+function BookingGenderSelect({ value, onChange, options, placeholder }: {
+  value: string; onChange: (v: GenderValue) => void;
+  options: { value: string; label: string }[]; placeholder: string;
+}) {
+  return (
+    <div style={{ position: 'relative' }}>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as GenderValue)}
+        aria-label={placeholder}
+        style={{
+          width:            '100%',
+          padding:          '0.7rem 2.4rem 0.7rem 2.6rem',
+          background:       'rgba(255,255,255,0.05)',
+          border:           value ? '1px solid rgba(184,134,11,0.45)' : '1px solid rgba(255,255,255,0.14)',
+          borderRadius:     '0.625rem',
+          color:            value ? '#fff' : tokens.color.whiteFaint,
+          fontSize:         '0.88rem',
+          fontFamily:       tokens.font.family,
+          outline:          'none',
+          appearance:       'none',
+          WebkitAppearance: 'none',
+          cursor:           'pointer',
+        }}
+      >
+        <option value="" disabled style={{ background: '#1a1a1a', color: tokens.color.whiteFaint }}>
+          {placeholder}
+        </option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value} style={{ background: '#1a1a1a', color: '#fff' }}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <div style={{
+        position:      'absolute',
+        left:          '0.85rem',
+        top:           '50%',
+        transform:     'translateY(-50%)',
+        color:         tokens.color.whiteFaint,
+        pointerEvents: 'none',
+        display:       'flex',
+      }}>
+        <GenderSymbol value={value as GenderValue | ''} s={18} />
+      </div>
+      <div style={{
+        position:      'absolute',
+        right:          '0.85rem',
+        top:           '50%',
+        transform:     'translateY(-50%)',
+        color:         tokens.color.whiteFaint,
+        pointerEvents: 'none',
+        fontSize:      '0.7rem',
+      }}>
+        ▾
+      </div>
+    </div>
+  );
+}
+
+function GenderPhoneCorner({ phone, onPhoneChange, phoneAutoFilled, lang }: {
   phone: string; onPhoneChange: (v: string) => void; phoneAutoFilled: boolean; lang: Lang;
 }) {
   return (
     <div className="appt-header-right">
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
-        <Label text={t(lang, 'gp.gender')} />
-        <GenderInline value={gender} onChange={onGenderChange} lang={lang} />
-      </div>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem', width: '100%' }}>
         <Label text={t(lang, 'gp.contact')} />
         <PhoneInline phone={phone} autoFilled={phoneAutoFilled} onChange={onPhoneChange} lang={lang} />
@@ -1099,10 +1166,24 @@ function MultiGuestEditor({
 
   const isMe          = index === 0;
   const label         = guestLabel(index, lang);
-  const { servicesByCategory, providersByLocation, categories } = useCatalog();
-  const serviceList   = servicesByCategory[guest.activeCat] ?? [];
+  const { services, providersByLocation, categories, locations } = useCatalog();
+
+  /* The multi tab used to read the raw per-category list, which holds EVERY
+     branch's rows — so the same service showed up once per branch (and, in a
+     live database where a service carries the same name and price in each
+     branch, twice with an identical React key). It now narrows to the chosen
+     branch and the guest's own gender, exactly like the single flow. */
+  const { list: narrowedServices, fallback: guestGenderFallback } = filterServicesFor(
+    services,
+    locCodeForName(locations, location),
+    guest.gender,
+  );
+  const guestServices = location ? narrowedServices : [];
+  const guestCategories = categories.filter((c) => guestServices.some((s) => s.category === c));
+  const activeCat = guestCategories.includes(guest.activeCat) ? guest.activeCat : guestCategories[0];
+  const serviceList   = guestServices.filter((s) => s.category === activeCat);
   const guestCats     = Array.from(new Set(guest.services.map(s => s.category)));
-  const catFilter     = guestCats.length > 0 ? guestCats : [guest.activeCat];
+  const catFilter     = guestCats.length > 0 ? guestCats : [activeCat];
   const branchProvs   = location ? (providersByLocation[location] ?? []) : [];
   const filteredProvs = branchProvs.filter(p => p.expertise.some(e => catFilter.includes(e)));
   const isMultiCat    = guestCats.length > 1;
@@ -1263,21 +1344,40 @@ function MultiGuestEditor({
           {/* services */}
           <div style={{ marginBottom: '0.6rem' }}>
             <div className="mg-section-title"><Ico.Scissors s={12} /> {t(lang, 'multi.servicesFor')}</div>
+            {!location && (
+              <div className="info-box" style={{ margin: '0.35rem 0 0.75rem', display: 'flex', gap: '0.5rem' }}>
+                <Ico.Info s={13} />
+                <span>{t(lang, 's1.selectBranchFirst')}</span>
+              </div>
+            )}
             <div className="cat-tabs-wrap" style={{ margin: '0.35rem 0 0.75rem' }}>
-              {categories.map(catSel => {
+              {guestCategories.map(catSel => {
                 const has = guestCats.includes(catSel);
                 return (
-                  <button key={catSel} type="button" className={`cat-tab ${guest.activeCat === catSel ? 'cat-tab-active' : 'cat-tab-inactive'}`} onClick={() => onPatch({ activeCat: catSel })}>
+                  <button key={catSel} type="button" className={`cat-tab ${activeCat === catSel ? 'cat-tab-active' : 'cat-tab-inactive'}`} onClick={() => onPatch({ activeCat: catSel })}>
                     {catName(lang, catSel)}{has && <span className="cat-tab-dot" />}
                   </button>
                 );
               })}
             </div>
+            {guestGenderFallback && (
+              <div className="info-box" style={{ margin: '0 0 0.6rem', display: 'flex', gap: '0.5rem' }}>
+                <Ico.Info s={13} />
+                <span>{t(lang, 's1.noGenderSplit', { loc: locName(lang, location) })}</span>
+              </div>
+            )}
+            {serviceList.length === 0 && (
+              <p style={{ color: tokens.color.whiteFaint, fontSize: '0.8rem', marginBottom: '0.8rem', fontFamily: tokens.font.family }}>
+                {t(lang, 's1.noServicesHere', { loc: locName(lang, location) })}
+              </p>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.9rem' }}>
-              {serviceList.map(s => {
+              {serviceList.map((s, sIdx) => {
                 const active = guest.services.some(x => x.name === s.name && x.price === s.price);
                 return (
-                  <div key={`${guest.id}-${s.name}-${s.price}`} className={`svc-card${active ? ' svc-card-active' : ''}`} onClick={() => toggleSvc(s)} role="button" aria-pressed={active}>
+                  /* itemCode identifies a row; the index is the guaranteed
+                     tie-breaker so two rows can never collide again */
+                  <div key={`${guest.id}-${s.itemCode || s.name}-${s.price}-${sIdx}`} className={`svc-card${active ? ' svc-card-active' : ''}`} onClick={() => toggleSvc(s)} role="button" aria-pressed={active}>
                     <div>
                       <p style={{ color: tokens.color.whiteMuted, fontSize: '0.85rem', fontWeight: 500, fontFamily: tokens.font.family }}>{svcName(lang, s.name)}</p>
                       <p style={{ color: tokens.color.whiteFaint, fontSize: '0.71rem', marginTop: '0.12rem', display: 'flex', alignItems: 'center', gap: '0.25rem', fontFamily: tokens.font.family }}><Ico.Clock s={11} />{durStr(lang, s.duration)}</p>
@@ -1377,7 +1477,7 @@ function MultiGuestEditor({
 }
 
 function MultiBookingPanel({
-  lang, contactName, setName, contactPhone, setPhone, contactEmail, setEmail,
+  lang, contactName, setName, contactPhone, setPhone, contactEmail, setEmail, contactGender,
 }: {
   lang: Lang;
   contactName: string;
@@ -1386,6 +1486,7 @@ function MultiBookingPanel({
   setPhone: Dispatch<SetStateAction<string>>;
   contactEmail: string;
   setEmail: Dispatch<SetStateAction<string>>;
+  contactGender: GenderValue | '';
 }) {
   const { locations } = useCatalog();
   const [mode, setMode] = useState<BookingMode>('confirmed');
@@ -1395,6 +1496,15 @@ function MultiBookingPanel({
   const [submitError, setSubmitError] = useState('');
   const [reviewing, setReviewing] = useState(false);
   const [completed, setCompleted] = useState<{ label: string; bookingId: number }[] | null>(null);
+
+  /* The contact block is filled from the signed-in account (name, number,
+     address), so ME's gender has to be filled the same way — otherwise the
+     customer picks it, switches tab and finds it blank again. Guests 2..n are
+     deliberately left empty: the salon does not know them yet. */
+  useEffect(() => {
+    if (!contactGender) return;
+    setGuests(prev => (prev[0]?.gender ? prev : [{ ...prev[0], gender: contactGender }, ...prev.slice(1)]));
+  }, [contactGender]);
 
   const accentColor = mode === 'without_confirmation' ? tokens.color.green : tokens.color.gold;
   const btnClass    = mode === 'without_confirmation' ? 'btn-green' : 'btn-gold';
@@ -1819,15 +1929,6 @@ export default function BookingPage() {
     return () => { active = false; };
   }, []);
 
-  /* Align the active category tab with whatever categories the catalog uses. */
-  useEffect(() => {
-    if (catalog.categories.length === 0) return;
-    if (!catalog.categories.includes(category)) {
-      setCategory(catalog.categories[0]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalog.categories]);
-
     const slotResults = useMemo<Record<string, SlotResult>>(() => {
     if (providers.length === 0 || services.length === 0) return {};
     return buildSlotResults(providers, services, providerSlots, bookedSlots);
@@ -1872,13 +1973,37 @@ export default function BookingPage() {
   }, [router]);
 
   const today       = new Date().toISOString().split('T')[0];
-  const serviceList = catalog.servicesByCategory[category] ?? [];
+
+  /* The catalog now carries EVERY branch's service rows plus the gender each
+     one is filed under (tbl_itemmaster.MOF). The page shows one branch and one
+     gender: "other" is the neutral answer and is never filtered. */
+  const selectedLocCode = locCodeForName(catalog.locations, location);
+  /* A branch whose services are not split by gender yet must not look empty —
+     fall back to the whole branch list instead of dead-ending the booking. */
+  const { list: visibleServices, fallback: genderFallback } =
+    filterServicesFor(catalog.services, selectedLocCode, gender);
+  const branchCategories   = Array.from(new Set(visibleServices.map((s) => s.category)));
+  const tabCategories      = branchCategories.length > 0
+    ? catalog.categories.filter((c) => branchCategories.includes(c))
+    : catalog.categories;
+  const serviceList = (category ? visibleServices.filter((s) => s.category === category) : []) as unknown as ServiceItem[];
 
   const allBranchProvs   = location ? (catalog.providersByLocation[location] ?? []) : [];
   const selectedCats     = Array.from(new Set(services.map(s => s.category)));
   const catFilter        = selectedCats.length > 0 ? selectedCats : [category];
   const filteredProvs    = allBranchProvs.filter(p => p.expertise.some(e => catFilter.includes(e)));
   const providerNamesKey = providers.map(p => p.name).sort().join(',');
+
+  /* Align the active category tab with the categories the chosen branch and
+     gender actually have. */
+  useEffect(() => {
+    if (tabCategories.length === 0) return;
+    if (!tabCategories.includes(category)) {
+      setCategory(tabCategories[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabCategories.join(',')]);
+
 
     useEffect(() => {
     if (mode !== 'without_confirmation' || !date || providers.length === 0) {
@@ -2134,9 +2259,23 @@ export default function BookingPage() {
   const handleLocChange = (locSel: string)  => {
     setLocation(locSel);
     setProviders([]);
+    /* Services belong to a branch AND a gender. Carrying a selection across
+       either change books a service this branch does not sell. */
+    setServices([]);
     setTimeSlot('');
     setServiceSchedule([]);
     setHoveredSlot(null);
+    setPersistedHighlight(new Set());
+  };
+
+  /* Gender narrows the service list the same way the branch does. */
+  const handleGenderChange = (next: GenderValue | '') => {
+    setGender(next);
+    setServices([]);
+    setTimeSlot('');
+    setServiceSchedule([]);
+    setHoveredSlot(null);
+    setPersistedHighlight(new Set());
   };
 
     const handleConfirm = async () => {
@@ -2262,7 +2401,7 @@ export default function BookingPage() {
                       <h2 style={{ color: tokens.color.white, fontSize: '1.25rem', fontWeight: 600, fontFamily: tokens.font.family, marginBottom: '0.25rem' }}>{t(lang, 's1.buildYourAppointment')}</h2>
                       <p style={{ color: tokens.color.whiteFaint, fontSize: '0.78rem', fontFamily: tokens.font.family, lineHeight: 1.55 }}>{t(lang, 's1.intro')}</p>
                     </div>
-                    <GenderPhoneCorner gender={gender} onGenderChange={setGender} phone={phone} onPhoneChange={setPhone} phoneAutoFilled={phoneAutoFilled} lang={lang} />
+                    <GenderPhoneCorner phone={phone} onPhoneChange={setPhone} phoneAutoFilled={phoneAutoFilled} lang={lang} />
                   </div>
 
                   <div className="divider" style={{ margin: '0 0 1.4rem' }} />
@@ -2285,10 +2424,33 @@ export default function BookingPage() {
 
                   <div className="divider" style={{ margin: '0 0 1.4rem' }} />
 
+                  {/* GATE — a service, a specialist and a time only mean
+                      something at a chosen branch, so everything below waits
+                      for one. */}
+                  {!location && (
+                    <div className="info-box" style={{ marginBottom: '1.4rem', display: 'flex', gap: '0.5rem' }}>
+                      <Ico.Info s={13} />
+                      <span>{t(lang, 's1.selectBranchFirst')}</span>
+                    </div>
+                  )}
+
+                  {location && (
+                  <>
+                  {/* GENDER — decides which services are offered */}
+                  <div style={{ marginBottom: '1.4rem', maxWidth: '280px' }}>
+                    <Label text={t(lang, 'gp.gender')} />
+                    <BookingGenderSelect
+                      value={gender}
+                      onChange={handleGenderChange}
+                      options={GENDER_OPTIONS.map((g) => ({ value: g.value, label: t(lang, `gender.${g.value}`) }))}
+                      placeholder={t(lang, 'gp.selectGender')}
+                    />
+                  </div>
+
                   {/* SERVICES */}
                   <Label text={t(lang, 's1.category')} />
                   <div className="cat-tabs-wrap" style={{ marginBottom: '1rem' }}>
-                    {catalog.categories.map(catSel => {
+                    {tabCategories.map(catSel => {
                       const has = selectedCats.includes(catSel);
                       return (
                         <button key={catSel} type="button" className={`cat-tab ${category === catSel ? 'cat-tab-active' : 'cat-tab-inactive'}`} onClick={() => setCategory(catSel)}>
@@ -2299,7 +2461,18 @@ export default function BookingPage() {
                   </div>
 
                   <Label text={t(lang, 's1.chooseServices')} />
+                  {genderFallback && (
+                    <div className="info-box" style={{ marginBottom: '0.65rem', display: 'flex', gap: '0.5rem' }}>
+                      <Ico.Info s={13} />
+                      <span>{t(lang, 's1.noGenderSplit', { loc: locName(lang, location) })}</span>
+                    </div>
+                  )}
                   <p style={{ color: tokens.color.whiteFaint, fontSize: '0.72rem', marginBottom: '0.65rem', fontFamily: tokens.font.family }}>{t(lang, 's1.tapToSelect')}</p>
+                  {serviceList.length === 0 && (
+                    <p style={{ color: tokens.color.whiteFaint, fontSize: '0.8rem', marginBottom: '1rem', fontFamily: tokens.font.family }}>
+                      {t(lang, 's1.noServicesHere', { loc: locName(lang, location) })}
+                    </p>
+                  )}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.9rem' }}>
                     {serviceList.map(s => {
                       const active = services.some(x => x.name === s.name && x.price === s.price);
@@ -2427,6 +2600,9 @@ export default function BookingPage() {
                     </div>
                   )}
 
+                  </>
+                  )}
+
                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
                     <button className={btnClass} type="button" disabled={!canStep2} onClick={() => setStep(2)} style={{ padding: '0.85rem 2.2rem', fontSize: '0.9rem' }}>
                       {t(lang, 's1.reviewBooking')} <Ico.Right />
@@ -2508,6 +2684,7 @@ export default function BookingPage() {
               contactName={name} setName={setName}
               contactPhone={phone} setPhone={setPhone}
               contactEmail={email} setEmail={setEmail}
+              contactGender={gender}
             />
           )}
         </div>

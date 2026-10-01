@@ -1,4 +1,6 @@
 
+import type { GenderValue } from '@/lib/genderOptions';
+
 export interface CatalogService {
   name: string;
   price: string;
@@ -6,7 +8,10 @@ export interface CatalogService {
   durationMin: number;
   category: string;
   itemCode: string;
-  mof: string;
+  /** Which branch this row belongs to — the public page shows one branch. */
+  locCode: string;
+  /** male / female / other, read from tbl_itemmaster.MOF. */
+  gender: GenderValue;
 }
 
 export interface CatalogProvider {
@@ -26,6 +31,8 @@ export interface Catalog {
   locations: CatalogLocation[];
   categories: string[];
   servicesByCategory: Record<string, CatalogService[]>;
+  /** Flat list, so the page can narrow it by branch and gender. */
+  services: CatalogService[];
   providersByLocation: Record<string, CatalogProvider[]>;
 }
 
@@ -74,6 +81,44 @@ export function buildCatalogFromApi(
     locations,
     categories: orderedCategories,
     servicesByCategory,
+    services,
     providersByLocation: providers,
   };
+}
+
+/**
+ * The list the public page may offer for one branch + one gender.
+ *
+ * The catalog holds every branch's rows (each service has its own price and
+ * availability per branch), so it has to be narrowed twice: first to the chosen
+ * branch, then to the chosen gender. "other" is the neutral answer and is never
+ * filtered.
+ *
+ * `fallback` is true when the branch has nothing filed under that gender — the
+ * caller shows the whole branch list and says so, because an empty list
+ * dead-ends the booking.
+ */
+export function filterServicesFor(
+  services: CatalogService[],
+  locCode: string,
+  gender: string,
+): { list: CatalogService[]; fallback: boolean } {
+  const wanted = (locCode || '').trim().toUpperCase();
+  const branchServices = services.filter(
+    (s) => !wanted || !s.locCode || s.locCode.toUpperCase() === wanted,
+  );
+  if (!gender || gender === 'other') return { list: branchServices, fallback: false };
+
+  const byGender = branchServices.filter((s) => !s.gender || s.gender === gender);
+  if (byGender.length === 0) return { list: branchServices, fallback: true };
+  return { list: byGender, fallback: false };
+}
+
+/** The LocCode behind a branch DISPLAY name (the page's `location` state). */
+export function locCodeForName(
+  locations: CatalogLocation[],
+  name: string,
+): string {
+  const match = locations.find((l) => l.name === name);
+  return (match?.code ?? '').trim().toUpperCase();
 }

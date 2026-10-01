@@ -44,8 +44,9 @@ export default function RegisterPage() {
   const [tAgree,    setTAgree   ] = useState(false);
 
     const errName    = tName     && !name.trim()                ? 'Full name is required.'                   : '';
-  const errEmail   = tEmail    && !isValidEmail(email)         ? 'Enter a valid email address.'             : '';
   const errPhone   = tPhone    && !isValidPhone(phone)         ? 'Enter a valid phone number.'              : '';
+  /* The e-mail is optional on a booking account — only checked when given. */
+  const errEmail   = tEmail    && email.trim() && !isValidEmail(email) ? 'Enter a valid email address.'   : '';
   const errGender  = tGender   && !gender                      ? 'Please select your gender.'              : '';
   const errPass    = tPassword && password.length < 6          ? 'Password must be at least 6 characters.' : '';
   const errConfirm = tConfirm  && confirmPassword !== password ? 'Passwords do not match.'                 : '';
@@ -53,8 +54,8 @@ export default function RegisterPage() {
 
     const canSubmit =
     !!name.trim()        &&
-    isValidEmail(email)  &&
     isValidPhone(phone)  &&
+    (!email.trim() || isValidEmail(email)) &&
     !!gender             &&
     password.length >= 6 &&
     confirmPassword === password &&
@@ -326,33 +327,6 @@ export default function RegisterPage() {
 
                   {}
                   <div>
-                    <FieldLabel text="Email Address" />
-                    <div style={{ position: 'relative' }}>
-                      <input
-                        className={`sayo-input${errEmail ? ' err' : ''}`}
-                        type="email"
-                        placeholder="you@example.com"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        onBlur={() => setTEmail(true)}
-                        style={{ paddingLeft: '2.5rem' }}
-                      />
-                      <div style={{
-                        position:      'absolute',
-                        left:          '0.8rem',
-                        top:           '50%',
-                        transform:     'translateY(-50%)',
-                        color:         tokens.color.whiteFaint,
-                        pointerEvents: 'none',
-                      }}>
-                        <Ico.Mail s={14} />
-                      </div>
-                    </div>
-                    {errEmail && <p className="field-err">{errEmail}</p>}
-                  </div>
-
-                  {}
-                  <div>
                     <FieldLabel text="Phone Number" />
                     <div style={{ position: 'relative' }}>
                       <input
@@ -376,6 +350,36 @@ export default function RegisterPage() {
                       </div>
                     </div>
                     {errPhone && <p className="field-err">{errPhone}</p>}
+                    <p style={{ color: tokens.color.whiteFaint, fontSize: '0.72rem', marginTop: '0.3rem', fontFamily: tokens.font.family }}>
+                      Your account is created with this number — you sign in with it.
+                    </p>
+                  </div>
+
+                  {}
+                  <div>
+                    <FieldLabel text="Email Address (Optional)" />
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        className={`sayo-input${errEmail ? ' err' : ''}`}
+                        type="email"
+                        placeholder="you@example.com"
+                        value={email}
+                        onChange={e => setEmail(e.target.value)}
+                        onBlur={() => setTEmail(true)}
+                        style={{ paddingLeft: '2.5rem' }}
+                      />
+                      <div style={{
+                        position:      'absolute',
+                        left:          '0.8rem',
+                        top:           '50%',
+                        transform:     'translateY(-50%)',
+                        color:         tokens.color.whiteFaint,
+                        pointerEvents: 'none',
+                      }}>
+                        <Ico.Mail s={14} />
+                      </div>
+                    </div>
+                    {errEmail && <p className="field-err">{errEmail}</p>}
                   </div>
 
                   {}

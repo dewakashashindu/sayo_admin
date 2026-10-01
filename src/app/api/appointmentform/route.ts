@@ -792,6 +792,34 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, data: branches });
     }
 
+    if (type === "bookingtypes") {
+      /* The booking MODE the front desk picks in the header. It is written to
+         the header row as BooikingTypeID, and the save logic below reads the
+         same column to decide whether the booking is a walk-in (saved
+         CONFIRMED) or a request (saved PENDING) — so the two can never
+         disagree. */
+      const rows = await prisma.tbl_bookingtypes.findMany({
+        where: { Enabel: true },
+        select: { BooikingTypeID: true, BookingTypeDes: true },
+        orderBy: { BooikingTypeID: "asc" },
+      });
+
+      const seen = new Set<string>();
+      const bookingTypes = rows
+        .map((row) => ({
+          id: (row.BooikingTypeID || "").trim(),
+          label: (row.BookingTypeDes || "").trim(),
+        }))
+        .filter((row) => {
+          if (!row.id || seen.has(row.id)) return false;
+          seen.add(row.id);
+          return true;
+        })
+        .map((row) => ({ ...row, label: row.label || row.id }));
+
+      return NextResponse.json({ success: true, data: bookingTypes });
+    }
+
     if (type === "services") {
       const locCode = searchParams.get("locCode")?.trim();
 

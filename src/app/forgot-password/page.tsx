@@ -12,7 +12,7 @@ import {
   PasswordField,
   PasswordStrengthBar,
   AuthStepIndicator,
-  isValidEmail,
+  isValidPhone,
   mainStyle,
   overlayStyle,
   pageWrapStyle,
@@ -20,14 +20,14 @@ import {
 } from '@/components/auth/shared';
 
 type ForgotStep = 1 | 2 | 3;
-const STEP_LABELS = ['Email', 'Verify', 'Reset'];
+const STEP_LABELS = ['Phone', 'Verify', 'Reset'];
 
 export default function ForgotPasswordPage() {
   const [step, setStep] = useState<ForgotStep>(1);
 
-  /* step 1 */
-  const [email, setEmail]   = useState('');
-  const [tEmail, setTEmail] = useState(false);
+  /* step 1 — the account is found by its phone number */
+  const [phone, setPhone]   = useState('');
+  const [tPhone, setTPhone] = useState(false);
 
   /* step 2 */
   const [otp, setOtp]               = useState<string[]>(Array(6).fill(''));
@@ -58,9 +58,9 @@ export default function ForgotPasswordPage() {
     if (step === 2) setTimeout(() => otpRefs.current[0]?.focus(), 100);
   }, [step]);
 
-  const errEmail   = tEmail && !isValidEmail(email) ? 'Enter a valid email address.' : '';
+  const errPhone   = tPhone && !isValidPhone(phone) ? 'Enter a valid phone number.' : '';
   const otpCode    = otp.join('');
-  const canSend    = isValidEmail(email);
+  const canSend    = isValidPhone(phone);
   const canVerify  = otpCode.length === 6;
   const errNew     = tNew     && newPassword.length < 6          ? 'Password must be at least 6 characters.' : '';
   const errConfirm = tConfirm && confirmPassword !== newPassword  ? 'Passwords do not match.'                 : '';
@@ -68,7 +68,7 @@ export default function ForgotPasswordPage() {
 
     const handleSendCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    setTEmail(true);
+    setTPhone(true);
     setApiError('');
     if (!canSend) return;
 
@@ -77,7 +77,7 @@ export default function ForgotPasswordPage() {
       const res  = await fetch('/api/auth/forgot-password/send-otp', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email }),
+        body:    JSON.stringify({ phone }),
       });
       const data = await res.json();
 
@@ -86,7 +86,7 @@ export default function ForgotPasswordPage() {
         return;
       }
 
-      /* always advance — avoids disclosing whether email exists */
+      /* always advance — avoids disclosing whether the number exists */
       setStep(2);
       setResendTimer(30);
       setOtp(Array(6).fill(''));
@@ -140,7 +140,7 @@ export default function ForgotPasswordPage() {
       await fetch('/api/auth/forgot-password/send-otp', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email }),
+        body:    JSON.stringify({ phone }),
       });
     } catch { /* silently ignore — UI already shows new timer */ }
   };
@@ -156,7 +156,7 @@ export default function ForgotPasswordPage() {
       const res  = await fetch('/api/auth/forgot-password/reset', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email, otp: otpCode, newPassword }),
+        body:    JSON.stringify({ phone, otp: otpCode, newPassword }),
       });
       const data = await res.json();
 
@@ -299,25 +299,25 @@ export default function ForgotPasswordPage() {
                   <ErrorBanner />
 
                   <div style={{ marginBottom: '1.25rem' }}>
-                    <FieldLabel text="Email Address" />
+                    <FieldLabel text="Phone Number" />
                     <div style={{ position: 'relative' }}>
                       <input
-                        className={`sayo-input${errEmail ? ' err' : ''}`}
-                        type="email"
-                        placeholder="you@example.com"
-                        value={email}
-                        onChange={e => setEmail(e.target.value)}
-                        onBlur={() => setTEmail(true)}
+                        className={`sayo-input${errPhone ? ' err' : ''}`}
+                        type="tel"
+                        placeholder="+94 77 000 0000"
+                        value={phone}
+                        onChange={e => setPhone(e.target.value)}
+                        onBlur={() => setTPhone(true)}
                         style={{ paddingLeft: '2.5rem' }}
                       />
                       <div style={{
                         position: 'absolute', left: '0.8rem', top: '50%',
                         transform: 'translateY(-50%)', color: tokens.color.whiteFaint, pointerEvents: 'none',
                       }}>
-                        <Ico.Mail s={14} />
+                        <Ico.Phone s={14} />
                       </div>
                     </div>
-                    {errEmail && <p className="field-err">{errEmail}</p>}
+                    {errPhone && <p className="field-err">{errPhone}</p>}
                   </div>
 
                   <div style={{
@@ -326,7 +326,7 @@ export default function ForgotPasswordPage() {
                     color: tokens.color.whiteFaint, fontSize: '0.76rem',
                     fontFamily: tokens.font.family, lineHeight: 1.6,
                   }}>
-                    A one-time verification code will be sent to your registered email address.
+                    A one-time verification code will be sent to this phone number.
                   </div>
 
                   <button
@@ -351,8 +351,8 @@ export default function ForgotPasswordPage() {
 
                   <p style={{ color: tokens.color.whiteFaint, fontSize: '0.78rem', marginBottom: '1.4rem', fontFamily: tokens.font.family, lineHeight: 1.6 }}>
                     We sent a 6-digit code to{' '}
-                    <strong style={{ color: tokens.color.gold }}>{email}</strong>.
-                    Check your inbox and spam folder.
+                    <strong style={{ color: tokens.color.gold }}>{phone}</strong>.
+                    Check your messages.
                   </p>
 
                   <div className="otp-wrap" onPaste={handleOtpPaste}>
@@ -412,7 +412,7 @@ export default function ForgotPasswordPage() {
                       onMouseEnter={e => (e.currentTarget.style.color = tokens.color.gold)}
                       onMouseLeave={e => (e.currentTarget.style.color = tokens.color.whiteFaint)}
                     >
-                      ← Change email address
+                      ← Change phone number
                     </button>
                   </div>
                 </form>

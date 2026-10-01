@@ -114,6 +114,8 @@ interface SubClient {
 
 interface BookingFormData {
   branch: string;
+  /** BooikingTypeID from tbl_bookingtypes — decides how the booking is saved. */
+  bookingTypeID: string;
   fullName: string;
   phoneNumber: string;
   emailAddress: string;
@@ -3883,8 +3885,10 @@ function WalkInPage() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [blacklistWarning, setBlacklistWarning] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>("main");
+  const [bookingTypes, setBookingTypes] = useState<{ id: string; label: string }[]>([]);
   const [form, setForm] = useState<BookingFormData>({
     branch: "",
+    bookingTypeID: "",
     fullName: "",
     phoneNumber: "",
     emailAddress: "",
@@ -3905,6 +3909,15 @@ function WalkInPage() {
     prefilledTechID: "",
     prefilledTechName: "",
   });
+
+  /* Walk-in is the only mode the API saves as CONFIRMED on its own; every
+     other mode is written as PENDING and confirmed later. The same test has to
+     run here so the ConfirmationType column matches the BookingTypeID. */
+  const isWalkInMode = useMemo(() => {
+    const chosen = bookingTypes.find((t) => t.id === form.bookingTypeID);
+    return /walk\s*-?\s*in/i.test(`${chosen?.id ?? ""} ${chosen?.label ?? ""}`);
+  }, [bookingTypes, form.bookingTypeID]);
+
 
   useEffect(() => {
     const isReschedule = searchParams.get("reschedule") === "true";
@@ -3964,7 +3977,7 @@ function WalkInPage() {
   }, []);
 
   useEffect(() => {
-    document.title = "New Walk-in Booking | Sayo Beauty";
+    document.title = "New Booking | Sayo Beauty";
     fetch("/api/appointmentform?type=branches")
       .then((r) => r.json())
       .then((j) => {
@@ -3972,6 +3985,24 @@ function WalkInPage() {
       })
       .catch(() => {})
       .finally(() => setBranchesLoading(false));
+
+    /* The mode list drives what the save writes, so it comes from
+       tbl_bookingtypes rather than being hardcoded here. Walk-in stays the
+       default because that is what this screen has always done. */
+    fetch("/api/appointmentform?type=bookingtypes")
+      .then((r) => r.json())
+      .then((j) => {
+        if (!j.success || !Array.isArray(j.data) || j.data.length === 0) return;
+        setBookingTypes(j.data);
+        setForm((prev) => {
+          if (prev.bookingTypeID) return prev;
+          const walkIn =
+            j.data.find((t: { id: string; label: string }) => /walk\s*-?\s*in/i.test(`${t.id} ${t.label}`))
+            ?? j.data[0];
+          return { ...prev, bookingTypeID: walkIn.id };
+        });
+      })
+      .catch(() => {});
     return () => {
       document.title = "Sayo Beauty";
     };
@@ -4507,9 +4538,11 @@ function WalkInPage() {
           cusName: form.fullName.trim(),
           cusEmail: form.emailAddress?.trim() || undefined,
           gender: form.gender || undefined,
-          bookingTypeID: "WALKIN",
+          /* whatever the front desk picked in the header box — the API reads
+             the same column to decide CONFIRMED (walk-in) vs PENDING */
+          bookingTypeID: form.bookingTypeID || "WALKIN",
           status: "PENDING",
-          confirmationType: "WI",
+          confirmationType: form.bookingTypeID && !isWalkInMode ? "AP" : "WI",
           remarks: form.specialRequest || undefined,
           appointmentDate: form.date,
           guests: [
@@ -4575,6 +4608,10 @@ function WalkInPage() {
     setBlacklistWarning(null);
     setForm({
       branch: "",
+      /* the mode is a property of the screen, not of the customer — keep
+         whatever the front desk picked so a second booking does not silently
+         revert to walk-in */
+      bookingTypeID: form.bookingTypeID,
       fullName: "",
       phoneNumber: "",
       emailAddress: "",
@@ -4756,24 +4793,94 @@ function WalkInPage() {
                 padding: "16px 18px 24px",
               }}
             >
-              <div style={{ marginBottom: 20 }}>
-                <h1
-                  style={{
-                    fontSize: 26,
-                    fontWeight: 800,
-                    color: "#1f2937",
-                    lineHeight: 1.2,
-                  }}
-                >
-                  {form.isReschedule
-                    ? "Reschedule Appointment"
-                    : "New Walk-in Booking"}
-                </h1>
-                <p style={{ fontSize: 13, color: "#6b7280", marginTop: 4 }}>
-                  {form.isReschedule
-                    ? `Updating booking ${form.bookingID} — change the date and time below.`
-                    : "Register a new walk-in client and assign services."}
-                </p>
+              <div
+                style={{
+                  marginBottom: 20,
+                  display: "flex",
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: 16,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div>
+                  <h1
+                    style={{
+                      fontSize: 26,
+                      fontWeight: 800,
+                      color: "#1f2937",
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {form.isReschedule
+                      ? "Reschedule Appointment"
+                      : "New Booking"}
+                  </h1>
+                  <p style={{ fontSize: 13, color: "#6b7280", marginTop: 4 }}>
+                    {form.isReschedule
+                      ? `Updating booking ${form.bookingID} — change the date and time below.`
+                      : "Register a new client and assign services."}
+                  </p>
+                </div>
+
+                {/* BOOKING MODE — the only place it is chosen, and the value
+                    that decides what the save writes. Walk-in is stored
+                    CONFIRMED straight away; the other modes are stored as a
+                    PENDING request to be confirmed later. */}
+                {!form.isReschedule && (
+                  <div style={{ minWidth: 220 }}>
+                    <label
+                      htmlFor="booking-mode"
+                      style={{
+                        display: "block",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
+                        color: "#6b7280",
+                        marginBottom: 6,
+                      }}
+                    >
+                      Booking Mode
+                    </label>
+                    <select
+                      id="booking-mode"
+                      value={form.bookingTypeID}
+                      disabled={bookingTypes.length === 0}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          bookingTypeID: e.target.value,
+                        }))
+                      }
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: "#1f2937",
+                        background: "#fff",
+                        border: "1.5px solid #d1d5db",
+                        borderRadius: 10,
+                        outline: "none",
+                        cursor: bookingTypes.length === 0 ? "not-allowed" : "pointer",
+                        opacity: bookingTypes.length === 0 ? 0.6 : 1,
+                      }}
+                    >
+                      {bookingTypes.length === 0 && <option value="">Loading…</option>}
+                      {bookingTypes.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 5 }}>
+                      {isWalkInMode
+                        ? "Saved as confirmed."
+                        : "Saved as pending — confirm it later."}
+                    </p>
+                  </div>
+                )}
               </div>
               {form.isReschedule && (
                 <div className="reschedule-banner" style={{ marginBottom: 16 }}>

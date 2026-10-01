@@ -1,9 +1,26 @@
+// src/app/api/auth/register/route.ts
+// POST { name, phone, email?, password, gender }
+//
+// 2026-10-01: the account is identified by its PHONE number.
+//   • before: the e-mail was required and was the only key — the duplicate
+//     check, the session token and the whole forgot-password chain hung off
+//     CusEmail, so a customer without an e-mail could not register at all.
+//   • now:   the phone number is required and unique; the e-mail is optional
+//     and, when given, still has to be free. The phone is stored in one
+//     readable shape and matched on its DIGITS (src/lib/customerIdentity.ts),
+//     because a customer can type the same number three different ways.
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { createCustomerToken, customerCookieOptions, CUSTOMER_COOKIE } from '@/lib/customerSession';
 import { prisma } from '@/lib/prisma';
 import { sendRegistrationSMS } from '@/lib/sms';
-import { GENDER_OPTIONS } from '@/lib/genderOptions';
+import { GENDER_OPTIONS, normalizeGender } from '@/lib/genderOptions';
+import {
+  findCustomerByPhone,
+  isUsablePhone,
+  localPhoneDigits,
+  phoneForLog,
+} from '@/lib/customerIdentity';
 import { nextSerialTx, SERIAL_CODES } from '@/lib/serials';
 import { rateMessage } from "@/lib/rateLimit";
 import { rateLimitStrong } from "@/lib/rateLimitDb";
@@ -13,11 +30,11 @@ import { clientIp, ipForLog } from "@/lib/clientIp";
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-type GenderValue = typeof GENDER_OPTIONS[number]['value'];
-
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // The number comes from the CUS series in Tbl_Serials (src/lib/serials.ts)
 // rather than from the highest existing code in tbl_CustomerMaster.
@@ -29,6 +46,12 @@ const REGISTER_IP_LIMIT = 5;             // per hour
 const REGISTER_PHONE_LIMIT = 2;          // per day, for one phone number
 const REGISTER_WINDOW_MS = 60 * 60 * 1000;
 const REGISTER_PHONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** One readable shape for a Sri Lankan mobile, otherwise what was typed. */
+function phoneForStorage(phone: string): string {
+  const local = localPhoneDigits(phone);
+  return local.length === 9 ? `0${local}` : phone.trim().slice(0, 15);
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -65,7 +88,7 @@ export async function POST(req: NextRequest) {
         windowMs: REGISTER_PHONE_WINDOW_MS,
       });
       if (!byPhone.ok) {
-        console.warn(`[register] rate limited phone=***${rawPhone.slice(-4)}`);
+        console.warn(`[register] rate limited phone=${phoneForLog(rawPhone)}`);
         return NextResponse.json(
           { success: false, error: rateMessage("register", byPhone.retryAfterSec) },
           { status: 429, headers: { "Retry-After": String(byPhone.retryAfterSec) } },
@@ -80,8 +103,13 @@ export async function POST(req: NextRequest) {
 
     if (!name?.trim())
       return NextResponse.json({ success: false, message: 'Full name is required.' }, { status: 400 });
-    if (!email?.trim())
-      return NextResponse.json({ success: false, message: 'Email address is required.' }, { status: 400 });
+    if (!isUsablePhone(phone))
+      return NextResponse.json({ success: false, message: 'A valid phone number is required.' }, { status: 400 });
+
+    const emailTrimmed = (email ?? '').trim();
+    if (emailTrimmed && !EMAIL_SHAPE.test(emailTrimmed))
+      return NextResponse.json({ success: false, message: 'Enter a valid email address.' }, { status: 400 });
+
     if (!password) {
       return NextResponse.json({ success: false, message: 'Password is required.' }, { status: 400 });
     }
@@ -93,60 +121,83 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const emailLower = email.trim().toLowerCase();
+    const genderValue = normalizeGender(gender);
+    if (!genderValue) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `Please choose one of: ${GENDER_OPTIONS.map((g) => g.label).join(', ')}.`,
+        },
+        { status: 400 },
+      );
+    }
 
-        try {
-      const exists = await prisma.tbl_CustomerMaster.findFirst({
-        where: { CusEmail: emailLower },
-        select: { CusCode: true },
-      });
-      if (exists) {
+    const emailLower = emailTrimmed.toLowerCase().slice(0, 200);
+
+    try {
+      /* the phone IS the account now — one person, one number */
+      const byPhone = await findCustomerByPhone(phone);
+      if (byPhone) {
         return NextResponse.json(
-          { success: false, message: 'An account with this email already exists.' },
+          { success: false, message: 'An account with this phone number already exists.' },
           { status: 409 },
         );
+      }
+
+      /* an address, when supplied, still may not be shared */
+      if (emailLower) {
+        const byEmail = await prisma.tbl_CustomerMaster.findFirst({
+          where: { CusEmail: emailLower },
+          select: { CusCode: true },
+        });
+        if (byEmail) {
+          return NextResponse.json(
+            { success: false, message: 'An account with this email already exists.' },
+            { status: 409 },
+          );
+        }
       }
     } catch (err) {
       console.error('[register] duplicate-check error:', errMsg(err));
       return NextResponse.json({ success: false, message: 'Registration failed.' }, { status: 500 });
     }
 
-        const hashedPSW = await bcrypt.hash(password, 12);
+    const hashedPSW = await bcrypt.hash(password, 12);
+    const phoneStored = phoneForStorage(String(phone));
 
-        try {
+    try {
       const cusCode = await generateCusCode();
 
       const created = await prisma.tbl_CustomerMaster.create({
         data: {
           CusCode:   cusCode,
           CusName:   name.trim().substring(0, 200),
-          CusEmail:  emailLower.substring(0, 200),
-          RegTel:    (phone?.trim() ?? ' ').substring(0, 15) || ' ',
+          /* the column is NOT NULL with a blank-space default */
+          CusEmail:  emailLower || ' ',
+          RegTel:    phoneStored,
           PSW:       hashedPSW,
-          Gender:    gender?.trim() ?? null,
+          Gender:    genderValue,
           CreatedBy: 'SYSTEM',
         },
         select: { CusCode: true },
       });
 
-            if (phone?.trim()) {
-        try {
-          await sendRegistrationSMS({
-            name:  name.trim(),
-            email: emailLower,
-            phone: phone.trim(),
-          });
-        } catch (smsErr) {
-          console.error('[register] SMS trigger failed:', smsErr);
-        }
+      try {
+        await sendRegistrationSMS({
+          name:  name.trim(),
+          email: emailLower,
+          phone: phoneStored,
+        });
+      } catch (smsErr) {
+        console.error('[register] SMS trigger failed:', smsErr);
       }
 
       const token = await createCustomerToken({
         uid:    created.CusCode.trim(),
-        log:    emailLower,
+        log:    phoneStored,
         name:   name.trim(),
-        phone:  phone?.trim() || '',
-        gender: gender?.trim() || '',
+        phone:  phoneStored,
+        gender: genderValue,
       });
 
       const res = NextResponse.json(

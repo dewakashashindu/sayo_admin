@@ -7,7 +7,7 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   'header.title1':           { en: 'Reserve Your',                                    si: 'ඔබේ',                                          ta: 'உங்கள்' },
   'header.title2':           { en: 'Luxury',                                          si: 'සුඛෝපභෝගී',                                    ta: 'சொகுசு' },
   'header.title3':           { en: 'Moment',                                          si: 'මොහොත වෙන්කරගන්න',                            ta: 'தருணத்தை முன்பதிவு செய்யுங்கள்' },
-  'header.confirmEmailNote': { en: "✦ We'll confirm your appointment via email.",     si: '✦ අපි ඔබේ වෙන්කිරීම විද්‍යුත් තැපෑල මගින් තහවුරු කරන්නෙමු.', ta: '✦ உங்கள் நியமனத்தை மின்னஞ்சல் வழியாக உறுதிப்படுத்துவோம்.' },
+  'header.confirmEmailNote': { en: "✦ We'll call you to confirm your appointment.",   si: '✦ ඔබේ වෙන්කිරීම තහවුරු කිරීමට අපි ඔබට එදුකතරණය කරන්නෙමු.', ta: '✦ உங்கள் நியமனத்தை உறுதிப்படுத்த நாங்கள் உங்களை அழைக்கிறோம்.' },
   'header.instantNote':      { en: '✦ Instant registration — no email needed.',       si: '✦ ක්ෂණික ලියාපදිංචිය — විද්‍යුත් තැපෑල අවශ්‍ය නැත.',        ta: '✦ உடனடி பதிவு — மின்னஞ்சல் தேவையில்லை.' },
 
     'steps.one':               { en: 'Your Appointment',                                si: 'ඔබේ වෙන්කිරීම',                                ta: 'உங்கள் நியமனம்' },
@@ -82,7 +82,6 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   'gp.selectGenderTitle':    { en: 'Select gender',                                   si: 'ස්ත්‍රී පුරුෂ භාවය තෝරන්න',                     ta: 'பாலினத்தைத் தேர்ந்தெடுக்கவும்' },
   'gender.male':             { en: 'Male',                                            si: 'පිරිමි',                                       ta: 'ஆண்' },
   'gender.female':           { en: 'Female',                                          si: 'ගැහැණු',                                       ta: 'பெண்' },
-  'gender.prefer_not_to_say':{ en: 'Prefer not to say',                               si: 'පැවසීමට අකමැති',                              ta: 'சொல்ல விரும்பவில்லை' },
   'gender.other':            { en: 'Other',                                           si: 'වෙනත්',                                        ta: 'மற்றது' },
 
     's1.buildYourAppointment': { en: 'Build Your Appointment',                          si: 'ඔබේ වෙන්කිරීම සාදන්න',                         ta: 'உங்கள் நியமனத்தை உருவாக்குங்கள்' },
@@ -92,6 +91,8 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   's1.chooseServices':       { en: 'Choose Services',                                 si: 'සේවාවන් තෝරන්න',                               ta: 'சேவைகளைத் தேர்ந்தெடுக்கவும்' },
   's1.tapToSelect':          { en: 'Tap to select. You can pick multiple across categories.', si: 'තේරීමට ඔබන්න. කාණ්ඩ කිහිපයකින් සේවා කිහිපයක් තෝරාගත හැක.', ta: 'தேர்வு செய்ய தட்டவும். பல வகைகளிலிருந்து பல சேவைகளைத் தேர்ந்தெடுக்கலாம்.' },
   's1.serviceProvider':      { en: 'Service Provider',                                si: 'සේවා සැපයුම්කරු',                              ta: 'சேவை வழங்குநர்' },
+  's1.noGenderSplit':        { en: '{loc} has no services filed under this gender yet, so every service is shown.', si: '{loc} හි මෙම ලිංගභාවය යටතේ සේවා නොමැති නිසා සියලුම සේවා පෙන්වා ඇත.', ta: '{loc} இல் இந்த பாலினத்திற்கான சேவைகள் இல்லாததால் அனைத்துச் சேவைகளும் காட்டப்படுகின்றன.' },
+  's1.noServicesHere':       { en: 'No services are available at {loc} yet.', si: '{loc} හි තාම සේවා නොමැත.', ta: '{loc} இல் இன்னும் சேவைகள் இல்லை.' },
   's1.selectBranchFirst':    { en: 'Please select a branch above to see available providers.', si: 'ලබාගත හැකි සේවා සැපයුම්කරුවන් බැලීමට කරුණාකර ඉහත ශාඛාවක් තෝරන්න.', ta: 'கிடைக்கும் வழங்குநர்களைப் பார்க்க மேலே ஒரு கிளையைத் தேர்ந்தெடுக்கவும்.' },
   's1.noProvidersFor':       { en: 'No providers for {cats} at {loc}.',               si: '{loc} ශාඛාවේ {cats} සඳහා සේවා සැපයුම්කරුවන් නැත.', ta: '{loc} இல் {cats} சேவைகளுக்கான வழங்குநர்கள் இல்லை.' },
   's1.showingSpecialistsFor':{ en: 'Showing specialists for {cats} at {loc}',         si: '{loc} ශාඛාවේ {cats} සඳහා විශේෂඥයින්',            ta: '{loc} கிளையில் {cats} சேவைகளுக்கான நிபுணர்கள்' },

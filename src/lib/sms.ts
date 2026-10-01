@@ -303,9 +303,11 @@ export async function sendRegistrationSMS({
   phone,
 }: RegistrationSMSProps): Promise<TextLkResult> {
   const formattedPhone = normalizeSmsPhone(phone);
-  const maskedEmail = maskEmail(email);
   const maskedPhoneNum = maskPhone(formattedPhone);
-  const smsMessage = `Welcome to Sayo, ${name}!\nYour account has been successfully created.\nRegistered Email: ${maskedEmail}\nPhone: ${maskedPhoneNum}`;
+  // The e-mail is optional on a booking account, so it is only mentioned when
+  // the customer actually gave one.
+  const maskedEmail = email?.trim() ? `\nRegistered Email: ${maskEmail(email)}` : '';
+  const smsMessage = `Welcome to Sayo, ${name}!\nYour account has been successfully created.${maskedEmail}\nPhone: ${maskedPhoneNum}`;
 
   return sendTextLkSMS(formattedPhone, smsMessage);
 }
