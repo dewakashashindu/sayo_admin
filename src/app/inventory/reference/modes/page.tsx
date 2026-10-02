@@ -712,7 +712,7 @@ function ModesPageContent() {
                         <FieldRow label={`Code (${meta?.primaryKey ?? 'code'})`} htmlFor="mode-code">
                           <input id="mode-code" className="frm-input" value={formCode} readOnly={!isNew}
                             maxLength={10} onChange={(e) => setFormCode(e.target.value.toUpperCase())}
-                            placeholder="auto" />
+                            placeholder={isNew ? 'Enter code' : ''} />
                         </FieldRow>
                         <FieldRow label={`${spec.descLabel} *`} htmlFor="mode-des">
                           <input id="mode-des" className="frm-input" value={formDes} maxLength={spec.descMax} readOnly={!canSave}

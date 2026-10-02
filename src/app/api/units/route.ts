@@ -17,24 +17,6 @@ function getType(req: NextRequest): UnitType | null {
   return null;
 }
 
-async function nextMasterUnitID(): Promise<string> {
-  const all = await prisma.tbl_UnitMaster.findMany({ select: { MasterUnitID: true } });
-  const nums = all
-    .map((m) => parseInt(m.MasterUnitID.replace(/\D/g, ''), 10))
-    .filter((n) => !isNaN(n));
-  const next = nums.length ? Math.max(...nums) + 1 : 1;
-  return `UNT${String(next).padStart(2, '0')}`;
-}
-
-async function nextSubUnitID(): Promise<string> {
-  const all = await prisma.tbl_UnitSub.findMany({ select: { SubUnitID: true } });
-  const nums = all
-    .map((s) => parseInt(s.SubUnitID.replace(/\D/g, ''), 10))
-    .filter((n) => !isNaN(n));
-  const next = nums.length ? Math.max(...nums) + 1 : 1;
-  return `S${String(next).padStart(2, '0')}`;
-}
-
 export async function GET(req: NextRequest) {
   const type = getType(req);
   if (!type) return err('Query param "type" must be one of: master, sub, conversion');
@@ -144,7 +126,15 @@ export async function POST(req: NextRequest) {
       });
       if (dup) return err(`Unit description "${unitDes}" already exists`);
 
-      const masterUnitID = await nextMasterUnitID();
+      /* Typed in, not numbered for the shop — see the note in api/locations. */
+      const masterUnitID = (body.masterUnitID ?? '').trim().toUpperCase();
+      if (!masterUnitID) return err('masterUnitID (Master Unit ID) is required');
+      if (masterUnitID.length > 10) {
+        return err(`masterUnitID must be 10 characters or less — "${masterUnitID}" is ${masterUnitID.length}.`);
+      }
+      const idTaken = await prisma.tbl_UnitMaster.findUnique({ where: { MasterUnitID: masterUnitID } });
+      if (idTaken) return err(`Master Unit ID "${masterUnitID}" is already used.`, 409);
+
       const created = await prisma.tbl_UnitMaster.create({
         data: { MasterUnitID: masterUnitID, UnitDes: unitDes.toUpperCase(), Enable: enable },
       });
@@ -163,7 +153,14 @@ export async function POST(req: NextRequest) {
       });
       if (dup) return err(`Sub unit description "${subUnitDes}" already exists`);
 
-      const subUnitID = await nextSubUnitID();
+      const subUnitID = (body.subUnitID ?? '').trim().toUpperCase();
+      if (!subUnitID) return err('subUnitID (Sub Unit ID) is required');
+      if (subUnitID.length > 10) {
+        return err(`subUnitID must be 10 characters or less — "${subUnitID}" is ${subUnitID.length}.`);
+      }
+      const subIdTaken = await prisma.tbl_UnitSub.findUnique({ where: { SubUnitID: subUnitID } });
+      if (subIdTaken) return err(`Sub Unit ID "${subUnitID}" is already used.`, 409);
+
       const created = await prisma.tbl_UnitSub.create({
         data: { SubUnitID: subUnitID, SubUnitDes: subUnitDes.toUpperCase(), Enable: enable },
       });

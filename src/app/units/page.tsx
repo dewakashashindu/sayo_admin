@@ -328,6 +328,7 @@ function UnitsPageContent() {
   const { toast, show: showToast } = useToast();
 
   const MAX_DES = 50;
+  const MAX_ID  = 10;   // MasterUnitID / SubUnitID are CHAR(10)
 
   /* ══ MASTER UNIT state ══ */
   const [masters,    setMasters]    = useState<MasterUnit[]>([]);
@@ -337,7 +338,7 @@ function UnitsPageContent() {
   const [errorM,     setErrorM]     = useState<string | null>(null);
   const [savingM,    setSavingM]    = useState(false);
   const [deletingM,  setDeletingM]  = useState(false);
-  const [fMasterID,  setFMasterID]  = useState('(auto-generated)');
+  const [fMasterID,  setFMasterID]  = useState('');
   const [fUnitDes,   setFUnitDes]   = useState('');
   const [fMEnable,   setFMEnable]   = useState(true);
 
@@ -349,7 +350,7 @@ function UnitsPageContent() {
   const [errorS,    setErrorS]    = useState<string | null>(null);
   const [savingS,   setSavingS]   = useState(false);
   const [deletingS, setDeletingS] = useState(false);
-  const [fSubID,    setFSubID]    = useState('(auto-generated)');
+  const [fSubID,    setFSubID]    = useState('');
   const [fSubDes,   setFSubDes]   = useState('');
   const [fSEnable,  setFSEnable]  = useState(true);
 
@@ -456,7 +457,7 @@ function UnitsPageContent() {
   }
   function handleSelectMaster(m: MasterUnit) { loadMasterForm(m); }
   function handleNewMaster() {
-    setFMasterID('(auto-generated)');
+    setFMasterID('');
     setFUnitDes(''); setFMEnable(true);
     setSelMaster(null); setIsNewM(true);
   }
@@ -470,6 +471,10 @@ function UnitsPageContent() {
   ═══════════════════════════════════════ */
 
   async function handleSaveMaster() {
+    const trimmedID = fMasterID.trim();
+    if (isNewM && !trimmedID) { showToast('Unit Code is required', 'error'); return; }
+    if (trimmedID.length > MAX_ID) { showToast(`Unit Code must be ≤ ${MAX_ID} characters`, 'error'); return; }
+
     const trimmed = fUnitDes.trim();
     if (!trimmed) { showToast('Unit Description is required', 'error'); return; }
     if (trimmed.length > MAX_DES) { showToast(`Description must be ≤ ${MAX_DES} characters`, 'error'); return; }
@@ -480,7 +485,7 @@ function UnitsPageContent() {
         const res = await apiFetch<MasterUnit>(API_MASTER, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ unitDes: trimmed, enable: fMEnable }),
+          body: JSON.stringify({ masterUnitID: fMasterID.trim(), unitDes: trimmed, enable: fMEnable }),
         });
         if (!res.success || !res.data) { showToast(res.message ?? 'Save failed', 'error'); return; }
         setMasters((p) => [...p, res.data!].sort((a, b) => a.MasterUnitID.localeCompare(b.MasterUnitID)));
@@ -532,11 +537,15 @@ function UnitsPageContent() {
   }
   function handleSelectSub(s: SubUnit) { loadSubForm(s); }
   function handleNewSub() {
-    setFSubID('(auto-generated)');
+    setFSubID('');
     setFSubDes(''); setFSEnable(true);
     setSelSub(null); setIsNewS(true);
   }
   async function handleSaveSub() {
+    const trimmedID = fSubID.trim();
+    if (isNewS && !trimmedID) { showToast('Sub Unit ID is required', 'error'); return; }
+    if (trimmedID.length > MAX_ID) { showToast(`Sub Unit ID must be ≤ ${MAX_ID} characters`, 'error'); return; }
+
     const trimmed = fSubDes.trim();
     if (!trimmed) { showToast('Sub Unit Description is required', 'error'); return; }
     if (trimmed.length > MAX_DES) { showToast(`Description must be ≤ ${MAX_DES} characters`, 'error'); return; }
@@ -547,7 +556,7 @@ function UnitsPageContent() {
         const res = await apiFetch<SubUnit>(API_SUB, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ subUnitDes: trimmed, enable: fSEnable }),
+          body: JSON.stringify({ subUnitID: fSubID.trim(), subUnitDes: trimmed, enable: fSEnable }),
         });
         if (!res.success || !res.data) { showToast(res.message ?? 'Save failed', 'error'); return; }
         setSubs((p) => [...p, res.data!].sort((a, b) => a.SubUnitID.localeCompare(b.SubUnitID)));
@@ -851,8 +860,13 @@ function UnitsPageContent() {
 
                         <SectBox title="Unit Identification" icon={<ITag s={14}/>}>
                           <div style={{ display:'grid', gridTemplateColumns:'1fr 2fr', gap:10 }}>
-                            <FieldRow label="Unit Code (MasterUnitID)" htmlFor="mu-id">
-                              <input id="mu-id" className="frm-input" value={fMasterID} readOnly/>
+                            <FieldRow label="Unit Code (MasterUnitID) *" htmlFor="mu-id">
+                              <input id="mu-id" className="frm-input" value={fMasterID} maxLength={MAX_ID}
+                                onChange={(e)=>setFMasterID(e.target.value.toUpperCase())}
+                                placeholder="e.g. UNT001" autoFocus={isNewM}
+                                readOnly={!isNewM}
+                                title={isNewM ? undefined : 'The code identifies the unit and cannot be changed once saved.'}
+                                style={isNewM ? undefined : { background:'#eef2f2', color:'#6b7280' }}/>
                             </FieldRow>
                             <FieldRow label="Unit Description (UnitDes) *" htmlFor="mu-des">
                               <input id="mu-des" className="frm-input" value={fUnitDes} maxLength={MAX_DES}
@@ -986,8 +1000,13 @@ function UnitsPageContent() {
 
                         <SectBox title="Sub Unit Identification" icon={<ILayers s={14}/>}>
                           <div style={{ display:'grid', gridTemplateColumns:'1fr 2fr', gap:10 }}>
-                            <FieldRow label="Sub Unit ID" htmlFor="su-id">
-                              <input id="su-id" className="frm-input" value={fSubID} readOnly/>
+                            <FieldRow label="Sub Unit ID *" htmlFor="su-id">
+                              <input id="su-id" className="frm-input" value={fSubID} maxLength={MAX_ID}
+                                onChange={(e)=>setFSubID(e.target.value.toUpperCase())}
+                                placeholder="e.g. S001" autoFocus={isNewS}
+                                readOnly={!isNewS}
+                                title={isNewS ? undefined : 'The code identifies the sub unit and cannot be changed once saved.'}
+                                style={isNewS ? undefined : { background:'#eef2f2', color:'#6b7280' }}/>
                             </FieldRow>
                             <FieldRow label="Sub Unit Description (SubUnitDes) *" htmlFor="su-des">
                               <input id="su-des" className="frm-input" value={fSubDes} maxLength={MAX_DES}

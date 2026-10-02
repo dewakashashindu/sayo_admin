@@ -317,6 +317,7 @@ function LocationsPageContent() {
 
   const MAX_DES  = 50;
   const MAX_ADDR = 300;
+  const MAX_CODE = 10;   // LocCode is CHAR(10)
 
     const mainOptions = useMemo(
     () => locations.filter((l) => l.MainLoc && !l.SubLoc && l.LocCode !== fLocCode),
@@ -381,7 +382,7 @@ function LocationsPageContent() {
     function handleSelect(l: LocationMaster) { loadForm(l); }
 
     function handleNew() {
-    setFLocCode('(auto-generated)');
+    setFLocCode('');
     setFLocDes('');
     setFAddress('');
     setFEnable(true);
@@ -399,6 +400,10 @@ function LocationsPageContent() {
   }
 
     async function handleSave() {
+    const trimmedCode = fLocCode.trim();
+    if (isNew && !trimmedCode) { showToast('Location Code is required', 'error'); return; }
+    if (trimmedCode.length > MAX_CODE) { showToast(`Location Code must be ≤ ${MAX_CODE} characters`, 'error'); return; }
+
     const trimmedDes = fLocDes.trim();
     if (!trimmedDes) { showToast('Location Description is required', 'error'); return; }
     if (trimmedDes.length > MAX_DES) { showToast(`Description must be ≤ ${MAX_DES} characters`, 'error'); return; }
@@ -409,6 +414,7 @@ function LocationsPageContent() {
     setSaving(true);
     try {
       const payload = {
+        locCode: trimmedCode,
         locDes:  trimmedDes,
         address: fAddress.trim(),
         enable:  fEnable,
@@ -647,8 +653,20 @@ function LocationsPageContent() {
 
                     <SectBox title="Location Details" icon={<IMapPin s={14} />}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
-                        <FieldRow label="Location Code (LocCode)" htmlFor="lc-code">
-                          <input id="lc-code" className="frm-input" value={fLocCode} readOnly />
+                        <FieldRow label="Location Code (LocCode) *" htmlFor="lc-code">
+                          <input
+                            id="lc-code"
+                            className="frm-input"
+                            value={fLocCode}
+                            maxLength={MAX_CODE}
+                            onChange={(e) => setFLocCode(e.target.value.toUpperCase())}
+                            onKeyDown={enterNext}
+                            placeholder="e.g. LOC001"
+                            autoFocus={isNew}
+                            readOnly={!isNew}
+                            title={isNew ? undefined : 'The code identifies the branch and cannot be changed once saved.'}
+                            style={isNew ? undefined : { background: '#eef2f2', color: '#6b7280' }}
+                          />
                         </FieldRow>
                         <FieldRow label="Location Description (LocDes) *" htmlFor="lc-des">
                           <input

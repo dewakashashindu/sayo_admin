@@ -239,6 +239,11 @@ export const NAV_GROUPS: NavGroup[] = [
         key: 'settings-startup', label: 'Start-up Settings', path: '',
         children: [
           { key: 'settings-site', label: 'Edit Site', path: '/admin' },
+          /* No entry in ITEM_ACCESS_CODE: leafAllowed() treats an un-mapped leaf
+             as open, so the upload screen is visible wherever Start-up Settings
+             is — no new permission to hand out for a screen that writes nothing
+             yet. */
+          { key: 'settings-uploaddata', label: 'Upload Data', path: '/settings/upload-data' },
         ],
       },
       {

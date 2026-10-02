@@ -51,15 +51,6 @@ async function findLoc(locCode: string): Promise<LocRow | null> {
   return rows[0] ?? null;
 }
 
-async function nextLocCode(): Promise<string> {
-  const all = await prisma.tbl_LocationMaster.findMany({ select: { LocCode: true } });
-  const nums = all
-    .map((l) => parseInt(l.LocCode.replace(/\D/g, ""), 10))
-    .filter((n) => !isNaN(n));
-  const next = nums.length ? Math.max(...nums) + 1 : 1;
-  return `LOC${String(next).padStart(2, "0")}`;
-}
-
 /** A location the sub can belong to: an existing MAIN location. */
 async function assertValidMain(mainLocCode: string, selfLocCode = ""): Promise<string | null> {
   const code = trim(mainLocCode);
@@ -193,7 +184,17 @@ export async function POST(req: NextRequest) {
     );
     if (Number(dup[0]?.n || 0) > 0) return err(`Location description "${locDes}" already exists`);
 
-    const locCode = await nextLocCode();
+    /* The branch code is typed in, not numbered for the user: each salon uses
+       its own scheme and a code the shop did not choose is a code they will
+       not recognise. It is still the primary key, so it must be unique. */
+    const locCode = trim(body.locCode).toUpperCase();
+    if (!locCode) return err("Location Code (LocCode) is required.");
+    if (locCode.length > 10) {
+      return err(`Location Code must be 10 characters or less — "${locCode}" is ${locCode.length}.`);
+    }
+    const codeTaken = await findLoc(locCode);
+    if (codeTaken) return err(`Location Code "${locCode}" is already used.`, 409);
+
     const address = (trim(body.address) || " ").slice(0, 300);
     const enable = body.enable === undefined || body.enable === null ? 1 : bit(body.enable);
 

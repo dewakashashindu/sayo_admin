@@ -434,23 +434,6 @@ async function buildColumnInfo(
   return { info, descInfo: desc };
 }
 
-/** The next free code — keeps the shop's own numbering when it has one. */
-async function nextCode(meta: TableMeta, spec: Spec): Promise<string> {
-  const pk = colOf(meta, spec.pk)!;
-  const rows = await prisma.$queryRawUnsafe<Record<string, unknown>[]>(
-    `SELECT ${quoteIdent(pk.actual)} AS code FROM ${quoteIdent(meta.name)}`,
-  );
-  const prefix = spec.codePrefix;
-  let max = 0;
-  for (const r of rows) {
-    const code = trim(r.code).toUpperCase();
-    if (!code.startsWith(prefix)) continue;
-    const n = parseInt(code.slice(prefix.length).replace(/\D/g, ""), 10);
-    if (Number.isFinite(n) && n > max) max = n;
-  }
-  return `${prefix}${String(max + 1).padStart(2, "0")}`;
-}
-
 async function codeTaken(meta: TableMeta, spec: Spec, code: string): Promise<boolean> {
   const pk = colOf(meta, spec.pk)!;
   const rows = await prisma.$queryRawUnsafe<Record<string, unknown>[]>(
@@ -485,13 +468,12 @@ export async function GET(req: NextRequest) {
   try {
     const { rows, meta } = await readRows(asked.kind);
     const groups = asked.kind === "paymentMode" ? await groupOptions() : [];
-    const tMeta = await tableMeta(asked.spec.table);
-    const suggested =
-      tMeta && asked.kind ? await nextCode(tMeta, asked.spec).catch(() => "") : "";
     return NextResponse.json({
       success: true,
       data: rows,
-      meta: { ...meta, suggestedCode: suggested, groups },
+      /* No suggested code: the shop names its own codes, so the form opens
+         blank. The field is kept in the payload so the UI does not change. */
+      meta: { ...meta, suggestedCode: "", groups },
     });
   } catch (e) {
     console.error(`GET /api/reference/modes?type=${asked.kind}`, e);
@@ -522,12 +504,14 @@ export async function POST(req: NextRequest) {
       return err(`${spec.desc.label} must be ${spec.desc.max} characters or less.`);
     }
 
-    let code = trim(body.code).slice(0, spec.codeMax);
-    if (code) {
-      if (await codeTaken(meta, spec, code)) return err(`The code "${code}" is already used.`, 409);
-    } else {
-      code = await nextCode(meta, spec);
+    /* Typed in, not numbered for the shop — see the note in api/locations.
+       A blank code is a mistake, not a request for the next free number. */
+    const code = trim(body.code).toUpperCase();
+    if (!code) return err(`${spec.label} code is required.`);
+    if (code.length > spec.codeMax) {
+      return err(`${spec.label} code must be ${spec.codeMax} characters or less — "${code}" is ${code.length}.`);
     }
+    if (await codeTaken(meta, spec, code)) return err(`The code "${code}" is already used.`, 409);
 
     const { info, descInfo } = await buildColumnInfo(meta, spec);
     const cols = [pk.actual];
