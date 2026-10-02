@@ -155,6 +155,14 @@ export const ACCESS_TREE: AccessNode[] = [
         code: "SETUP", name: "Start-up Settings", actions: [ACCESS, A("SAVE")],
         children: [
           { code: "EDITSITE", name: "Edit Site", actions: [ACCESS] },
+          /* Upload Data arrived as a leaf with no permission of its own, because
+             for a long time it wrote nothing. It now stages rows and can push
+             them live, so it gets a node of its own with one chip per real
+             action: ACCESS to open it, VERIFY to check a file against the
+             database, GOLIVE to move a pending batch into the master table. A
+             profile that predates this has none of the three, so the screen
+             stays closed to it until somebody ticks it — deliberately. */
+          { code: "UPLOADDATA", name: "Upload Data", actions: [ACCESS, A("VERIFY", "Verify File"), A("GOLIVE", "Go to Live")] },
         ],
       },
       {

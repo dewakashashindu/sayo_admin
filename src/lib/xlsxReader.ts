@@ -18,6 +18,14 @@
 //
 // Nothing here writes anywhere. It returns strings, and the screen decides what
 // to do with them.
+//
+// DATES. Excel does not store a date as a date. A cell holding 30 June 2027
+// stores the number 46568 and remembers "this is a date" in the cell's FORMAT,
+// not in its value. Reading the <v> alone therefore hands back "46568", which
+// is both unreadable on the preview grid and ambiguous to whoever is looking at
+// it. So the styles part is read too, and a cell that is formatted as a date
+// comes back as yyyy-mm-dd. A number that merely looks like a date is left as a
+// number — only a cell Excel itself treats as a date is converted.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A sheet as plain text, with the gaps left by empty cells kept in place. */
@@ -139,10 +147,107 @@ function unescapeXml(s: string): string {
     .replace(/&amp;/g, '&');
 }
 
+
+/* ─────────────────────────────── dates ─────────────────────────────── */
+
+/**
+ * Built-in numFmtIds that mean "this cell holds a date". The 14-22 block is
+ * the set Excel ships for date pictures; 27-36 and 50-58 are the localised
+ * East Asian ones; 45-47 are elapsed-time formats.
+ */
+const BUILTIN_DATE_FORMATS = new Set([
+  14, 15, 16, 17, 18, 19, 20, 21, 22,
+  27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+  45, 46, 47,
+  50, 51, 52, 53, 54, 55, 56, 57, 58,
+]);
+
+/**
+ * Does this format code describe a date?
+ *
+ * Everything that is a literal is removed first: text in "..." , a backslash
+ * escape, and anything in [...] such as a colour [Red] or an elapsed-time unit
+ * [h]. What is left over is the pattern, and a pattern with a year, month, day,
+ * hour, minute or second in it is a date.
+ */
+function formatCodeIsDate(code: string): boolean {
+  let out = '';
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === '"') { while (++i < code.length && code[i] !== '"') { /* skip */ } continue; }
+    if (code[i] === '\\') { i++; continue; }
+    if (code[i] === '[') { while (++i < code.length && code[i] !== ']') { /* skip */ } continue; }
+    out += code[i];
+  }
+  // A bare 0 is not a date; "General" is not a date; 0.00 is not a date.
+  return /[ymdhs]/i.test(out) && !/^(general|0+(\.0+)?)$/i.test(out.replace(/[^0-9A-Za-z.]/g, ''));
+}
+
+/**
+ * For each cell-format index in the workbook, is it a date?
+ *
+ * The chain is cell → its `s` index → that xf's numFmtId → the format. A
+ * workbook with no styles part (or an xf we cannot find) is simply "not a
+ * date", which leaves the cell exactly as it was before.
+ */
+function dateStyleIndexes(stylesXml: string): Set<number> {
+  const out = new Set<number>();
+  if (!stylesXml) return out;
+
+  // Custom formats, declared in <numFmts> as numFmtId + formatCode.
+  const custom = new Map<number, string>();
+  const numFmtRe = /<numFmt\b[^>]*\/?>/g;
+  let m: RegExpExecArray | null;
+  while ((m = numFmtRe.exec(stylesXml))) {
+    const id = Number(m[0].match(/numFmtId="(\d+)"/)?.[1]);
+    const code = m[0].match(/formatCode="([^"]*)"/)?.[1];
+    if (Number.isFinite(id) && code !== undefined) custom.set(id, code);
+  }
+
+  // The cell formats, in order — a cell's `s` is an index into this list.
+  const cellXfs = stylesXml.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/)?.[1];
+  if (!cellXfs) return out;
+  const xfRe = /<xf\b[^>]*\/?>/g;
+  let i = 0;
+  while ((m = xfRe.exec(cellXfs))) {
+    const id = Number(m[0].match(/numFmtId="(\d+)"/)?.[1] ?? 0);
+    if (BUILTIN_DATE_FORMATS.has(id) || (custom.has(id) && formatCodeIsDate(custom.get(id)!))) {
+      out.add(i);
+    }
+    i++;
+  }
+  return out;
+}
+
+/**
+ * Excel's day 0 is 1900-01-01, and Excel wrongly believes 1900 was a leap year,
+ * so everything from serial 1 to 59 is one day ahead of the real calendar.
+ *
+ * Serial 60 is the day that never existed (29 Feb 1900) and is not a date
+ * anyone will type; it is returned untouched rather than silently shifted.
+ */
+function serialToIsoDate(serial: number): string | null {
+  if (!Number.isFinite(serial) || serial < 1 || serial > 2958465) return null;
+  if (serial === 60) return null;
+  const days = serial >= 61 ? serial - 1 : serial;
+  const ms = Math.round(days * 86400000);
+  const d = new Date(Date.UTC(1899, 11, 31) + ms);
+  if (Number.isNaN(d.getTime())) return null;
+  const p = (n: number) => String(n).padStart(2, '0');
+  const day = `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+
+  // A whole day is a date. Anything with a fractional part carries a real time
+  // — dropping it would quietly change the value, and these columns are
+  // sometimes datetime rather than date.
+  const frac = serial - Math.floor(serial);
+  if (frac < 1e-9) return day;
+  return `${day} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
 async function readXlsx(buf: ArrayBuffer): Promise<SheetData> {
   const zip = await readZip(buf);
 
   const shared = xmlText(new TextDecoder().decode(zip.get('xl/sharedStrings.xml') ?? new Uint8Array()));
+  const dateStyles = dateStyleIndexes(new TextDecoder().decode(zip.get('xl/styles.xml') ?? new Uint8Array()));
 
   // Prefer the first sheet part in workbook order; fall back to the first one
   // present, which is what a single-sheet export produces.
@@ -186,6 +291,10 @@ async function readXlsx(buf: ArrayBuffer): Promise<SheetData> {
         value = unescapeXml(inner);
       } else {
         value = inner.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? '';
+        // A numeric cell whose FORMAT says date is a date, not a number.
+        if (value !== '' && dateStyles.has(Number(a.s ?? -1))) {
+          value = serialToIsoDate(Number(value)) ?? value;
+        }
       }
 
       while (cells.length < idx) cells.push(''); // keep empty columns

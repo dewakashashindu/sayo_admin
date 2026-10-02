@@ -13,8 +13,8 @@ import { useMyAccess } from '@/lib/useMyAccess';
 import { logoutAdmin } from '@/lib/logout';
 
 export default function NoAccessHome({ screen }: { screen: string }) {
-  const { perms, loaded } = useMyAccess();
-  const leaves = allowedNavLeaves(perms, loaded);
+  const { perms, loaded, superAdmin } = useMyAccess();
+  const leaves = allowedNavLeaves(perms, loaded, superAdmin);
 
   /* group them so the list reads like the sidebar, not like a wall of buttons */
   const byGroup = new Map<string, { label: string; path: string }[]>();

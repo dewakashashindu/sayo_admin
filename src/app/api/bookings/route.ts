@@ -1612,11 +1612,13 @@ async function sendBookingEmail(
  * the endpoint where an unlimited caller costs real money. Two counters: one
  * per caller (per IP) and one per phone number — a script that changes its IP
  * still cannot make the same number ring twenty times. */
-const BOOKING_IP_LIMIT = 8;              // per 15 minutes
-const BOOKING_PHONE_LIMIT = 3;           // per hour, for one phone number
-const BOOKING_WINDOW_MS = 15 * 60 * 1000;
-const BOOKING_PHONE_WINDOW_MS = 60 * 60 * 1000;
+const BOOKING_IP_LIMIT = 10;
+const BOOKING_PHONE_LIMIT = 10;
+const BOOKING_WINDOW_MS = 10 * 60 * 1000;
+const BOOKING_PHONE_WINDOW_MS = 10 * 60 * 1000;
 
+const BOOKING_COOLDOWN_LIMIT = 1;
+const BOOKING_COOLDOWN_MS = 30 * 1000;
 export async function POST(req: NextRequest) {
   try {
     /* counted BEFORE anything else — no parsing, no database, no SMS */
@@ -1632,6 +1634,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { success: false, message: rateMessage("booking", byIp.retryAfterSec) },
         { status: 429, headers: { "Retry-After": String(byIp.retryAfterSec) } },
+      );
+    }
+
+    const byIpCooldown = rateLimit({
+      bucket: "booking:ip:cooldown",
+      key: callerIp,
+      limit: BOOKING_COOLDOWN_LIMIT,
+      windowMs: BOOKING_COOLDOWN_MS,
+    });
+    if (!byIpCooldown.ok) {
+      console.warn(`[bookings] cooldown limited ip=${ipForLog(callerIp)}`);
+      return NextResponse.json(
+        { success: false, message: rateMessage("booking", byIpCooldown.retryAfterSec) },
+        { status: 429, headers: { "Retry-After": String(byIpCooldown.retryAfterSec) } },
       );
     }
 
@@ -1651,6 +1667,20 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           { success: false, message: rateMessage("booking", byPhone.retryAfterSec) },
           { status: 429, headers: { "Retry-After": String(byPhone.retryAfterSec) } },
+        );
+      }
+
+      const byPhoneCooldown = rateLimit({
+        bucket: "booking:phone:cooldown",
+        key: phoneKey,
+        limit: BOOKING_COOLDOWN_LIMIT,
+        windowMs: BOOKING_COOLDOWN_MS,
+      });
+      if (!byPhoneCooldown.ok) {
+        console.warn(`[bookings] cooldown limited phone=***${phoneKey.slice(-4)}`);
+        return NextResponse.json(
+          { success: false, message: rateMessage("booking", byPhoneCooldown.retryAfterSec) },
+          { status: 429, headers: { "Retry-After": String(byPhoneCooldown.retryAfterSec) } },
         );
       }
     }

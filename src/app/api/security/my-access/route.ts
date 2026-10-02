@@ -34,12 +34,14 @@ export async function GET(req: NextRequest) {
      profile tables on purpose). */
   let source: "profiles" | "custom" | "none" | "super" = bag.source;
 
+  const superAdmin = isSuperAdmin({ userId: bag.userId, groupId: bag.groupId });
+
   // Never-locked-out roles: the hidden super administrator (by user id or by
   // group id) and the built-in Administrator group. They get every key in the
   // catalog and every enabled location, whatever the profile tables say — the
   // profile can be wiped by accident, and this account must not be able to
   // lock itself out of its own panel.
-  if (isSuperAdmin({ userId: bag.userId, groupId: bag.groupId }) || hasNeverLockedOutPower(bag.groupId)) {
+  if (superAdmin || hasNeverLockedOutPower(bag.groupId)) {
     keys = allAccessKeys();
     source = "super";
   }
@@ -55,6 +57,11 @@ export async function GET(req: NextRequest) {
       source,
       keys,
       locations,
+      // Which account this is, as opposed to which keys it holds. The Upload
+      // Data screen is opened by the super administrator and nobody else, and
+      // that is a question about the ACCOUNT — a permission key on somebody's
+      // profile would not answer it.
+      superAdmin,
     },
   });
 }

@@ -69,27 +69,42 @@ const ITEM_ACCESS_EXTRA: Record<string, string[]> = {
 };
 const SPEC_ACCESS_CODE = ITEM_ACCESS_CODE; // anchor marker
 
-function leafAllowed(key: string, perms: Set<string>): boolean {
+/**
+ * Screens opened by the hidden super administrator and nobody else.
+ *
+ * These are NOT access-profile screens. A key on somebody's profile can be set
+ * by hand, by an import, or by copying a role, so "holds UPLOADDATA.ACCESS" is
+ * not the same question as "is the super administrator" — and Upload Data
+ * writes to master tables, so the second question is the one that matters.
+ * The API refuses a non-super-admin either way; this only decides whether the
+ * link is offered in the first place.
+ */
+const SUPER_ADMIN_ONLY = new Set(['settings-uploaddata']);
+
+function leafAllowed(key: string, perms: Set<string>, superAdmin: boolean): boolean {
+  if (SUPER_ADMIN_ONLY.has(key)) return superAdmin;
   const code = ITEM_ACCESS_CODE[key];
   if (!code) return true; // un-mapped leaves are not access-controlled
   const candidates = [code, ...(ITEM_ACCESS_EXTRA[key] ?? [])];
   return candidates.some((c) => perms.has(`${c}.ACCESS`));
 }
-function subItemVisible(item: SubItem, perms: Set<string>): boolean {
-  if (!item.children?.length) return leafAllowed(item.key, perms);
-  return item.children.some((c) => subItemVisible(c, perms));
+function subItemVisible(item: SubItem, perms: Set<string>, superAdmin: boolean): boolean {
+  if (!item.children?.length) return leafAllowed(item.key, perms, superAdmin);
+  return item.children.some((c) => subItemVisible(c, perms, superAdmin));
 }
-function filterSubItems(items: SubItem[], perms: Set<string>): SubItem[] {
+function filterSubItems(items: SubItem[], perms: Set<string>, superAdmin: boolean): SubItem[] {
   return items
-    .filter((c) => subItemVisible(c, perms))
-    .map((c) => (c.children ? { ...c, children: filterSubItems(c.children, perms) } : c));
+    .filter((c) => subItemVisible(c, perms, superAdmin))
+    .map((c) => (c.children ? { ...c, children: filterSubItems(c.children, perms, superAdmin) } : c));
 }
 /** Groups the current user may see: filtered leaves; a group with no visible leaf disappears. */
-function visibleNavGroups(perms: Set<string>, loaded: boolean): NavGroup[] {
+function visibleNavGroups(perms: Set<string>, loaded: boolean, superAdmin: boolean): NavGroup[] {
   if (!loaded) return NAV_GROUPS;           // first paint: show all, revalidate quickly
   return NAV_GROUPS
-    .filter((g) => (g.children?.length ? g.children.some((c) => subItemVisible(c, perms)) : leafAllowed(g.key, perms)))
-    .map((g) => (g.children ? { ...g, children: filterSubItems(g.children, perms) } : g));
+    .filter((g) => (g.children?.length
+      ? g.children.some((c) => subItemVisible(c, perms, superAdmin))
+      : leafAllowed(g.key, perms, superAdmin)))
+    .map((g) => (g.children ? { ...g, children: filterSubItems(g.children, perms, superAdmin) } : g));
 }
 
 /**
@@ -99,9 +114,9 @@ function visibleNavGroups(perms: Set<string>, loaded: boolean): NavGroup[] {
  */
 export interface AllowedLeaf { key: string; label: string; group: string; path: string }
 
-export function allowedNavLeaves(perms: Set<string>, loaded = true): AllowedLeaf[] {
+export function allowedNavLeaves(perms: Set<string>, loaded = true, superAdmin = false): AllowedLeaf[] {
   if (!loaded) return [];
-  const groups = visibleNavGroups(perms, true);
+  const groups = visibleNavGroups(perms, true, superAdmin);
   const out: AllowedLeaf[] = [];
   for (const g of groups) {
     const leaves = g.path ? [{ key: g.key, path: g.path, label: g.label }] : (g.children ?? []).flatMap(leafItemsOf);
@@ -114,8 +129,8 @@ export function allowedNavLeaves(perms: Set<string>, loaded = true): AllowedLeaf
 }
 
 /** The first screen this person may open (menu order), or null for none. */
-export function firstAllowedPath(perms: Set<string>, loaded = true): string | null {
-  return allowedNavLeaves(perms, loaded)[0]?.path ?? null;
+export function firstAllowedPath(perms: Set<string>, loaded = true, superAdmin = false): string | null {
+  return allowedNavLeaves(perms, loaded, superAdmin)[0]?.path ?? null;
 }
 
 export function IChevDown()  { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>; }
@@ -239,10 +254,9 @@ export const NAV_GROUPS: NavGroup[] = [
         key: 'settings-startup', label: 'Start-up Settings', path: '',
         children: [
           { key: 'settings-site', label: 'Edit Site', path: '/admin' },
-          /* No entry in ITEM_ACCESS_CODE: leafAllowed() treats an un-mapped leaf
-             as open, so the upload screen is visible wherever Start-up Settings
-             is — no new permission to hand out for a screen that writes nothing
-             yet. */
+          /* Super administrator only — see SUPER_ADMIN_ONLY above. Not an access
+             profile, and deliberately not one: this screen writes to master
+             tables, so it is the ACCOUNT that is asked, not a set of keys. */
           { key: 'settings-uploaddata', label: 'Upload Data', path: '/settings/upload-data' },
         ],
       },
@@ -412,8 +426,8 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
   const handleLogout = () => { void logoutAdmin().finally(() => onLogout()); };
   const pathname = usePathname() || '';
   const [open, setOpen] = useState(true);
-  const { perms, loaded } = useMyAccess();
-  const groups = useMemo(() => visibleNavGroups(perms, loaded), [perms, loaded]);
+  const { perms, loaded, superAdmin } = useMyAccess();
+  const groups = useMemo(() => visibleNavGroups(perms, loaded, superAdmin), [perms, loaded, superAdmin]);
 
   // The URL decides what is active — the group containing the current page always stays expanded.
   const effActive = useMemo(() => {
@@ -664,8 +678,8 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
 function MobileNav({ active, onNav, onLogout }: AdminSidebarProps) {
   const handleLogout = () => { void logoutAdmin().finally(() => onLogout()); };
   const pathname = usePathname() || '';
-  const { perms, loaded } = useMyAccess();
-  const groups = useMemo(() => visibleNavGroups(perms, loaded), [perms, loaded]);
+  const { perms, loaded, superAdmin } = useMyAccess();
+  const groups = useMemo(() => visibleNavGroups(perms, loaded, superAdmin), [perms, loaded, superAdmin]);
   const activeKey = useMemo(() => {
     let best: { key: string; path: string } | null = null;
     for (const g of NAV_GROUPS) {

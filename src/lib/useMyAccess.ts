@@ -26,6 +26,7 @@ export interface MyAccess {
   locRight: string[];                  // role-granted locations
   workLoc: string;                     // location assigned in user details
   allowedLocCodes: Set<string>;        // workLoc ∪ locRight (the union)
+  superAdmin: boolean;                 // is this the hidden super administrator
   userId: string;                      // tbl_userdetails.UserId
   loginName: string;                   // what they signed in with
   displayName: string;                 // the name the header prints (no MR./MRS.)
@@ -37,6 +38,7 @@ interface AccessPayload {
   locations: string[];
   workingLocId: string;
   userId: string;
+  superAdmin: boolean;
   name: string;        // the person's own name
   userName: string;    // the login name
 }
@@ -83,13 +85,14 @@ async function loadAccess(): Promise<AccessPayload | null> {
           locations?: string[];
           workingLocId?: string;
           userId?: string;
+          superAdmin?: boolean;
           name?: string;
           userName?: string;
         };
       };
       if (!res.ok || !json?.success || !json.data) {
         /* A refusal/failure must NOT keep the old answer — lock the UI. */
-        cache = { keys: [], locations: [], workingLocId: "", userId: "", name: "", userName: "" };
+        cache = { keys: [], locations: [], workingLocId: "", userId: "", superAdmin: false, name: "", userName: "" };
         return cache;
       }
       cache = {
@@ -97,13 +100,14 @@ async function loadAccess(): Promise<AccessPayload | null> {
         locations: json.data.locations ?? [],
         workingLocId: json.data.workingLocId ?? "",
         userId: json.data.userId ?? "",
+        superAdmin: json.data.superAdmin === true,
         name: json.data.name ?? "",
         userName: json.data.userName ?? "",
       };
       return cache;
     } catch {
       /* network failure: lock rather than trust whatever was there before */
-      cache = { keys: [], locations: [], workingLocId: "", userId: "", name: "", userName: "" };
+      cache = { keys: [], locations: [], workingLocId: "", userId: "", superAdmin: false, name: "", userName: "" };
       return cache;
     } finally {
       inflight = null;
@@ -171,6 +175,7 @@ export function useMyAccess(): MyAccess {
     const displayName = displayNameOf(cache?.name, cache?.userName);
     return {
       loaded, enforce: loaded, has, perms, locRight, workLoc, allowedLocCodes,
+      superAdmin: cache?.superAdmin === true,
       userId: cache?.userId ?? "",
       loginName: cache?.userName ?? "",
       displayName,

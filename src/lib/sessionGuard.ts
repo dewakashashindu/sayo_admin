@@ -151,6 +151,46 @@ export interface NeedPermission {
   anyOf?: { screen: string; action?: string }[];
 }
 
+/**
+ * The full check: live session + the hidden super administrator.
+ *
+ * Separate from requireAdminAccess() on purpose. A permission key can be put on
+ * somebody's access profile by hand, by an import, or by copying a role — so
+ * "holds UPLOADDATA.ACCESS" is not the same question as "is the super
+ * administrator". The screens that write to a master table are asked the second
+ * question, and only the second one.
+ *
+ * isSuperAdmin() accepts EITHER the configured user id OR the configured group
+ * id, which is the same rule the rest of the app uses (see lib/superAdmin).
+ */
+export async function requireSuperAdmin(
+  req: { cookies: { get(name: string): { value: string } | undefined } },
+): Promise<GuardResult> {
+  const base = await requireAdminSession(req);
+  if (!base.ok) return base;
+
+  const { session, account } = base;
+  if (isSuperAdmin({ userId: session.uid, groupId: account.groupId })) {
+    const bag = await loadAccessForUser(session.uid);
+    return { ok: true, session, account, bag, keys: new Set(allAccessKeys()) };
+  }
+
+  console.warn(
+    `[sessionGuard] denied super administrator to ${session.uid} (group ${account.groupId || "none"})`,
+  );
+  return {
+    ok: false,
+    response: NextResponse.json(
+      {
+        success: false,
+        error: 'This screen is for the super administrator only.',
+        superAdminOnly: true,
+      },
+      { status: 403 },
+    ),
+  };
+}
+
 /** The full check: live session + permission. */
 export async function requireAdminAccess(
   req: { cookies: { get(name: string): { value: string } | undefined } },

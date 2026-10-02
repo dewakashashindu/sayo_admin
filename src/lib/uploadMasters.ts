@@ -21,6 +21,12 @@
 //   tbl_itemmaster   ItemPic (an image blob), CreateDate, CreateBy, UpdDate, UpdBy
 //   tbl_suppliermaster  CreateUser, CreateDatetime
 // They keep their table defaults, so a row still inserts cleanly without them.
+//
+// THE TEMP TABLES. Nothing here writes to the live table directly. A verified
+// row is parked in a table of the same shape first (…Temp), the shop sees the
+// whole batch in the Pending tab, and only "Go to Live" moves it across. The
+// temp table is the same columns plus four that say where the row came from and
+// whether it is new or a change to a row that already exists.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type ColKind = 'text' | 'flag' | 'number' | 'date';
@@ -34,6 +40,10 @@ export interface MasterColumn {
 export interface Master {
   key: string;
   label: string;
+  /** the live table this master writes to */
+  table: string;
+  /** where a verified row is parked until the shop presses "Go to Live" */
+  tempTable: string;
   /** one line explaining what a row in this file means */
   blurb: string;
   /** the columns that identify a row — marked in the preview */
@@ -52,14 +62,22 @@ function categoryMaster(
   key: string,
   label: string,
   blurb: string,
+  table: string,
+  tempTable: string,
 ): Master {
-  return { key, label, blurb, keyColumns: ['CatCode'], columns: CATEGORY_COLUMNS.map((c) => ({ ...c })) };
+  return {
+    key, label, table, tempTable, blurb,
+    keyColumns: ['CatCode'],
+    columns: CATEGORY_COLUMNS.map((c) => ({ ...c })),
+  };
 }
 
 export const MASTERS: Master[] = [
   {
     key: 'supplier',
     label: 'Suppliers',
+    table: 'tbl_suppliermaster',
+    tempTable: 'Tbl_SupplierMasterTemp',
     blurb: 'One row per supplier. DebtAmount is what the salon currently owes them.',
     keyColumns: ['SupID'],
     columns: [
@@ -75,28 +93,30 @@ export const MASTERS: Master[] = [
     ],
   },
   categoryMaster(
-    'category1',
-    'Main Categories',
+    'category1', 'Main Categories',
     'The top category level every item is filed under.',
+    'tbl_itemcategory1', 'Tbl_ItemCategory1Temp',
   ),
   categoryMaster(
-    'category2',
-    'Sub Categories 1',
+    'category2', 'Sub Categories 1',
     'The second category level, sitting under a main category.',
+    'tbl_itemcategory2', 'Tbl_ItemCategory2Temp',
   ),
   categoryMaster(
-    'category3',
-    'Sub Categories 2',
+    'category3', 'Sub Categories 2',
     'The third category level, sitting under a sub category 1.',
+    'tbl_itemcategory3', 'Tbl_ItemCategory3Temp',
   ),
   categoryMaster(
-    'category4',
-    'Sub Categories 3',
+    'category4', 'Sub Categories 3',
     'The deepest category level, sitting under a sub category 2.',
+    'tbl_itemcategory4', 'Tbl_ItemCategory4Temp',
   ),
   {
     key: 'item',
     label: 'Item Master',
+    table: 'tbl_itemmaster',
+    tempTable: 'Tbl_ItemMasterTemp',
     blurb: 'Products and services. MOF is the gender the service belongs to: M, F or O.',
     keyColumns: ['LocCode', 'ItemCode'],
     columns: [
@@ -137,6 +157,8 @@ export const MASTERS: Master[] = [
   {
     key: 'itemdetail',
     label: 'Item Details',
+    table: 'tbl_itemdetail',
+    tempTable: 'Tbl_ItemDetailTemp',
     blurb: 'Stock held per branch per item per expiry date.',
     keyColumns: ['LocCode', 'ItemCode', 'ExpiryDate'],
     columns: [

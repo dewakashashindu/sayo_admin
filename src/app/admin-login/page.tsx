@@ -44,9 +44,13 @@ function LoginForm() {
     }
     try {
       const res = await fetch('/api/security/my-access', { cache: 'no-store' });
-      const json = (await res.json()) as { success?: boolean; data?: { keys?: string[] } };
+      const json = (await res.json()) as {
+        success?: boolean; data?: { keys?: string[]; superAdmin?: boolean };
+      };
       const keys = new Set(json?.data?.keys ?? []);
-      const first = firstAllowedPath(keys, true) ?? allowedNavLeaves(keys, true)[0]?.path ?? null;
+      const isSuper = json?.data?.superAdmin === true;
+      const first = firstAllowedPath(keys, true, isSuper)
+        ?? allowedNavLeaves(keys, true, isSuper)[0]?.path ?? null;
       window.location.href = first ?? '/dashboard';
     } catch {
       window.location.href = '/dashboard';   /* the dashboard explains itself now */
