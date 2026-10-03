@@ -37,10 +37,13 @@ model Tbl_CustomerMaster {
 }
 
 model Tbl_LocationMaster {
-  LocCode String  @id @db.Char(10)
-  LocDes  String  @db.VarChar(50)
-  Address String  @default(" ") @db.VarChar(300)
-  Enable  Boolean @default(true)
+  LocCode     String  @id @db.Char(10)
+  LocDes      String  @db.VarChar(50)
+  Address     String  @default(" ") @db.VarChar(300)
+  Enable      Boolean @default(true)
+  MainLoc     Boolean @default(false)
+  SubLoc      Boolean @default(false)
+  MainLocCode String  @default("") @db.Char(10)
 
   @@map("tbl_locationmaster")
 }
@@ -96,7 +99,7 @@ model Tbl_Recipes {
   LocCode      String @db.Char(10)
   ItemCost     Float  @default(0)
 
-  @@id([MenuItmID, RowItemCode])
+  @@id([MenuItmID, RowItemCode, LocCode])
   @@map("tbl_recipes")
 }
 
@@ -173,30 +176,6 @@ model Tbl_ItemCategory4 {
   Enable  Boolean @default(true)
 
   @@map("tbl_itemcategory4")
-}
-
-model Tbl_Bookings {
-  BookingId     Int      @id @default(autoincrement())
-  CusCode       String   @db.Char(10)
-  BookingMode   String   @db.VarChar(50)
-  Gender        String   @db.VarChar(10)
-  Location      String   @db.VarChar(100)
-  Services      String   @db.Text
-  Categories    String   @db.VarChar(255)
-  TotalDuration Int
-  TotalPrice    Float
-  Providers     String   @db.Text
-  BookingDate   String   @db.VarChar(20)
-  TimeSlot      String   @db.VarChar(50)
-  SpecialNotes  String?  @db.Text
-  Status        String   @default("pending") @db.VarChar(50)
-  CreatedAt     DateTime @default(now())
-  UpdatedAt     DateTime @updatedAt
-
-  @@index([CusCode])
-  @@index([BookingDate])
-  @@index([Status])
-  @@map("tbl_bookings")
 }
 
 model aboutconfig {
@@ -353,14 +332,6 @@ model tbl_otpstore {
   @@index([email], map: "Tbl_OtpStore_email_idx")
 }
 
-model user {
-  id        Int      @id @default(autoincrement())
-  name      String
-  email     String   @unique(map: "User_email_key")
-  phone     String?
-  createdAt DateTime @default(now())
-}
-
 model tbl_ItemDetail {
   LocCode    String   @db.Char(10)
   ItemCode   String   @db.Char(15)
@@ -426,14 +397,14 @@ model tbl_billtaxes {
 }
 
 model tbl_bookingservicedetail {
-  LocCode         String @db.Char(10)
-  BookingID       String @db.Char(10)
-  GuessID         String @db.Char(10)
-  ServiceItemID   String @db.Char(15)
-  Qty             String @db.Char(10)
-  ItemPrice       Float  @default(0)
-  TechID          String @db.Char(10)
-  ScheduleIndex   Int?
+  LocCode          String @db.Char(10)
+  BookingID        String @db.Char(10)
+  GuessID          String @db.Char(10)
+  ServiceItemID    String @db.Char(15)
+  Qty              String @db.Char(10)
+  ItemPrice        Float  @default(0)
+  TechID           String @db.Char(10)
+  ScheduleIndex    Int?
   ScheduleStartMin Int?
   ScheduleEndMin   Int?
 
@@ -451,57 +422,58 @@ model Tbl_BookingServiceItemAddTech {
   TechID        String @db.Char(10)
 
   @@id([LocCode, BookingID, GuessID, ServiceItemID, TechID])
-  @@map("Tbl_BookingServiceItemAddTech")
+  @@map("tbl_bookingserviceitemaddtech")
 }
 
 // Per-booking material consumption (recipe rows actually used for this
 // booking). Written by the technician workstation page after check-in.
 model Tbl_BookingServiceRecipe {
-  LocCode       String  @db.Char(10)
-  BookingID     String  @db.Char(10)
-  GuessID       String  @db.Char(10)
-  ServiceItemID String  @db.Char(15)
-  RawItemCode   String  @db.Char(15)
-  MasterUnitID  String  @default(" ") @db.Char(10)
-  SubUnitID     String  @db.Char(10)
+  LocCode       String @db.Char(10)
+  BookingID     String @db.Char(10)
+  GuessID       String @db.Char(10)
+  ServiceItemID String @db.Char(15)
+  RawItemCode   String @db.Char(15)
+  MasterUnitID  String @default("") @db.Char(10)
+  SubUnitID     String @db.Char(10)
   QTY           Float
   ItemCost      Float
 
   @@id([LocCode, BookingID, GuessID, ServiceItemID, RawItemCode])
-  @@map("Tbl_BookingServiceRecipe")
+  @@map("tbl_bookingservicerecipe")
 }
 
 model tbl_bookingtxndetail {
-  LocCode       String   @db.Char(10)
-  BookingID     String   @db.Char(10)
-  GuessID       String   @db.Char(10)
-  BookingDate   DateTime @db.DateTime(0)
+  LocCode       String    @db.Char(10)
+  BookingID     String    @db.Char(10)
+  GuessID       String    @db.Char(10)
+  BookingDate   DateTime  @db.DateTime(0)
   CancelledDate DateTime? @db.DateTime(0)
-  CancelledBy   String     @default(" ") @db.Char(10)
-  Confirmed     Boolean    @default(false)
-  ConfirmedBy   String     @default(" ") @db.Char(10)
-  ConfirmedDate DateTime?  @db.DateTime(0)
-  CheckInTime   DateTime?  @db.DateTime(0)
+  CancelledBy   String    @default(" ") @db.Char(10)
+  Confirmed     Boolean   @default(false)
+  ConfirmedBy   String    @default(" ") @db.Char(10)
+  ConfirmedDate DateTime? @db.DateTime(0)
+  CheckInTime   DateTime? @db.DateTime(0)
 
   @@id([LocCode, BookingID, GuessID])
   @@map("tbl_bookingtxndetail")
 }
 
 model tbl_bookingheder {
-  LocCode           String   @db.Char(10)
-  BookingID         String   @db.Char(10)
-  CusCode           String   @db.Char(10)
-  BookingDate       DateTime @db.DateTime(0)
-  BookingTypeID     String   @db.Char(10)
-  Status            String   @db.Char(10)
-  ConfirmationType  String   @db.Char(2)
-  AdvBookingPayMode String   @default(" ") @db.VarChar(50)
-  AdvBookingAmount  Float    @default(0)
-  Remarks           String   @default(" ") @db.VarChar(500)
-  UserID            String   @default("0") @db.Char(10)
-  TxnDateTime       DateTime @default(now()) @db.DateTime(0)
+  LocCode           String    @db.Char(10)
+  BookingID         String    @db.Char(10)
+  CusCode           String    @db.Char(10)
+  BookingDate       DateTime  @db.DateTime(0)
+  BookingTypeID     String    @db.Char(10)
+  Status            String    @db.Char(10)
+  ConfirmationType  String    @db.Char(2)
+  AdvBookingPayMode String    @default(" ") @db.VarChar(50)
+  AdvBookingAmount  Float     @default(0)
+  Remarks           String    @default(" ") @db.VarChar(500)
+  UserID            String    @default("0") @db.Char(10)
+  TxnDateTime       DateTime  @default(now()) @db.DateTime(0)
   Pax               Int
   BillingTime       DateTime? @db.DateTime(0)
+  ClientReqID       String    @default(" ") @db.VarChar(50)
 
   @@id([LocCode, BookingID])
 }
@@ -513,15 +485,15 @@ model tbl_bookingtypes {
 }
 
 model tbl_taxes {
-  TaxCode        String  @id @db.Char(10)
-  TaxDescription String  @db.VarChar(50)
-  TaxPrecentage  Float   @default(0)
-  Enable         Boolean @default(true)
-  // The live table also carries ListingOrder INT NULL, ServiceCharge BIT(1) and
-  // ItemBasedTax BIT(1). They are deliberately NOT declared here: Prisma maps
-  // Boolean to TINYINT(1), so `db push` would try to convert those BIT columns
-  // on the salon database. They are read with raw SQL instead — see
-  // src/lib/billingTaxes.ts and src/app/api/taxes/route.ts.
+  TaxCode        String                 @id @db.Char(10)
+  TaxDescription String                 @db.VarChar(50)
+  TaxPrecentage  Float                  @default(0)
+  Enable         Boolean                @default(true)
+  ListingOrder   Int?
+  // BIT(1) on the live table. Unsupported so `db push` will not convert them
+  // to TINYINT(1). Read with raw SQL — src/lib/billingTaxes.ts.
+  ServiceCharge  Unsupported("bit(1)")?
+  ItemBasedTax   Unsupported("bit(1)")?
 }
 
 model tbl_technicianspecilities {
@@ -632,6 +604,7 @@ model Tbl_POHeader {
   ConUserID   String    @default("") @db.Char(10)
   Confirmed   String    @default("N") @db.Char(1)
   ConDatetime DateTime? @db.DateTime(0)
+  GRNed       String    @default("N") @db.Char(1)
 
   details Tbl_PODetails[]
 
@@ -643,13 +616,13 @@ model Tbl_PODetails {
   LocCode        String @default("") @db.Char(10)
   PONo           String @default("") @db.Char(10)
   LineNo         Int    @default(0)
-  ItemCode       String @default("") @db.Char(15)
+  ItemCode       String @default("") @db.VarChar(50)
   UnitID         String @default("") @db.Char(10)
   CostPrice      Float  @default(0)
   POQty          Float  @default(0)
   ItemValue      Float  @default(0)
   DirectPOConfNo String @default("") @db.Char(10)
-  GRNQty         Float  @default(0)
+  GRNQty         Float  @default(0) @map("GRNQTY")
   GRNNOs         String @default("") @db.VarChar(500)
 
   header Tbl_POHeader @relation(fields: [LocCode, PONo], references: [LocCode, PONO])
@@ -691,7 +664,7 @@ model Tbl_GRNDetails {
   LocCode         String    @default("") @db.Char(10)
   GRNNo           String    @default("") @db.VarChar(15)
   LineNo          Int       @default(0)
-  ItemCode        String    @default("") @db.Char(15)
+  ItemCode        String    @default("") @db.Char(20)
   UnitID          String    @default("") @db.Char(15)
   BatchNo         String    @default("") @db.VarChar(50)
   CostPrice       Float     @default(0)
@@ -1070,4 +1043,340 @@ model Tbl_IssueNoteDetail {
 
   @@id([FromLocCode, ToLoc, INNo, ItemCode])
   @@map("tbl_issuenotedetail")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Auth / OTP / rate-limit / secrets  (live db_acd689_sayo)
+// ─────────────────────────────────────────────────────────────────────────
+model Tbl_AdminLoginOtp {
+  UserId    String   @id @db.Char(10)
+  OtpHash   String   @db.VarChar(100)
+  ExpiresAt DateTime @db.DateTime(0)
+  Attempts  Int      @default(0) @db.TinyInt
+  CreatedAt DateTime @default(now()) @db.DateTime(0)
+
+  @@map("tbl_adminloginotp")
+}
+
+model Tbl_CustomerOtpReset {
+  Email     String   @id @db.VarChar(200)
+  OtpHash   String   @db.VarChar(100)
+  ExpiresAt DateTime @db.DateTime(0)
+  Attempts  Int      @default(0) @db.TinyInt
+  CreatedAt DateTime @default(now()) @db.DateTime(0)
+
+  @@map("tbl_customerotpreset")
+}
+
+model Tbl_PswReset {
+  UserId    String   @id @db.Char(10)
+  OtpHash   String   @db.VarChar(100)
+  ExpiresAt DateTime @db.DateTime(0)
+  Attempts  Int      @default(0) @db.TinyInt
+
+  @@map("tbl_pswreset")
+}
+
+model Tbl_RateLimit {
+  Bucket      String   @db.VarChar(60)
+  KeyHash     String   @db.Char(64)
+  Cnt         Int      @default(0) @db.UnsignedInt
+  WindowStart DateTime @db.DateTime(3)
+
+  @@id([Bucket, KeyHash])
+  @@index([WindowStart], map: "Tbl_RateLimit_window_idx")
+  @@map("tbl_ratelimit")
+}
+
+model Tbl_SystemOtp {
+  Scope       String @id @db.VarChar(60)
+  CodeHash    String @db.VarChar(64)
+  Expires     BigInt
+  Tries       Int    @default(0)
+  ResendAfter BigInt @default(0)
+
+  @@map("tbl_systemotp")
+}
+
+model Tbl_SystemSecrets {
+  SecretKey String  @id @db.VarChar(60)
+  SecretVal String? @db.Text
+
+  @@map("tbl_systemsecrets")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Access control / location rights
+// ─────────────────────────────────────────────────────────────────────────
+model Tbl_UserLocAccess {
+  OwnerId String @db.Char(10)
+  LocCode String @db.Char(10)
+  Allow   String @default("Y") @db.Char(1)
+
+  @@id([OwnerId, LocCode])
+  @@map("tbl_userlocaccess")
+}
+
+model Tbl_UserAuthorization {
+  UserID String  @db.Char(10)
+  FuncID String  @db.VarChar(200)
+  Auth   Boolean @default(false)
+  Module String  @default("RT") @db.VarChar(50)
+  ACCESS String  @default("") @db.VarChar(50)
+
+  @@id([UserID, FuncID])
+  @@map("tbl_userauthorization")
+}
+
+model Tbl_UserAccess_StdProfile {
+  UserID String  @db.Char(10)
+  FuncID String  @db.VarChar(200)
+  Auth   Boolean @default(false)
+  Module String  @default("RT") @db.VarChar(50)
+  ACCESS String  @default("") @db.VarChar(50)
+  ApfDes String? @db.VarChar(100)
+
+  @@id([UserID, FuncID])
+  @@map("tbl_useraccess_stdprofile")
+}
+
+model Tbl_GroupAccess {
+  GroupId    String @db.Char(10)
+  ScreenCode String @db.VarChar(30)
+  ActionCode String @db.VarChar(20)
+  Allow      String @default("N") @db.Char(1)
+
+  @@id([GroupId, ScreenCode, ActionCode])
+  @@map("tbl_groupaccess")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Payments / commissions / stock ledger
+// ─────────────────────────────────────────────────────────────────────────
+model Tbl_PaymentGroup {
+  PaygroupID String  @id @db.Char(10)
+  PayGroup   String  @db.VarChar(50)
+  Enable     Boolean
+
+  @@map("tbl_paymentgroup")
+}
+
+model Tbl_PaymentModes {
+  PayCode          String  @id @db.Char(10)
+  PayDes           String  @db.VarChar(50)
+  ZeroVal          String  @db.Char(1)
+  Cash             String  @db.Char(1)
+  CreditCard       String  @db.Char(1)
+  CREDIT           String  @db.Char(1)
+  RmksNeed         String  @db.Char(1)
+  Enable           Boolean
+  Other            Boolean
+  AdvPay           String  @db.Char(1)
+  COMPLEMENTRY     String  @db.Char(1)
+  DoNotShowInSales String  @db.Char(1)
+  OneOff           String  @db.Char(1)
+  ADDDIDUCTTOSALES String  @db.Char(10)
+  Voucher          Boolean @default(false)
+  PayGroupID       String  @default("0") @db.Char(10)
+
+  @@map("tbl_paymentmodes")
+}
+
+model Tbl_BillTechCommissions {
+  LocCode       String @db.Char(10)
+  BillNo        String @db.Char(15)
+  ItemID        String @db.Char(15)
+  TechID        String @db.Char(10)
+  SplitedAmount Float  @default(0)
+
+  @@id([LocCode, BillNo, ItemID, TechID])
+  @@map("tbl_billtechcommissions")
+}
+
+model Tbl_StockTxn {
+  TxnNo     BigInt   @id @default(autoincrement())
+  LocCode   String   @default("") @db.Char(10)
+  ItemCode  String   @default("") @db.Char(15)
+  TxnType   String   @default("GRN") @db.VarChar(10)
+  RefNo     String   @default("") @db.VarChar(20)
+  TxnDate   DateTime @default(dbgenerated("'1900-01-01 00:00:00'")) @db.DateTime(0)
+  QtyIn     Float    @default(0)
+  QtyOut    Float    @default(0)
+  Balance   Float    @default(0)
+  CostPrice Float    @default(0)
+  UserID    String   @default("") @db.Char(10)
+  Remarks   String   @default("") @db.VarChar(200)
+
+  @@index([LocCode, ItemCode, TxnDate], map: "idx_stk_item")
+  @@index([TxnType, RefNo], map: "idx_stk_ref")
+  @@map("tbl_stocktxn")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Upload staging (…temp) — same shape as live masters + Up* columns
+// Live dump has no PK on these; Prisma needs one, so live key + UpBatch.
+// ─────────────────────────────────────────────────────────────────────────
+model Tbl_ItemCategory1Temp {
+  CatCode   String  @db.Char(10)
+  CatDes    String  @db.VarChar(50)
+  Enable    Boolean @default(true)
+  UpBatch   String  @db.VarChar(36)
+  UpFileRow Int     @default(0)
+  UpStatus  String  @default("new") @db.VarChar(10)
+  UpNote    String  @default("") @db.VarChar(255)
+
+  @@id([CatCode, UpBatch])
+  @@map("tbl_itemcategory1temp")
+}
+
+model Tbl_ItemCategory2Temp {
+  CatCode   String  @db.Char(10)
+  CatDes    String  @db.VarChar(50)
+  Enable    Boolean @default(true)
+  UpBatch   String  @db.VarChar(36)
+  UpFileRow Int     @default(0)
+  UpStatus  String  @default("new") @db.VarChar(10)
+  UpNote    String  @default("") @db.VarChar(255)
+
+  @@id([CatCode, UpBatch])
+  @@map("tbl_itemcategory2temp")
+}
+
+model Tbl_ItemCategory3Temp {
+  CatCode   String  @db.Char(10)
+  CatDes    String  @db.VarChar(50)
+  Enable    Boolean @default(true)
+  UpBatch   String  @db.VarChar(36)
+  UpFileRow Int     @default(0)
+  UpStatus  String  @default("new") @db.VarChar(10)
+  UpNote    String  @default("") @db.VarChar(255)
+
+  @@id([CatCode, UpBatch])
+  @@map("tbl_itemcategory3temp")
+}
+
+model Tbl_ItemCategory4Temp {
+  CatCode   String  @db.Char(10)
+  CatDes    String  @db.VarChar(50)
+  Enable    Boolean @default(true)
+  UpBatch   String  @db.VarChar(36)
+  UpFileRow Int     @default(0)
+  UpStatus  String  @default("new") @db.VarChar(10)
+  UpNote    String  @default("") @db.VarChar(255)
+
+  @@id([CatCode, UpBatch])
+  @@map("tbl_itemcategory4temp")
+}
+
+model Tbl_ItemDetailTemp {
+  LocCode    String   @db.Char(10)
+  ItemCode   String   @db.Char(15)
+  ExpiryDate DateTime @db.DateTime(0)
+  ItemQty    Float    @default(0)
+  UpBatch    String   @db.VarChar(36)
+  UpFileRow  Int      @default(0)
+  UpStatus   String   @default("new") @db.VarChar(10)
+  UpNote     String   @default("") @db.VarChar(255)
+
+  @@id([LocCode, ItemCode, ExpiryDate, UpBatch])
+  @@map("tbl_itemdetailtemp")
+}
+
+model Tbl_ItemMasterTemp {
+  LocCode          String   @db.Char(10)
+  ItemCode         String   @db.Char(15)
+  ServiceItem      Boolean  @default(false)
+  MOF              String   @default("O") @db.Char(1)
+  ItemDes          String   @db.VarChar(50)
+  ItemPrintDes     String   @default(" ") @db.VarChar(50)
+  MasterUnitID     String   @db.Char(10)
+  Category1        String   @default("") @db.Char(10)
+  Category2        String   @default("") @db.Char(10)
+  Category3        String   @default("") @db.Char(10)
+  Category4        String   @default("") @db.Char(10)
+  SupID            String   @default("0") @db.Char(10)
+  ROL              Float    @default(0)
+  ROQ              Float    @default(0)
+  MinQty           Float    @default(0)
+  MaxQty           Float    @default(0)
+  RawCost          Float    @default(0)
+  CostMarkup       Float    @default(0)
+  OverallCost      Float    @default(0)
+  SalesMargin      Float    @default(0)
+  StockBalance     Float    @default(0)
+  ExpiryItem       Boolean  @default(false)
+  Retailprice      Float    @default(0)
+  WSApp            Boolean  @default(false)
+  WSQty            Float    @default(0)
+  WSPrice          Float    @default(0)
+  PackedItem       Boolean  @default(false)
+  PackSize         Float    @default(0)
+  PackPrice        Float    @default(0)
+  SemiFinishedProd Boolean  @default(false)
+  ItemPic          Bytes?
+  SerDuration      Int      @default(0)
+  CreateDate       DateTime @default(now()) @db.DateTime(0)
+  CreateBy         String   @default("0") @db.Char(10)
+  UpdDate          DateTime @default(now()) @db.DateTime(0)
+  UpdBy            String   @default("0") @db.Char(10)
+  Enable           Boolean  @default(true)
+  UpBatch          String   @db.VarChar(36)
+  UpFileRow        Int      @default(0)
+  UpStatus         String   @default("new") @db.VarChar(10)
+  UpNote           String   @default("") @db.VarChar(255)
+
+  @@id([LocCode, ItemCode, UpBatch])
+  @@map("tbl_itemmastertemp")
+}
+
+model Tbl_SupplierMasterTemp {
+  SupID          String   @db.Char(10)
+  SupName        String   @db.VarChar(200)
+  SuppAdd1       String   @default(" ") @db.VarChar(200)
+  ContactNO      String   @default(" ") @db.VarChar(100)
+  Emails         String   @default(" ") @db.VarChar(100)
+  Web            String   @default(" ") @db.VarChar(50)
+  DebtAmount     Float    @default(0)
+  CreateUser     String   @default("0") @db.VarChar(50)
+  CreateDatetime DateTime @default(now()) @db.DateTime(0)
+  Remarks        String   @default(" ") @db.VarChar(260)
+  Enable         Boolean  @default(true)
+  UpBatch        String   @db.VarChar(36)
+  UpFileRow      Int      @default(0)
+  UpStatus       String   @default("new") @db.VarChar(10)
+  UpNote         String   @default("") @db.VarChar(255)
+
+  @@id([SupID, UpBatch])
+  @@map("tbl_suppliermastertemp")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Operating hours / staff roster — ported from SQL Server
+//   dbo.Tbl_CompanyOperatingHours
+//   dbo.Tbl_StaffSchedule
+// Column names keep the original spellings (OpemOrClose, LeveOn).
+// BIT → TINYINT(1) / Boolean so Prisma does not try to convert BIT columns.
+// See scripts/create-Tbl_OperatingHours-mysql.sql
+// ─────────────────────────────────────────────────────────────────────────
+model Tbl_CompanyOperatingHours {
+  TxnDate        DateTime @id @db.DateTime(0)
+  StartTime      DateTime @db.DateTime(0)
+  ClosingTime    DateTime @db.DateTime(0)
+  OpemOrClose    Boolean  @default(true)
+  ClosingRemarks String   @default(" ") @db.VarChar(200)
+
+  @@map("tbl_companyoperatinghours")
+}
+
+model Tbl_StaffSchedule {
+  TxnDate     DateTime @db.DateTime(0)
+  StaffID     String   @db.Char(10)
+  StartTime   DateTime @db.DateTime(0)
+  ClosingTime DateTime @db.DateTime(0)
+  Offday      Boolean  @default(false)
+  LeveOn      Boolean  @default(false)
+  Remarks     String   @default(" ") @db.VarChar(200)
+
+  @@id([TxnDate, StaffID])
+  @@map("tbl_staffschedule")
 }

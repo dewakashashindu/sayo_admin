@@ -113,7 +113,8 @@ function technicianIsInBranch(
 }
 
 function todayISO(): string {
-  return new Date().toISOString().split("T")[0];
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 function fmtDateNav(iso: string): string {
@@ -330,12 +331,20 @@ const CSS = `
     font-size: 12px; font-weight: 600; position: sticky; top: 0; z-index: 3;
   }
   .sch-tbl thead th:first-child { width: 76px; }
+  .sch-tbl tbody tr { height: 10px; }
   .sch-tbl tbody tr:nth-child(odd) td { background: #e2ecec; }
   .sch-tbl tbody tr:nth-child(even) td { background: #d8e4e4; }
   .sch-tbl td {
     height: 10px; padding: 0 8px; line-height: 1; vertical-align: middle;
     border-bottom: 1px solid rgba(0,0,0,.03); font-size: 12px;
     transition: background .1s;
+  }
+  .sch-tbl td.time-cell {
+    height: 10px; max-height: 10px; padding: 0 4px; overflow: visible;
+  }
+  .sch-tbl td.time-cell .time-lab {
+    position: absolute; top: 0; left: 6px; z-index: 2; pointer-events: none;
+    display: flex; flex-direction: column; gap: 1px;
   }
   .sch-tbl td.occ-cell { vertical-align: top; padding: 2px 6px; line-height: normal; }
 
@@ -2377,6 +2386,7 @@ function ScheduleGrid({
             return (
               <tr key={timeSlot} style={{ height: ROW_HEIGHT_PX }}>
                 <td
+                  className="time-cell"
                   style={{
                     position: "relative",
                     height: ROW_HEIGHT_PX,
@@ -2385,12 +2395,11 @@ function ScheduleGrid({
                   }}
                 >
                   {majorRow && (
-                    <>
+                    <span className="time-lab">
                       <span
                         style={{
-                          display: "block",
                           color: "#374151",
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight: 600,
                           lineHeight: 1,
                         }}
@@ -2399,16 +2408,14 @@ function ScheduleGrid({
                       </span>
                       <span
                         style={{
-                          display: "block",
-                          marginTop: 2,
                           color: "#9ca3af",
-                          fontSize: 9,
+                          fontSize: 8,
                           lineHeight: 1,
                         }}
                       >
                         {timeSlot.split(" ")[1]}
                       </span>
-                    </>
+                    </span>
                   )}
                 </td>
 
