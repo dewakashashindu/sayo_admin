@@ -83,7 +83,8 @@ const SUPER_ADMIN_ONLY = new Set(['settings-uploaddata']);
 
 function leafAllowed(key: string, perms: Set<string>, superAdmin: boolean): boolean {
   if (SUPER_ADMIN_ONLY.has(key)) return superAdmin;
-  const code = ITEM_ACCESS_CODE[key];
+  const code = ITEM_ACCESS_CODE[key]
+    || (key.startsWith("br-") ? "BILLREP" : undefined);
   if (!code) return true; // un-mapped leaves are not access-controlled
   const candidates = [code, ...(ITEM_ACCESS_EXTRA[key] ?? [])];
   return candidates.some((c) => perms.has(`${c}.ACCESS`));
@@ -158,7 +159,45 @@ export const NAV_GROUPS: NavGroup[] = [
     children: [
       { key: 'billing-dashboard',    label: 'Billing Dashboard',     path: '/billing/dashboard'    },
       { key: 'billing-transactions', label: 'Transactions',          path: '/billing/transactions' },
-      { key: 'billing-reports',      label: 'Reports',               path: '/billing/reports'      },
+      { key: 'billing-reports', label: 'Reports', path: '', children: [
+        { key: 'br-sales', label: 'Sales Reports', path: '', children: [
+          { key: 'br-sales-details', label: 'Sales Detail – All', path: '/billing/reports/sales-details' },
+          { key: 'br-sales-category-summary', label: 'Sales By Category – Summary', path: '/billing/reports/sales-category-summary' },
+          { key: 'br-sales-category-detail', label: 'Sales By Category – Detail', path: '/billing/reports/sales-category-detail' },
+          { key: 'br-hourly-sales', label: 'Hourly Sales', path: '/billing/reports/hourly-sales' },
+          { key: 'br-sales-summary', label: 'Sales Summary – ALL', path: '/billing/reports/sales-summary' },
+        ]},
+        { key: 'br-payments', label: 'Payment Reports', path: '', children: [
+          { key: 'br-payment-summary', label: 'Payment Summary', path: '/billing/reports/payment-summary' },
+          { key: 'br-payment-summary-wise', label: 'Pay Mode Wise', path: '/billing/reports/payment-summary-wise' },
+          { key: 'br-payment-bill-paymode-grid', label: 'Bill Pay Mode Wise Grid', path: '/billing/reports/payment-bill-paymode-grid' },
+        ]},
+        { key: 'br-cashier', label: 'Cashier Collection', path: '', children: [
+          { key: 'br-cashier-collection', label: 'Cashier Wise Sales', path: '/billing/reports/cashier-collection' },
+          { key: 'br-cashier-payment-breakdown', label: 'Payment Break Down', path: '/billing/reports/cashier-payment-breakdown' },
+          { key: 'br-cashier-breakdown-grid', label: 'Payment Break Down – Grid', path: '/billing/reports/cashier-breakdown-grid' },
+        ]},
+        { key: 'br-items', label: 'Item Issue', path: '', children: [
+          { key: 'br-menu-item-issue', label: 'Item Issue', path: '/billing/reports/menu-item-issue' },
+          { key: 'br-menu-item-issue-date', label: 'Menu Item Issue By Date', path: '/billing/reports/menu-item-issue-date' },
+        ]},
+        { key: 'br-movement', label: 'Item Movement', path: '', children: [
+          { key: 'br-item-movement', label: 'Item Movement', path: '/billing/reports/item-movement' },
+        ]},
+        { key: 'br-txn', label: 'Transaction Summary', path: '', children: [
+          { key: 'br-transaction-summary', label: 'Transaction Summary By Date', path: '/billing/reports/transaction-summary' },
+        ]},
+        { key: 'br-tax', label: 'Tax, charge & pax', path: '', children: [
+          { key: 'br-service-charge', label: 'Service Charge', path: '/billing/reports/service-charge' },
+          { key: 'br-tax-vat', label: 'Tax Report', path: '/billing/reports/tax-vat' },
+          { key: 'br-pax-count', label: 'Pax Count', path: '/billing/reports/pax-count' },
+        ]},
+        { key: 'br-credit', label: 'Credit Settlement', path: '', children: [
+          { key: 'br-credit-history', label: 'Credit History', path: '/billing/reports/credit-history' },
+          { key: 'br-credit-pay-history', label: 'Payment History', path: '/billing/reports/credit-pay-history' },
+          { key: 'br-credit-account-detail', label: 'Account Detail', path: '/billing/reports/credit-account-detail' },
+        ]},
+      ]},
     ],
   },
   {
@@ -403,19 +442,29 @@ function firstLeafPath(g: NavGroup): string {
 }
 
 /** Group + subgroup keys that contain the given item key. */
+function findAncestors(items: SubItem[], key: string, trail: string[]): string[] | null {
+  for (const c of items) {
+    const next = [...trail, c.key];
+    if (c.key === key) return next;
+    if (c.children?.length) {
+      const found = findAncestors(c.children, key, next);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function ancestorKeysOf(key: string): string[] {
   for (const g of NAV_GROUPS) {
     if (g.key === key) return [g.key];
-    for (const c of g.children ?? []) {
-      if (c.key === key) return [g.key, c.key];
-      for (const sc of c.children ?? []) if (sc.key === key) return [g.key, c.key, sc.key];
-    }
+    const found = findAncestors(g.children ?? [], key, [g.key]);
+    if (found) return found;
   }
   return [];
 }
 
 function rowsOf(items: SubItem[]): number {
-  return items.reduce((n, c) => n + 1 + (c.children?.length ?? 0), 0);
+  return items.reduce((n, c) => n + 1 + (c.children?.length ? rowsOf(c.children) : 0), 0);
 }
 
 const SB_EXPANDED_KEY = 'sayo.sb.expanded';
