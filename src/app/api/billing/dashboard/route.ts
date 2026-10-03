@@ -30,9 +30,18 @@ interface HeaderRow {
   Status: string;
   ConfirmationType: string;
   TxnDateTime: string | null;
+  BillingTime: string | null;
   Pax: number | null;
   CusName: string | null;
   RegTel: string | null;
+}
+
+interface BillHeaderRow {
+  LocCode: string;
+  BillNo: string;
+  CusID: string;
+  TxnTime: string | null;
+  NetTotal: number | null;
 }
 
 interface DetailRow {
@@ -84,6 +93,44 @@ function modeFromConfirmationType(raw: string): "walkin" | "pre_booked" {
   return "pre_booked";
 }
 
+function isBilledAt(value: unknown): boolean {
+  if (value === null || value === undefined || value === "") return false;
+  const time = new Date(value as never).getTime();
+  if (Number.isNaN(time)) return false;
+  return time > Date.parse("1900-01-02T00:00:00Z");
+}
+
+async function loadDoneHeaders(billed: boolean): Promise<HeaderRow[]> {
+  const billedFilter = billed
+    ? Prisma.sql`h.BillingTime IS NOT NULL AND h.BillingTime > '1900-01-01 00:00:00'`
+    : Prisma.sql`(h.BillingTime IS NULL OR h.BillingTime <= '1900-01-01 00:00:00')`;
+  const orderBy = billed
+    ? Prisma.sql`h.BillingTime DESC`
+    : Prisma.sql`h.TxnDateTime DESC`;
+  return prisma.$queryRaw<HeaderRow[]>`
+    SELECT
+      RTRIM(h.BookingID)        AS BookingID,
+      RTRIM(h.LocCode)          AS LocCode,
+      RTRIM(h.CusCode)          AS CusCode,
+      DATE_FORMAT(h.BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
+      h.Remarks                 AS Remarks,
+      RTRIM(h.Status)           AS Status,
+      RTRIM(h.ConfirmationType) AS ConfirmationType,
+      DATE_FORMAT(h.TxnDateTime, '%Y-%m-%d %H:%i:%s') AS TxnDateTime,
+      DATE_FORMAT(h.BillingTime, '%Y-%m-%d %H:%i:%s') AS BillingTime,
+      h.Pax                     AS Pax,
+      RTRIM(c.CusName)          AS CusName,
+      RTRIM(c.RegTel)           AS RegTel
+    FROM tbl_bookingheder h
+    LEFT JOIN tbl_customermaster c
+      ON RTRIM(c.CusCode) = RTRIM(h.CusCode)
+    WHERE UPPER(RTRIM(h.Status)) = 'DONE'
+      AND ${billedFilter}
+    ORDER BY ${orderBy}
+    LIMIT 200
+  `;
+}
+
 export async function GET(req: NextRequest) {
   try {
     /* branch scope — the billing dashboard lists the branches this person was
@@ -95,30 +142,21 @@ export async function GET(req: NextRequest) {
       scope.unlimited ||
       [...scope.allowed].some((c) => c.toUpperCase() === String(code ?? "").trim().toUpperCase());
 
-    const headers = (await prisma.$queryRaw<HeaderRow[]>`
-      SELECT
-        RTRIM(h.BookingID)        AS BookingID,
-        RTRIM(h.LocCode)          AS LocCode,
-        RTRIM(h.CusCode)          AS CusCode,
-        DATE_FORMAT(h.BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
-        h.Remarks                 AS Remarks,
-        RTRIM(h.Status)           AS Status,
-        RTRIM(h.ConfirmationType) AS ConfirmationType,
-        DATE_FORMAT(h.TxnDateTime, '%Y-%m-%d %H:%i:%s') AS TxnDateTime,
-        h.Pax                     AS Pax,
-        RTRIM(c.CusName)          AS CusName,
-        RTRIM(c.RegTel)           AS RegTel
-      FROM tbl_bookingheder h
-      LEFT JOIN tbl_customermaster c
-        ON RTRIM(c.CusCode) = RTRIM(h.CusCode)
-      WHERE UPPER(RTRIM(h.Status)) = 'DONE'
-        AND (h.BillingTime IS NULL OR h.BillingTime <= '1900-01-01 00:00:00')
-      ORDER BY h.TxnDateTime DESC
-      LIMIT 200
-    `).filter((r) => mayUse(r.LocCode));
+    const [pendingHeaders, completedHeaders] = await Promise.all([
+      loadDoneHeaders(false),
+      loadDoneHeaders(true),
+    ]);
+    const pendingScoped = pendingHeaders.filter((r) => mayUse(r.LocCode));
+    const completedScoped = completedHeaders.filter((r) => mayUse(r.LocCode));
+    const headers = [...pendingScoped, ...completedScoped];
 
     if (headers.length === 0) {
-      return NextResponse.json({ success: true, data: [] });
+      return NextResponse.json({
+        success: true,
+        data: [],
+        pending: [],
+        completed: [],
+      });
     }
 
     const bookingIDs = [...new Set(headers.map((r) => trim(r.BookingID)))].filter(Boolean);
@@ -239,9 +277,58 @@ export async function GET(req: NextRequest) {
       aggByKey.set(key, agg);
     });
 
-    const data = headers.map((header) => {
+    const completedLocs = [...new Set(completedScoped.map((r) => trim(r.LocCode)).filter(Boolean))];
+    const completedCus = [...new Set(completedScoped.map((r) => trim(r.CusCode)).filter(Boolean))];
+    let billRows: BillHeaderRow[] = [];
+    if (completedLocs.length && completedCus.length) {
+      try {
+        billRows = await prisma.$queryRaw<BillHeaderRow[]>`
+          SELECT
+            RTRIM(LocCode) AS LocCode,
+            RTRIM(BillNo)  AS BillNo,
+            RTRIM(CusID)   AS CusID,
+            DATE_FORMAT(TxnTime, '%Y-%m-%d %H:%i:%s') AS TxnTime,
+            NetTotal       AS NetTotal
+          FROM tbl_billheader
+          WHERE RTRIM(LocCode) IN (${Prisma.join(completedLocs)})
+            AND RTRIM(CusID)   IN (${Prisma.join(completedCus)})
+          ORDER BY TxnTime DESC
+          LIMIT 800
+        `;
+      } catch {
+        billRows = [];
+      }
+    }
+
+    const matchBill = (loc: string, cus: string, billedAt: string | null) => {
+      if (!billedAt) return { billNo: "", netTotal: null as number | null };
+      const billedMs = new Date(billedAt.replace(" ", "T")).getTime();
+      if (Number.isNaN(billedMs)) return { billNo: "", netTotal: null as number | null };
+      let best: { billNo: string; netTotal: number; diff: number } | null = null;
+      for (const row of billRows) {
+        if (trim(row.LocCode).toUpperCase() !== loc.toUpperCase()) continue;
+        if (trim(row.CusID).toUpperCase() !== cus.toUpperCase()) continue;
+        const txnMs = new Date(String(row.TxnTime ?? "").replace(" ", "T")).getTime();
+        if (Number.isNaN(txnMs)) continue;
+        const diff = Math.abs(txnMs - billedMs);
+        if (diff > 20 * 60 * 1000) continue;
+        if (!best || diff < best.diff) {
+          best = {
+            billNo: trim(row.BillNo),
+            netTotal: Number(row.NetTotal ?? 0) || 0,
+            diff,
+          };
+        }
+      }
+      return best
+        ? { billNo: best.billNo, netTotal: best.netTotal }
+        : { billNo: "", netTotal: null as number | null };
+    };
+
+    const mapRow = (header: HeaderRow) => {
       const bookingID = trim(header.BookingID);
       const locCode = trim(header.LocCode);
+      const cusCode = trim(header.CusCode);
       const agg = aggByKey.get(`${locCode}|${bookingID}`);
       const bookingDate = trim(header.BookingDate) || null;
       const remarks = header.Remarks ?? "";
@@ -253,11 +340,14 @@ export async function GET(req: NextRequest) {
         timeFromRemarks(remarks) ||
         timeLabel(bookingDate) ||
         "—";
+      const billed = isBilledAt(header.BillingTime);
+      const billedAt = billed ? trim(header.BillingTime) : "";
+      const bill = billed ? matchBill(locCode, cusCode, billedAt || null) : { billNo: "", netTotal: null };
 
       return {
         bookingID,
         locCode,
-        cusCode: trim(header.CusCode),
+        cusCode,
         clientName: trim(header.CusName) || "Unknown",
         clientPhone: trim(header.RegTel),
         date,
@@ -267,11 +357,22 @@ export async function GET(req: NextRequest) {
         pax: Number(header.Pax ?? 0) || 0,
         services: agg?.services ?? [],
         techNames: agg?.techs ?? [],
-        total: Number(agg?.total ?? 0) || 0,
+        total: bill.netTotal != null ? bill.netTotal : Number(agg?.total ?? 0) || 0,
+        billed,
+        billedAt,
+        billNo: bill.billNo,
       };
-    });
+    };
 
-    return NextResponse.json({ success: true, data });
+    const pending = pendingScoped.map(mapRow);
+    const completed = completedScoped.map(mapRow);
+
+    return NextResponse.json({
+      success: true,
+      data: pending,
+      pending,
+      completed,
+    });
   } catch (err) {
     console.error("[billing-dashboard] GET failed:", err);
     /* A database that cannot be reached is not a broken page: say so, with the

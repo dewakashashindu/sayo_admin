@@ -278,8 +278,8 @@ function SchedulesPageContent() {
 
   const today = todayISO();
   const [ym, setYm] = useState(today.slice(0, 7));
-  const [picked, setPicked] = useState<string[]>([today]);
-  const [anchor, setAnchor] = useState(today);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [anchor, setAnchor] = useState('');
   const [search, setSearch] = useState('');
   const [staff, setStaff] = useState<StaffRow[]>([]);
   const [selStaff, setSelStaff] = useState<StaffRow | null>(null);
@@ -336,26 +336,16 @@ function SchedulesPageContent() {
       setStaff(res.data.staff);
       setSchedules(res.data.schedules);
       setHours(res.data.hours);
-      let nextStaff: StaffRow | null = null;
-      setSelStaff((prev) => {
-        nextStaff = prev
+      setSelStaff((prev) =>
+        prev
           ? res.data!.staff.find((s) => s.UserId === prev.UserId) ?? res.data!.staff[0] ?? null
-          : res.data!.staff[0] ?? null;
-        return nextStaff;
-      });
-      setPicked((prev) => {
-        const next = prev.length ? prev : [today.startsWith(month) ? today : `${month}-01`];
-        const their = nextStaff
-          ? res.data!.schedules.filter((r) => r.StaffID === nextStaff!.UserId)
-          : [];
-        loadForm(next[0], their, res.data!.hours);
-        return next;
-      });
+          : res.data!.staff[0] ?? null,
+      );
     } else {
       setLoadError(res.message ?? 'Failed to load staff schedules');
     }
     setLoading(false);
-  }, [loadForm, today]);
+  }, []);
 
   useEffect(() => { fetchMonth(ym); }, [ym]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -691,7 +681,7 @@ export default function StaffSchedulesPage() {
       </div>
     );
   }
-  if (enforce && !has('ADSCH', 'ACCESS')) {
+  if (enforce && !(has('ADMINGRP', 'ACCESS') && has('ADSCH', 'ACCESS'))) {
     return <NoAccess screen="Staff Schedules" />;
   }
   return <SchedulesPageContent />;

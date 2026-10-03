@@ -81,3 +81,53 @@ export function isWeekday(iso: string): boolean {
   const d = new Date(`${iso}T00:00:00`).getDay();
   return d >= 1 && d <= 5;
 }
+
+export const SLOT_MINUTES = 30;
+
+/** Minutes past midnight from `HH:MM` or `h:mm AM/PM`. `-1` when unusable. */
+export function clockToMinutes(value: unknown): number {
+  const raw = String(value ?? "").trim();
+  const hhmm = parseHhmm(raw);
+  if (hhmm && !/[ap]m/i.test(raw)) return minutesOf(hhmm);
+  const m = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!m) return -1;
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+  const period = m[3].toUpperCase();
+  if (h < 1 || h > 12 || min > 59) return -1;
+  if (period === "AM" && h === 12) h = 0;
+  if (period === "PM" && h !== 12) h += 12;
+  return h * 60 + min;
+}
+
+export function minutesToClockSlot(minutes: number, padHour = true): string {
+  const safe = ((Math.round(minutes) % 1440) + 1440) % 1440;
+  const h24 = Math.floor(safe / 60);
+  const mn = safe % 60;
+  const period = h24 >= 12 ? "PM" : "AM";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  const hour = padHour ? String(h12).padStart(2, "0") : String(h12);
+  return `${hour}:${String(mn).padStart(2, "0")} ${period}`;
+}
+
+/**
+ * 30-minute clock grid from open → close (inclusive of a closing time that
+ * lands on :00/:30, matching the old 9:00 AM … 6:00 PM list).
+ * Open 10:15 → first slot 10:30. Close 19:00 → last start 07:00 PM.
+ */
+export function generateDaySlots(startMin: number, closeMin: number, padHour = true): string[] {
+  if (!(startMin >= 0) || !(closeMin > startMin)) return [];
+  const first = Math.ceil(startMin / SLOT_MINUTES) * SLOT_MINUTES;
+  const last = Math.floor(closeMin / SLOT_MINUTES) * SLOT_MINUTES;
+  const out: string[] = [];
+  for (let t = first; t <= last && t < 24 * 60; t += SLOT_MINUTES) {
+    out.push(minutesToClockSlot(t, padHour));
+  }
+  return out;
+}
+
+export function slotInList(slot: string, slots: string[]): boolean {
+  const want = clockToMinutes(slot);
+  if (want < 0) return false;
+  return slots.some((s) => clockToMinutes(s) === want);
+}

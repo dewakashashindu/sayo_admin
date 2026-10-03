@@ -4,14 +4,13 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { decodeBookingSchedule } from '@/lib/bookingSchedule';
 import { BOOKING_SERVICE_DETAIL_FROM } from '@/lib/bookingReadModel';
+import {
+  loadCompanyDay,
+  loadStaffDays,
+  resolveStaffWindow,
+  slotsOutsideWindow,
+} from '@/lib/dayHours';
 
-const PUBLIC_TIME_SLOTS = [
-  '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM',
-  '11:00 AM', '11:30 AM', '12:00 PM', '12:30 PM',
-  '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM',
-  '03:00 PM', '03:30 PM', '04:00 PM', '04:30 PM',
-  '05:00 PM', '05:30 PM', '06:00 PM',
-];
 
 /* A booking that is not CONFIRMED yet does not hold a chair. The "with
    confirmation" flow is a REQUEST: it is saved PENDING precisely because the
@@ -123,7 +122,7 @@ async function loadLegacyBookings(date: string, locCode?: string): Promise<Legac
 }
 
 /** Every bookable specialist of a branch, by the display name the page uses. */
-async function loadBranchProviderNames(locCode: string): Promise<string[]> {
+async function loadBranchProviders(locCode: string): Promise<{ userId: string; name: string }[]> {
   const [locations, users, specialities, assignments] = await Promise.all([
     prisma.tbl_LocationMaster.findMany({ where: { Enable: true }, select: { LocCode: true } }),
     prisma.tbl_userdetails.findMany({ where: { Enable: true }, select: { UserId: true, UserName: true, WorkingLocID: true, Rmks: true } }),
@@ -147,16 +146,19 @@ async function loadBranchProviderNames(locCode: string): Promise<string[]> {
     if (specByID.get(specID)) bookable.add(String(assignment.UserID ?? '').trim().toUpperCase());
   }
 
-  const names: string[] = [];
+  const out: { userId: string; name: string }[] = [];
+  const seen = new Set<string>();
   for (const user of users) {
-    const userID = String(user.UserId ?? '').trim().toUpperCase();
-    if (!bookable.has(userID)) continue;
+    const userID = String(user.UserId ?? '').trim();
+    if (!bookable.has(userID.toUpperCase())) continue;
     const working = String(user.WorkingLocID ?? '').trim().toUpperCase();
     if (!locMap.has(working)) continue;
     const display = String(user.UserName ?? '').trim();
-    if (display) names.push(display);
+    if (!display || seen.has(display)) continue;
+    seen.add(display);
+    out.push({ userId: userID, name: display });
   }
-  return Array.from(new Set(names));
+  return out;
 }
 
 /* GET /api/bookings/availability
@@ -200,10 +202,29 @@ export async function GET(req: NextRequest) {
       locCode = branch.LocCode.trim();
     }
 
-    const [rows, branchProviders] = await Promise.all([
+    const [company, staffDays, rows, branchProviders] = await Promise.all([
+      loadCompanyDay(date),
+      loadStaffDays(date),
       loadLegacyBookings(date, locCode),
-      locCode ? loadBranchProviderNames(locCode) : Promise.resolve([] as string[]),
+      locCode ? loadBranchProviders(locCode) : Promise.resolve([] as { userId: string; name: string }[]),
     ]);
+
+    const daySlots = company.open ? company.slots : [];
+    const rosterNames = branchProviders.map((p) => p.name);
+
+    if (!company.open) {
+      return NextResponse.json({
+        success: true,
+        salonClosed: true,
+        open: false,
+        startTime: company.startTime,
+        closingTime: company.closingTime,
+        remarks: company.remarks,
+        slots: [] as string[],
+        bookedSlots: [] as string[],
+        providerSlots: {} as Record<string, string[]>,
+      });
+    }
 
     const grouped = new Map<string, {
       startMin: number;
@@ -273,7 +294,7 @@ export async function GET(req: NextRequest) {
       if (!booking.providerName) continue;
       const slots = providerSlots[booking.providerName] || [];
 
-      for (const slot of PUBLIC_TIME_SLOTS) {
+      for (const slot of daySlots) {
         const slotStart = slotToMinutes(slot);
         if (
           slotStart >= 0 &&
@@ -287,13 +308,26 @@ export async function GET(req: NextRequest) {
       providerSlots[booking.providerName] = slots;
     }
 
+    for (const person of branchProviders) {
+      const window = resolveStaffWindow(company, staffDays.get(person.userId.trim().toUpperCase()));
+      const extra = window.working
+        ? slotsOutsideWindow(daySlots, window.startMin, window.closeMin)
+        : daySlots;
+      if (extra.length === 0) continue;
+      const current = providerSlots[person.name] || [];
+      for (const slot of extra) {
+        if (!current.includes(slot)) current.push(slot);
+      }
+      providerSlots[person.name] = current;
+    }
+
     /* A slot nobody at the branch can take at all. This used to be hardcoded
        `[]`, which left the evaluator's first guard (a globally blocked slot)
        unreachable — the page had no way to mark a whole branch as full. */
-    const roster = branchProviders.length > 0 ? branchProviders : [];
+    const roster = rosterNames;
     const bookedSlots: string[] = [];
     if (roster.length > 0) {
-      for (const slot of PUBLIC_TIME_SLOTS) {
+      for (const slot of daySlots) {
         const someoneFree = roster.some((name) => {
           const busy = providerSlots[name] || providerSlots[providerDisplayName(name, requestedProviderNames)] || [];
           return !busy.includes(slot);
@@ -304,6 +338,12 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      salonClosed: false,
+      open: true,
+      startTime: company.startTime,
+      closingTime: company.closingTime,
+      remarks: company.remarks,
+      slots: daySlots,
       bookedSlots,
       providerSlots,
     });

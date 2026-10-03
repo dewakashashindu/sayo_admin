@@ -23,7 +23,12 @@ interface DoneBooking {
   services: string[];
   techNames: string[];
   total: number;
+  billed?: boolean;
+  billedAt?: string;
+  billNo?: string;
 }
+
+type DashTab = "pending" | "completed";
 
 interface ToastMsg {
   id: number;
@@ -50,9 +55,16 @@ const CSS = `
   .badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 99px; font-weight: 700; white-space: nowrap; text-transform: uppercase; padding: 3px 9px; font-size: 10px; letter-spacing: .05em; }
   .b-ok { background: rgba(34,197,94,.12); color: #15803d; }
   .b-done { background: rgba(139,92,246,.14); color: #6d28d9; }
+  .b-billed { background: rgba(34,197,94,.14); color: #15803d; }
   .b-pre { background: rgba(30,58,64,.08); color: #1e3a40; }
   .b-cash { background: rgba(37,99,235,.12); color: #1d4ed8; }
   .live-dot { display: inline-block; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: #8b5cf6; }
+  .live-dot.green { background: #22c55e; }
+  .dash-tabs { display: inline-flex; align-items: center; gap: 4px; padding: 3px; border-radius: 10px; background: rgba(30,58,64,.08); }
+  .dash-tab { border: none; background: transparent; cursor: pointer; font-family: 'Inter',sans-serif; padding: 7px 14px; border-radius: 8px; color: #4b5563; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .dash-tab.active { background: #1e3a40; color: #fff; font-weight: 700; box-shadow: 0 1px 4px rgba(30,58,64,.35); }
+  .dash-tab .count { display: inline-flex; min-width: 18px; justify-content: center; margin-left: 6px; padding: 0 6px; border-radius: 99px; background: rgba(255,255,255,.18); font-size: 11px; font-weight: 800; }
+  .dash-tab:not(.active) .count { background: rgba(30,58,64,.12); color: #1e3a40; }
 
   .srch { width: 260px; height: 40px; padding: 0 14px 0 38px; border: 1.5px solid #c0cbcc; border-radius: 10px; outline: none; background: #fff; color: #1f2937; font-family: 'Inter',sans-serif; font-size: 14px; }
   .srch:focus { border-color: #1e3a40; box-shadow: 0 0 0 3px rgba(30,58,64,.08); }
@@ -73,6 +85,8 @@ const CSS = `
   .refresh-btn { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1.5px solid rgba(30,58,64,.2); border-radius: 8px; background: rgba(30,58,64,.05); color: #1e3a40; font-family: 'Inter',sans-serif; font-size: 12px; font-weight: 600; cursor: pointer; }
   .bill-btn { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border: none; border-radius: 9px; background: #2563eb; color: #fff; font-family: 'Inter',sans-serif; font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
   .bill-btn:hover { background: #1d4ed8; }
+  .bill-btn.ghost { background: #fff; color: #1e3a40; border: 1.5px solid rgba(30,58,64,.25); }
+  .bill-btn.ghost:hover { background: #f3f7f7; }
   .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: #9ca3af; }
   .empty-ico { display: flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 50%; background: rgba(30,58,64,.08); }
 
@@ -141,6 +155,18 @@ function todayISO(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+function fmtDateTime(value: string): string {
+  if (!value) return "—";
+  const parsed = new Date(value.includes("T") ? value : value.replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function ToastContainer({ toasts }: { toasts: ToastMsg[] }) {
   return (
     <div style={{ position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", gap: 8, zIndex: 999 }}>
@@ -155,7 +181,9 @@ export default function BillingDashboardPage() {
   const router = useRouter();
   const { loaded, enforce, has } = useMyAccess();
   const [navKey, setNavKey] = useState("billing-dashboard");
-  const [bookings, setBookings] = useState<DoneBooking[]>([]);
+  const [tab, setTab] = useState<DashTab>("pending");
+  const [pending, setPending] = useState<DoneBooking[]>([]);
+  const [completed, setCompleted] = useState<DoneBooking[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
@@ -180,20 +208,28 @@ export default function BillingDashboardPage() {
       try {
         const res = await fetch("/api/billing/dashboard", { cache: "no-store" });
         const json = await res.json();
-        if (!json.success || !Array.isArray(json.data)) {
+        const pendingRows = Array.isArray(json.pending)
+          ? json.pending
+          : Array.isArray(json.data)
+            ? json.data
+            : null;
+        const completedRows = Array.isArray(json.completed) ? json.completed : [];
+        if (!json.success || !pendingRows) {
           /* The API explains a database outage (503 + hint). Keep that text so
              the screen can show why the list is empty instead of pretending
              there is nothing to bill. */
           setLoadError({
-            message: json?.message || "Could not load the done bookings",
+            message: json?.message || "Could not load the billing dashboard",
             hint: json?.hint || "",
             host: json?.host || "",
           });
-          setBookings([]);
+          setPending([]);
+          setCompleted([]);
           return;
         }
         setLoadError(null);
-        setBookings(json.data as DoneBooking[]);
+        setPending(pendingRows as DoneBooking[]);
+        setCompleted(completedRows as DoneBooking[]);
       } catch {
         setLoadError({
           message:
@@ -201,8 +237,9 @@ export default function BillingDashboardPage() {
           hint: "Then open /api/health to check the database connection.",
           host: "",
         });
-        setBookings([]);
-        showToast("Could not load the done bookings", "error");
+        setPending([]);
+        setCompleted([]);
+        showToast("Could not load the billing dashboard", "error");
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -239,24 +276,27 @@ export default function BillingDashboardPage() {
     };
   }, [load]);
 
+  const source = tab === "completed" ? completed : pending;
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return bookings;
-    return bookings.filter((b) =>
-      `${b.bookingID} ${b.clientName} ${b.clientPhone} ${b.services.join(" ")} ${b.techNames.join(" ")}`
+    if (!q) return source;
+    return source.filter((b) =>
+      `${b.bookingID} ${b.billNo || ""} ${b.clientName} ${b.clientPhone} ${b.services.join(" ")} ${b.techNames.join(" ")}`
         .toLowerCase()
         .includes(q),
     );
-  }, [bookings, search]);
+  }, [source, search]);
 
   const stats = useMemo(() => {
     const today = todayISO();
     return {
       total: filtered.length,
-      today: filtered.filter((b) => b.date === today).length,
+      today: filtered.filter((b) =>
+        (tab === "completed" ? b.billedAt || b.date : b.date).startsWith(today),
+      ).length,
       value: filtered.reduce((sum, b) => sum + (Number(b.total) || 0), 0),
     };
-  }, [filtered]);
+  }, [filtered, tab]);
 
   function openBill(booking: DoneBooking) {
     const params = new URLSearchParams({
@@ -273,6 +313,11 @@ export default function BillingDashboardPage() {
       status: booking.status,
       mode: booking.mode,
     });
+    if (booking.billed || tab === "completed") {
+      params.set("billed", "1");
+      if (booking.billNo) params.set("billNo", booking.billNo);
+      if (booking.billedAt) params.set("billedAt", booking.billedAt);
+    }
     router.push(`/billing?${params.toString()}`);
   }
 
@@ -347,7 +392,24 @@ export default function BillingDashboardPage() {
           <div className="main-body" style={{ display: "flex", flex: 1, flexDirection: "column", gap: 12, overflow: "auto", padding: "13px 15px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <h1 style={{ color: "#1e3a40", fontSize: 20, fontWeight: 800 }}>Billing Dashboard</h1>
-              <span className="badge b-done"><span className="live-dot" /> Technician done · awaiting bill</span>
+              <div className="dash-tabs" role="tablist" aria-label="Billing lists">
+                <button
+                  type="button"
+                  className={`dash-tab ${tab === "pending" ? "active" : ""}`}
+                  onClick={() => setTab("pending")}
+                >
+                  To bill
+                  <span className="count">{pending.length}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`dash-tab ${tab === "completed" ? "active" : ""}`}
+                  onClick={() => setTab("completed")}
+                >
+                  Completed
+                  <span className="count">{completed.length}</span>
+                </button>
+              </div>
               <div style={{ flex: 1 }} />
               <button className="refresh-btn" type="button" onClick={() => void load(true)}>
                 <Ico.Refresh /> {refreshing ? "Refreshing..." : "Refresh"}
@@ -356,28 +418,54 @@ export default function BillingDashboardPage() {
 
             {/* Stats */}
             <div style={{ display: "flex", alignItems: "stretch", gap: 10, flexWrap: "wrap" }}>
-              <div className="stat-card" style={{ background: "linear-gradient(135deg,#1e3a40,#2a5260)" }}>
-                <div className="sc-label" style={{ color: "rgba(255,255,255,.6)" }}>Pending bills</div>
-                <div className="sc-value" style={{ color: "#fff" }}>{stats.total}</div>
-                <div style={{ color: "rgba(255,255,255,.45)", fontSize: 10, fontWeight: 500 }}>Work done, not billed</div>
-              </div>
-              <div className="stat-card" style={{ background: "linear-gradient(135deg,#f5f3ff,#ede9fe)", border: "1px solid rgba(139,92,246,.25)" }}>
-                <div className="sc-label" style={{ color: "#6d28d9" }}><span className="live-dot" /> Done today</div>
-                <div className="sc-value" style={{ color: "#4c1d95" }}>{stats.today}</div>
-                <div style={{ color: "#7c3aed", fontSize: 10, fontWeight: 500 }}>{fmtDateLong(todayISO())}</div>
-              </div>
-              <div className="stat-card" style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", border: "1px solid rgba(59,130,246,.3)" }}>
-                <div className="sc-label" style={{ color: "#1d4ed8" }}>Value to bill</div>
-                <div className="sc-value" style={{ color: "#1e3a8a", fontSize: 22 }}>{fmtMoney(stats.value)}</div>
-                <div style={{ color: "#2563eb", fontSize: 10, fontWeight: 500 }}>Services total</div>
-              </div>
+              {tab === "pending" ? (
+                <>
+                  <div className="stat-card" style={{ background: "linear-gradient(135deg,#1e3a40,#2a5260)" }}>
+                    <div className="sc-label" style={{ color: "rgba(255,255,255,.6)" }}>Pending bills</div>
+                    <div className="sc-value" style={{ color: "#fff" }}>{stats.total}</div>
+                    <div style={{ color: "rgba(255,255,255,.45)", fontSize: 10, fontWeight: 500 }}>Work done, not billed</div>
+                  </div>
+                  <div className="stat-card" style={{ background: "linear-gradient(135deg,#f5f3ff,#ede9fe)", border: "1px solid rgba(139,92,246,.25)" }}>
+                    <div className="sc-label" style={{ color: "#6d28d9" }}><span className="live-dot" /> Done today</div>
+                    <div className="sc-value" style={{ color: "#4c1d95" }}>{stats.today}</div>
+                    <div style={{ color: "#7c3aed", fontSize: 10, fontWeight: 500 }}>{fmtDateLong(todayISO())}</div>
+                  </div>
+                  <div className="stat-card" style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", border: "1px solid rgba(59,130,246,.3)" }}>
+                    <div className="sc-label" style={{ color: "#1d4ed8" }}>Value to bill</div>
+                    <div className="sc-value" style={{ color: "#1e3a8a", fontSize: 22 }}>{fmtMoney(stats.value)}</div>
+                    <div style={{ color: "#2563eb", fontSize: 10, fontWeight: 500 }}>Services total</div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="stat-card" style={{ background: "linear-gradient(135deg,#14532d,#166534)" }}>
+                    <div className="sc-label" style={{ color: "rgba(255,255,255,.6)" }}>Completed bills</div>
+                    <div className="sc-value" style={{ color: "#fff" }}>{stats.total}</div>
+                    <div style={{ color: "rgba(255,255,255,.45)", fontSize: 10, fontWeight: 500 }}>Already billed</div>
+                  </div>
+                  <div className="stat-card" style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)", border: "1px solid rgba(34,197,94,.3)" }}>
+                    <div className="sc-label" style={{ color: "#15803d" }}><span className="live-dot green" /> Billed today</div>
+                    <div className="sc-value" style={{ color: "#14532d" }}>{stats.today}</div>
+                    <div style={{ color: "#16a34a", fontSize: 10, fontWeight: 500 }}>{fmtDateLong(todayISO())}</div>
+                  </div>
+                  <div className="stat-card" style={{ background: "linear-gradient(135deg,#ecfdf5,#d1fae5)", border: "1px solid rgba(16,185,129,.3)" }}>
+                    <div className="sc-label" style={{ color: "#047857" }}>Billed value</div>
+                    <div className="sc-value" style={{ color: "#064e3b", fontSize: 22 }}>{fmtMoney(stats.value)}</div>
+                    <div style={{ color: "#059669", fontSize: 10, fontWeight: 500 }}>Net on these bills</div>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* List */}
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <p style={{ color: "#374151", fontSize: 13, fontWeight: 700 }}>
-                Completed appointments
-                <span style={{ color: "#6b7280", fontWeight: 500 }}> · {filtered.length} booking{filtered.length !== 1 ? "s" : ""} waiting for payment</span>
+                {tab === "pending" ? "Awaiting bill" : "Completed bills"}
+                <span style={{ color: "#6b7280", fontWeight: 500 }}>
+                  {tab === "pending"
+                    ? ` · ${filtered.length} booking${filtered.length !== 1 ? "s" : ""} waiting for payment`
+                    : ` · ${filtered.length} billed booking${filtered.length !== 1 ? "s" : ""}`}
+                </span>
               </p>
 
               {loading ? (
@@ -416,8 +504,16 @@ export default function BillingDashboardPage() {
               ) : filtered.length === 0 ? (
                 <div className="empty-state">
                   <div className="empty-ico"><Ico.Inbox /></div>
-                  <p style={{ color: "#6b7280", fontSize: 14, fontWeight: 600 }}>No completed work waiting to be billed</p>
-                  <p style={{ color: "#9ca3af", fontSize: 12 }}>Appointments appear here the moment a technician marks them Done</p>
+                  <p style={{ color: "#6b7280", fontSize: 14, fontWeight: 600 }}>
+                    {tab === "pending"
+                      ? "No completed work waiting to be billed"
+                      : "No billed appointments yet"}
+                  </p>
+                  <p style={{ color: "#9ca3af", fontSize: 12 }}>
+                    {tab === "pending"
+                      ? "Appointments appear here the moment a technician marks them Done"
+                      : "After you complete a bill it moves here so you can open the receipt again"}
+                  </p>
                 </div>
               ) : (
                 filtered.map((b) => (
@@ -439,8 +535,15 @@ export default function BillingDashboardPage() {
                         </p>
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
-                        <span className="badge b-done"><span className="live-dot" /> Done</span>
+                        {tab === "completed" ? (
+                          <span className="badge b-billed"><span className="live-dot green" /> Billed</span>
+                        ) : (
+                          <span className="badge b-done"><span className="live-dot" /> Done</span>
+                        )}
                         <span style={{ color: "#1e3a40", fontSize: 13, fontWeight: 700 }}>{fmtMoney(Number(b.total) || 0)}</span>
+                        {tab === "completed" && b.billNo ? (
+                          <span style={{ color: "#6b7280", fontSize: 11, fontWeight: 700 }}>#{b.billNo}</span>
+                        ) : null}
                       </div>
                     </div>
 
@@ -458,18 +561,34 @@ export default function BillingDashboardPage() {
                     </div>
 
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                      <span style={{ color: "#9ca3af", fontSize: 11 }}>Booking: {b.bookingID}</span>
-                      {canCreateBill && (
-                      <button
-                        className="bill-btn"
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openBill(b);
-                        }}
-                      >
-                        <Ico.Receipt /> Create Bill
-                      </button>
+                      <span style={{ color: "#9ca3af", fontSize: 11 }}>
+                        Booking: {b.bookingID}
+                        {tab === "completed" && b.billedAt ? ` · billed ${fmtDateTime(b.billedAt)}` : ""}
+                      </span>
+                      {tab === "completed" ? (
+                        <button
+                          className="bill-btn ghost"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openBill(b);
+                          }}
+                        >
+                          <Ico.Receipt /> View bill
+                        </button>
+                      ) : (
+                        canCreateBill && (
+                          <button
+                            className="bill-btn"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openBill(b);
+                            }}
+                          >
+                            <Ico.Receipt /> Create Bill
+                          </button>
+                        )
                       )}
                     </div>
                   </div>

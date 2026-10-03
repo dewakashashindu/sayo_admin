@@ -32,6 +32,8 @@ import {
 } from '@/lib/itemCode';
 import { rateLimit, rateMessage } from "@/lib/rateLimit";
 import { clientIp, ipForLog } from "@/lib/clientIp";
+import { loadCompanyDay, loadStaffDays, resolveStaffWindow } from "@/lib/dayHours";
+import { slotInList } from "@/lib/operatingHours";
 
 interface BookingService {
   name:          string;
@@ -1787,6 +1789,40 @@ export async function POST(req: NextRequest) {
       detailRows,
       startMin,
     );
+
+    const companyDay = await loadCompanyDay(date);
+    if (!companyDay.open) {
+      return NextResponse.json(
+        { success: false, message: 'The salon is closed on the selected date.' },
+        { status: 422 },
+      );
+    }
+    if (!slotInList(timeSlot, companyDay.slots)) {
+      return NextResponse.json(
+        { success: false, message: 'That time is outside salon hours for the selected date.' },
+        { status: 422 },
+      );
+    }
+    const staffDays = await loadStaffDays(date);
+    const plannedWindows = publicProviderWindows(detailRows, startMin, preparedServiceSchedule);
+    for (const window of plannedWindows) {
+      const staff = staffDays.get(window.techID.trim().toUpperCase());
+      const hours = resolveStaffWindow(companyDay, staff);
+      const name = providerNames.get(window.techID) || 'Selected provider';
+      if (!hours.working) {
+        const why = hours.reason === 'leave' ? 'on leave' : 'off';
+        return NextResponse.json(
+          { success: false, message: `${name} is ${why} on the selected date.` },
+          { status: 422 },
+        );
+      }
+      if (window.startMin < hours.startMin || window.endMin > hours.closeMin) {
+        return NextResponse.json(
+          { success: false, message: `${name} is not scheduled at the selected time.` },
+          { status: 422 },
+        );
+      }
+    }
 
  // 3. Customer resolution
     // Done INSIDE the write transaction below: a `SELECT … FOR UPDATE` on the

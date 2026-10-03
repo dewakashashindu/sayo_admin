@@ -116,6 +116,8 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   'time.checking':           { en: 'Checking live availability…',                     si: 'සජීවී ලබාගත හැකි බව පරීක්ෂා කරමින්…',             ta: 'நேரடி கிடைக்கும் நிலையைச் சரிபார்க்கிறது…' },
   'time.needProvider':       { en: 'Please select a provider above to see real-time availability.', si: 'සජීවී ලබාගත හැකි බව බැලීමට කරුණාකර ඉහතින් සේවා සැපයුම්කරුවෙකු තෝරන්න.', ta: 'நிகழ்நேர கிடைக்கும் நிலையைப் பார்க்க மேலே ஒரு வழங்குநரைத் தேர்ந்தெடுக்கவும்.' },
   'time.loadError':          { en: 'Could not load live availability.',               si: 'සජීවී ලබාගත හැකි බව ලබාගත නොහැකි විය.',           ta: 'நேரடி கிடைக்கும் நிலையை ஏற்ற முடியவில்லை.' },
+  'time.salonClosed':        { en: 'The salon is closed on this date.',               si: 'මේ දිනයේ සැලූන වසා ඇත.',                        ta: 'இந்த தேதியில் நிலையம் மூடப்பட்டுள்ளது.' },
+  'time.noHours':            { en: 'No hours have been set for this date.',           si: 'මේ දිනයට වේලාවන් සකසා නැත.',                     ta: 'இந்த தேதிக்கு நேரம் அமைக்கப்படவில்லை.' },
   'time.available':          { en: 'Available',                                       si: 'ලබාගත හැක',                                    ta: 'கிடைக்கும்' },
   'time.partial':            { en: 'Partial',                                         si: 'අර්ධ',                                          ta: 'பகுதி' },
   'time.fullyBooked':        { en: 'Fully Booked',                                    si: 'සම්පූර්ණයෙන් වෙන් කර ඇත',                       ta: 'முழுமையாக முன்பதிவு செய்யப்பட்டது' },

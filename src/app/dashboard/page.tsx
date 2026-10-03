@@ -406,18 +406,54 @@ function MIBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DayScheduleGrid({ bookings, providers, onCardClick }: {
-  bookings: Booking[]; providers: string[]; onCardClick: (b: Booking) => void;
+function DayScheduleGrid({ bookings, providers, onCardClick, date }: {
+  bookings: Booking[]; providers: string[]; onCardClick: (b: Booking) => void; date: string;
 }) {
-  const totalSlots = TIME_SLOTS.length;
+  const [slots, setSlots] = useState<string[]>(TIME_SLOTS);
+  const [dayStart, setDayStart] = useState(DAY_START);
+  const [closed, setClosed] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/bookings/hours?from=${date}&to=${date}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!live) return;
+        const row = Array.isArray(d.days) ? d.days[0] : null;
+        if (!row?.open) {
+          setClosed(true);
+          setSlots([]);
+          return;
+        }
+        const [sh, sm] = String(row.startTime || "09:00").split(":").map(Number);
+        const [ch, cm] = String(row.closingTime || "18:00").split(":").map(Number);
+        const start = sh * 60 + sm;
+        const close = ch * 60 + cm;
+        const next: string[] = [];
+        const first = Math.ceil(start / SLOT_MIN) * SLOT_MIN;
+        const last = Math.floor(close / SLOT_MIN) * SLOT_MIN;
+        for (let m = first; m <= last; m += SLOT_MIN) next.push(minToSlot(m));
+        setDayStart(first);
+        setSlots(next);
+        setClosed(false);
+      })
+      .catch(() => { if (live) { setClosed(true); setSlots([]); } });
+    return () => { live = false; };
+  }, [date]);
+
+  const totalSlots = slots.length;
   const gridH      = totalSlots * SLOT_H;
+
+  if (closed || totalSlots === 0) {
+    return <p style={{ padding: 24, color: '#6b7280', fontSize: 13, fontWeight: 600 }}>Salon is closed this day.</p>;
+  }
 
   function getProviderAppts(providerName: string) {
     return bookings
       .filter(b => b.providers.some(p => p.name === providerName))
       .map(b => {
         const startMin  = slotToMin(b.TimeSlot);
-        const offsetMin = startMin - DAY_START;
+        const offsetMin = startMin - dayStart;
         const topPx     = (offsetMin / SLOT_MIN) * SLOT_H;
         const heightPx  = Math.max(SLOT_H, (b.TotalDuration / SLOT_MIN) * SLOT_H) - 4;
         const endLabel  = minToSlot(startMin + b.TotalDuration);
@@ -443,7 +479,7 @@ function DayScheduleGrid({ bookings, providers, onCardClick }: {
       <div className="cal-grid-outer" style={{minWidth: 72 + providers.length * 150}}>
         {/* Time gutter */}
         <div className="time-gutter">
-          {TIME_SLOTS.map((slot, i) => {
+          {slots.map((slot, i) => {
             const [time, ampm] = slot.split(' ');
             return (
               <div key={i} className="time-label">
@@ -460,7 +496,7 @@ function DayScheduleGrid({ bookings, providers, onCardClick }: {
               <div key={provName} className="provider-col">
                 <div className="provider-header">{provName}</div>
                 <div className="col-body" style={{height: gridH, position:'relative'}}>
-                  {TIME_SLOTS.map((_,i) => <div key={i} className={`slot-row${i%2===1?' half':''}`}/>)}
+                  {slots.map((_,i) => <div key={i} className={`slot-row${i%2===1?' half':''}`}/>)}
                   {appts.map(({ booking: b, topPx, heightPx, endLabel }) => (
                     <button
                       key={b.BookingId}
@@ -1259,7 +1295,7 @@ function DashboardInner() {
                   {viewTab === 'schedule' && (
                     <div className="fade-up" style={{height:480,display:'flex',flexDirection:'column',overflow:'hidden'}}>
                       {period === 'today'
-                        ? <DayScheduleGrid bookings={data.bookings} providers={data.providers} onCardClick={b => setSelBooking(b)}/>
+                        ? <DayScheduleGrid date={date} bookings={data.bookings} providers={data.providers} onCardClick={b => setSelBooking(b)}/>
                         : <RangeScheduleGrid dates={rangeDates} providers={rangeProviders} counts={rangeGrid} onCellClick={iso => { setPeriod('today'); setDate(iso); }}/>
                       }
                     </div>

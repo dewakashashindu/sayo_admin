@@ -79,6 +79,8 @@ interface BookingPayload {
   notes: string;
   pax: number;
   billed: boolean;
+  billedAt?: string;
+  billNo?: string;
   total: number;
   services: BookingServicePayload[];
 }
@@ -786,8 +788,8 @@ function BillingContent() {
 
     const [payments, setPayments] = useState<PaymentLine[]>([]);
   const [billNotes, setBillNotes] = useState(appt.notes || '');
-  const [paid,      setPaid]      = useState(false);
-  const [paidAt,    setPaidAt]    = useState('');
+  const [paid,      setPaid]      = useState(searchParams.get('billed') === '1');
+  const [paidAt,    setPaidAt]    = useState(searchParams.get('billedAt') || '');
     const [revertBusy,  setRevertBusy]  = useState(false);
   const [revertNote,  setRevertNote]  = useState('');
   const [revertError, setRevertError] = useState('');
@@ -798,8 +800,15 @@ function BillingContent() {
   const [saveHint,    setSaveHint]    = useState('');
   /* Real bill number, issued by Tbl_Serials (“INV” series) when the payment is
      recorded — it replaces the draft invoice number on the receipt. */
-  const [billNo,      setBillNo]      = useState('');
+  const [billNo,      setBillNo]      = useState(searchParams.get('billNo') || '');
   const [changeDue,   setChangeDue]   = useState(0);
+
+  useEffect(() => {
+    if (!booking?.billed) return;
+    setPaid(true);
+    if (booking.billNo) setBillNo(booking.billNo);
+    if (booking.billedAt) setPaidAt(booking.billedAt);
+  }, [booking]);
   const [skippedLines, setSkippedLines] = useState<string[]>([]);
   const [saving,      setSaving]      = useState(false);
   const [formError,   setFormError]   = useState('');
@@ -1725,9 +1734,15 @@ function BillingContent() {
               <div className="fade-up" style={{maxWidth:600,margin:'20px auto',display:'flex',flexDirection:'column',gap:14}}>
                 <div className="bill-card no-print" style={{textAlign:'center',padding:'28px 18px'}}>
                   <div className="pop-in" style={{display:'flex',justifyContent:'center',marginBottom:10}}><ICheckBig/></div>
-                  <p style={{fontSize:18,fontWeight:800,color:'#15803d'}}>Payment Successful</p>
+                  <p style={{fontSize:18,fontWeight:800,color:'#15803d'}}>
+                    {booking?.billed ? 'Bill completed' : 'Payment Successful'}
+                  </p>
                   <p style={{fontSize:12.5,color:'#6b7280',marginTop:4}}>
-                    {billNo ? 'The bill was written to the system.' : 'Bill has been closed and payment recorded.'}
+                    {booking?.billed
+                      ? 'This booking is already billed. Receipt is below.'
+                      : billNo
+                        ? 'The bill was written to the system.'
+                        : 'Bill has been closed and payment recorded.'}
                   </p>
                   {billNo && (
                     <p className="bill-no" style={{marginTop:8}}>BILL NO · {billNo}</p>

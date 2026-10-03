@@ -23,6 +23,7 @@ const PUBLIC_API: { path: string; methods: string[] }[] = [
   { path: '/api/booking-catalog',       methods: ['GET'] },
   { path: '/api/bookings',              methods: ['POST'] },
   { path: '/api/bookings/availability', methods: ['GET'] },
+  { path: '/api/bookings/hours',        methods: ['GET'] },
   { path: '/api/auth/admin-login',      methods: ['POST'] },
   /* Step 2 of the super administrator's sign-in. Public on purpose: the caller
      has no session yet — the signed challenge in the body is what proves the

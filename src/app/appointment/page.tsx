@@ -249,52 +249,7 @@ const MONTHS_SHORT = [
  * skipped. The grid now uses 5-minute internal rows while showing the main
  * time label every 30 minutes.
  */
-const TIME_SLOTS = [
-  "8:00 AM",
-  "8:30 AM",
-  "9:00 AM",
-  "9:30 AM",
-  "10:00 AM",
-  "10:30 AM",
-  "11:00 AM",
-  "11:30 AM",
-  "12:00 PM",
-  "12:30 PM",
-  "1:00 PM",
-  "1:30 PM",
-  "2:00 PM",
-  "2:30 PM",
-  "3:00 PM",
-  "3:30 PM",
-  "4:00 PM",
-  "4:30 PM",
-  "5:00 PM",
-  "5:30 PM",
-  "6:00 PM",
-  "6:30 PM",
-  "7:00 PM",
-  "7:30 PM",
-  "8:00 PM",
-  "8:30 PM",
-  "9:00 PM",
-  "9:30 PM",
-  "10:00 PM",
-  "10:30 PM",
-  "11:00 PM",
-  "11:30 PM",
-];
-const GRID_START_MINUTES = parseSlotToMinutes(TIME_SLOTS[0]);
-const GRID_END_MINUTES =
-  parseSlotToMinutes(TIME_SLOTS[TIME_SLOTS.length - 1]) + 30;
 const GRID_STEP_MINUTES = 5;
-const GRID_ROWS = Array.from(
-  {
-    length: Math.floor(
-      (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_STEP_MINUTES,
-    ),
-  },
-  (_, index) => GRID_START_MINUTES + index * GRID_STEP_MINUTES,
-);
 const ROW_HEIGHT_PX = 10;
 
 const CSS = `
@@ -2085,7 +2040,15 @@ function DetailModal({
   );
 }
 
-function NowLine({ isToday }: { isToday: boolean }) {
+function NowLine({
+  isToday,
+  gridStart,
+  rowCount,
+}: {
+  isToday: boolean;
+  gridStart: number;
+  rowCount: number;
+}) {
   const [minutes, setMinutes] = useState(nowMinutes());
 
   useEffect(() => {
@@ -2096,8 +2059,8 @@ function NowLine({ isToday }: { isToday: boolean }) {
   if (!isToday) return null;
 
   const headerHeight = 41;
-  const minutesFromStart = minutes - GRID_START_MINUTES;
-  const totalMinutes = GRID_ROWS.length * GRID_STEP_MINUTES;
+  const minutesFromStart = minutes - gridStart;
+  const totalMinutes = rowCount * GRID_STEP_MINUTES;
 
   if (minutesFromStart < 0 || minutesFromStart > totalMinutes) return null;
 
@@ -2114,6 +2077,13 @@ function NowLine({ isToday }: { isToday: boolean }) {
   );
 }
 
+interface DayHoursInfo {
+  open: boolean;
+  startMin: number;
+  closeMin: number;
+  remarks: string;
+}
+
 interface ScheduleGridProps {
   appointments: Appointment[];
   providers: string[];
@@ -2126,6 +2096,7 @@ interface ScheduleGridProps {
   onSlotClick: (provider: string, timeSlot: string) => void;
   showToast: (text: string, type?: ToastMsg["type"]) => void;
   isToday: boolean;
+  hours?: DayHoursInfo | null;
 }
 
 function ScheduleGrid({
@@ -2136,6 +2107,7 @@ function ScheduleGrid({
   onSlotClick,
   showToast,
   isToday,
+  hours,
 }: ScheduleGridProps) {
   const [dragAppointmentID, setDragAppointmentID] = useState<string | null>(
     null,
@@ -2146,6 +2118,17 @@ function ScheduleGrid({
     index: number;
   } | null>(null);
   const [successKey, setSuccessKey] = useState<string | null>(null);
+
+  const gridStart = hours?.open ? Math.floor(hours.startMin / 30) * 30 : 0;
+  const gridEnd = hours?.open
+    ? Math.max(gridStart + 30, Math.ceil(hours.closeMin / 30) * 30)
+    : 0;
+  const GRID_START_MINUTES = gridStart;
+  const GRID_ROWS = useMemo(() => {
+    const rows: number[] = [];
+    for (let m = gridStart; m < gridEnd; m += GRID_STEP_MINUTES) rows.push(m);
+    return rows;
+  }, [gridStart, gridEnd]);
 
   const occupancy = useMemo(() => {
     const result: Record<
@@ -2223,7 +2206,7 @@ function ScheduleGrid({
     });
 
     return result;
-  }, [appointments, providers]);
+  }, [appointments, providers, GRID_START_MINUTES, GRID_ROWS]);
 
   const draggedAppointment =
     appointments.find(
@@ -2281,6 +2264,12 @@ function ScheduleGrid({
     event.preventDefault();
     if (!draggedAppointment) return;
 
+    const dropStart = GRID_ROWS[index];
+    if (hours && (!hours.open || dropStart < hours.startMin || dropStart >= hours.closeMin)) {
+      showToast(hours.open ? "Outside salon hours" : "Salon is closed this day", "error");
+      handleDragEnd();
+      return;
+    }
     const valid = isRangeFree(
       provider,
       index,
@@ -2302,6 +2291,30 @@ function ScheduleGrid({
     setSuccessKey(key);
     setTimeout(() => setSuccessKey(null), 650);
     handleDragEnd();
+  }
+
+  if (!hours) {
+    return (
+      <div className="empty-state">
+        <p style={{ color: "#6b7280", fontSize: 14, fontWeight: 600 }}>Loading salon hours…</p>
+      </div>
+    );
+  }
+
+  if (!hours.open) {
+    return (
+      <div className="empty-state">
+        <div className="empty-ico">
+          <Ico.Inbox />
+        </div>
+        <p style={{ color: "#6b7280", fontSize: 14, fontWeight: 600 }}>
+          Salon is closed this day
+        </p>
+        <p style={{ color: "#9ca3af", fontSize: 12 }}>
+          {hours.remarks || "Set operational hours for this date to show the timeline."}
+        </p>
+      </div>
+    );
   }
 
   if (providers.length === 0) {
@@ -2329,7 +2342,7 @@ function ScheduleGrid({
         overflowY: "auto",
       }}
     >
-      <NowLine isToday={isToday} />
+      <NowLine isToday={isToday} gridStart={GRID_START_MINUTES} rowCount={GRID_ROWS.length} />
       <table
         className="sch-tbl"
         style={{ minWidth: providers.length * 160 + 76 }}
@@ -2578,7 +2591,15 @@ function ScheduleGrid({
                         handleFreeDrop(event, provider, rowIndex)
                       }
                       onClick={() => {
-                        if (!dragAppointmentID) onSlotClick(provider, timeSlot);
+                        if (dragAppointmentID) return;
+                        if (
+                          hours &&
+                          (rowMinutes < hours.startMin || rowMinutes >= hours.closeMin)
+                        ) {
+                          showToast("Outside salon hours", "error");
+                          return;
+                        }
+                        onSlotClick(provider, timeSlot);
                       }}
                       title={
                         dragAppointmentID
@@ -2730,6 +2751,7 @@ export default function AppointmentsPage() {
   const [navKey, setNavKey] = useState("calendar");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [date, setDate] = useState(todayISO);
+  const [dayHours, setDayHours] = useState<DayHoursInfo | null>(null);
   const [search, setSearch] = useState("");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2804,6 +2826,31 @@ export default function AppointmentsPage() {
       })
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    let live = true;
+    setDayHours(null);
+    fetch(`/api/bookings/hours?from=${date}&to=${date}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!live) return;
+        const row = Array.isArray(d.days) ? d.days[0] : null;
+        if (!row || !row.open) {
+          setDayHours({ open: false, startMin: 0, closeMin: 0, remarks: row?.remarks || "" });
+          return;
+        }
+        const [sh, sm] = String(row.startTime || "09:00").split(":").map(Number);
+        const [ch, cm] = String(row.closingTime || "18:00").split(":").map(Number);
+        setDayHours({
+          open: true,
+          startMin: sh * 60 + sm,
+          closeMin: ch * 60 + cm,
+          remarks: row.remarks || "",
+        });
+      })
+      .catch(() => { if (live) setDayHours({ open: false, startMin: 0, closeMin: 0, remarks: "" }); });
+    return () => { live = false; };
+  }, [date]);
 
   const fetchAppointments = useCallback(
     async (requestedDate: string, silent = false) => {
@@ -3879,6 +3926,7 @@ export default function AppointmentsPage() {
                     onSlotClick={handleSlotClick}
                     showToast={showToast}
                     isToday={isToday}
+                    hours={dayHours}
                   />
                 </div>
               ) : (

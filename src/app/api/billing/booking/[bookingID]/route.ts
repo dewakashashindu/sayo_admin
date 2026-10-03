@@ -312,6 +312,57 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       0,
     );
 
+    const billed = isBilled(header.BillingTime);
+    let billNo = "";
+    let billedAt = "";
+    let billedNet: number | null = null;
+    if (billed) {
+      billedAt = header.BillingTime
+        ? new Date(header.BillingTime as never).toISOString()
+        : "";
+      try {
+        const bills = await prisma.$queryRaw<
+          { BillNo: string; NetTotal: number | null; TxnTime: string | null }[]
+        >`
+          SELECT
+            RTRIM(BillNo) AS BillNo,
+            NetTotal      AS NetTotal,
+            DATE_FORMAT(TxnTime, '%Y-%m-%d %H:%i:%s') AS TxnTime
+          FROM tbl_billheader
+          WHERE RTRIM(LocCode) = ${locCode}
+            AND RTRIM(CusID) = ${trim(header.CusCode)}
+          ORDER BY TxnTime DESC
+          LIMIT 20
+        `;
+        const billedMs = header.BillingTime
+          ? new Date(header.BillingTime as never).getTime()
+          : NaN;
+        let best: { BillNo: string; NetTotal: number; diff: number } | null = null;
+        for (const row of bills) {
+          const txnMs = new Date(String(row.TxnTime ?? "").replace(" ", "T")).getTime();
+          if (Number.isNaN(txnMs) || Number.isNaN(billedMs)) continue;
+          const diff = Math.abs(txnMs - billedMs);
+          if (diff > 20 * 60 * 1000) continue;
+          if (!best || diff < best.diff) {
+            best = {
+              BillNo: trim(row.BillNo),
+              NetTotal: Number(row.NetTotal ?? 0) || 0,
+              diff,
+            };
+          }
+        }
+        if (best) {
+          billNo = best.BillNo;
+          billedNet = best.NetTotal;
+        } else if (bills[0]) {
+          billNo = trim(bills[0].BillNo);
+          billedNet = Number(bills[0].NetTotal ?? 0) || 0;
+        }
+      } catch {
+        /* bill header optional — the receipt still opens from the booking */
+      }
+    }
+
     return NextResponse.json({
       success: true,
       booking: {
@@ -328,8 +379,10 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         mode: modeFromConfirmationType(header.ConfirmationType),
         notes: notesFromRemarks(header.Remarks),
         pax: Number(header.Pax ?? 0) || 0,
-        billed: isBilled(header.BillingTime),
-        total,
+        billed,
+        billedAt,
+        billNo,
+        total: billedNet != null ? billedNet : total,
         services,
       },
     });

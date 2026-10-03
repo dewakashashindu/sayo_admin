@@ -164,13 +164,15 @@ const PROVIDERS: Record<string, Provider[]> = {
 };
 
 const LOCATIONS  = ['Colombo', 'Negombo', 'Kiribathgoda'];
-const TIME_SLOTS = [
-  '09:00 AM','09:30 AM','10:00 AM','10:30 AM',
-  '11:00 AM','11:30 AM','12:00 PM','12:30 PM',
-  '01:00 PM','01:30 PM','02:00 PM','02:30 PM',
-  '03:00 PM','03:30 PM','04:00 PM','04:30 PM',
-  '05:00 PM','05:30 PM','06:00 PM',
-];
+
+const DayHoursContext = createContext<{
+  slots: string[];
+  closed: boolean;
+  note: string;
+}>({ slots: [], closed: false, note: '' });
+function useDayHours() {
+  return useContext(DayHoursContext);
+}
 
 const DEFAULT_CATALOG: Catalog = {
   locations: LOCATIONS.map((name) => ({ code: name, name })),
@@ -217,10 +219,11 @@ function buildSlotResults(
   services:      ServiceItem[],
   providerSlots: Record<string, string[]>,
   bookedSlots:   Set<string>,
+  daySlots:      string[],
 ): Record<string, SlotResult> {
   const results: Record<string, SlotResult> = {};
-  for (const slot of TIME_SLOTS) {
-    results[slot] = evaluateSlot(slot, providers, services, providerSlots, bookedSlots);
+  for (const slot of daySlots) {
+    results[slot] = evaluateSlot(slot, providers, services, providerSlots, bookedSlots, daySlots);
   }
   return results;
 }
@@ -505,6 +508,24 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang }: Inl
   const initD = value ? new Date(value + 'T00:00') : new Date();
   const [vYear,  setVYear]  = useState(initD.getFullYear());
   const [vMonth, setVMonth] = useState(initD.getMonth());
+  const [openDates, setOpenDates] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    const from = `${vYear}-${String(vMonth + 1).padStart(2, '0')}-01`;
+    const last = new Date(vYear, vMonth + 1, 0).getDate();
+    const to = `${vYear}-${String(vMonth + 1).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
+    let live = true;
+    fetch(`/api/bookings/hours?from=${from}&to=${to}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!live) return;
+        const next = new Set<string>();
+        for (const day of d.days || []) if (day.open) next.add(day.date);
+        setOpenDates(next);
+      })
+      .catch(() => { if (live) setOpenDates(new Set()); });
+    return () => { live = false; };
+  }, [vYear, vMonth]);
 
   useEffect(() => {
     function down(e: MouseEvent) {
@@ -531,6 +552,7 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang }: Inl
   function pickDay(day: number) {
     const iso = `${vYear}-${String(vMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     if (iso < minDate) return;
+    if (openDates && !openDates.has(iso)) return;
     onChange(iso);
     onClose();
   }
@@ -570,7 +592,8 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang }: Inl
         {cells.map((day, idx) => {
           if (day === null) return <div key={`e${idx}`} className="cal-cell cal-cell-empty" />;
           const iso      = `${vYear}-${String(vMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          const disabled = iso < minDate;
+          const closed   = !!openDates && !openDates.has(iso);
+          const disabled = iso < minDate || closed;
           const selected = iso === value;
           const isToday  = iso === todayISO;
           let cls = 'cal-cell';
@@ -929,9 +952,13 @@ function ConfirmedSlots({ timeSlot, setTimeSlot, highlightedSlots, onSlotHover }
   highlightedSlots: Set<string>;
   onSlotHover: (slot: string | null) => void;
 }) {
+  const { slots, closed, note } = useDayHours();
+  if (closed || slots.length === 0) {
+    return <div className="info-box" style={{ display: 'flex', gap: '0.5rem' }}><Ico.Info s={13} /><span>{note || 'The salon is closed on this date.'}</span></div>;
+  }
   return (
     <div className="time-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '0.42rem' }}>
-      {TIME_SLOTS.map(slot => {
+      {slots.map(slot => {
         const isHighlighted = highlightedSlots.has(slot);
         const isActive      = timeSlot === slot;
         return (
@@ -968,6 +995,12 @@ function WalkinSlots({
   onSlotHover: (slot: string | null) => void;
   slotResults: Record<string, SlotResult>;
 }) {
+  const { slots: TIME_SLOTS, closed, note } = useDayHours();
+  if (closed || TIME_SLOTS.length === 0) return (
+    <div className="info-box" style={{ display: 'flex', gap: '0.5rem' }}>
+      <Ico.Info s={13} /><span>{note || t(lang, 'time.salonClosed')}</span>
+    </div>
+  );
   if (disabledReason) return (
     <div className="info-box" style={{ display: 'flex', gap: '0.5rem' }}>
       <Ico.Info s={13} /><span>{disabledReason}</span>
@@ -1198,11 +1231,14 @@ function MultiGuestEditor({
   const [slots, setSlots] = useState<{
     status: 'idle' | 'loading' | 'ready' | 'error';
     busy: Set<string>;
-  }>({ status: 'idle', busy: new Set() });
+    list: string[];
+    closed: boolean;
+    note: string;
+  }>({ status: 'idle', busy: new Set(), list: [], closed: false, note: '' });
 
   useEffect(() => {
-    if (mode !== 'without_confirmation' || !guest.date || guest.providers.length === 0) {
-      setSlots({ status: 'idle', busy: new Set() });
+    if (!guest.date) {
+      setSlots({ status: 'idle', busy: new Set(), list: [], closed: false, note: '' });
       return;
     }
     let active = true;
@@ -1216,10 +1252,17 @@ function MultiGuestEditor({
         const res = await fetch(`/api/bookings/availability?${p}`, { signal: ctrl.signal });
         const d   = await res.json();
         if (!active) return;
-        if (d.success) setSlots({ status: 'ready', busy: busySlotsFor(d.providerSlots, guest.providers) });
-        else setSlots({ status: 'error', busy: new Set() });
+        if (d.success) {
+          setSlots({
+            status: 'ready',
+            busy: busySlotsFor(d.providerSlots, guest.providers),
+            list: Array.isArray(d.slots) ? d.slots : [],
+            closed: Boolean(d.salonClosed) || !d.open,
+            note: d.remarks || '',
+          });
+        } else setSlots({ status: 'error', busy: new Set(), list: [], closed: false, note: '' });
       } catch (e) {
-        if (active && (e as Error).name !== 'AbortError') setSlots({ status: 'error', busy: new Set() });
+        if (active && (e as Error).name !== 'AbortError') setSlots({ status: 'error', busy: new Set(), list: [], closed: false, note: '' });
       }
     })();
     return () => { active = false; ctrl.abort(); };
@@ -1260,14 +1303,13 @@ function MultiGuestEditor({
     if (!guest.date || guest.providers.length === 0 || otherBusy.length === 0) return set;
     for (const w of otherBusy) {
       if (!guest.providers.some(p => p.name === w.provider)) continue;
-      for (const slot of TIME_SLOTS) {
+      for (const slot of slots.list) {
         const sm = timeToMinutes(slot);
         if (sm < w.endMin && sm + 30 > w.startMin) set.add(slot);
       }
     }
     return set;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [otherBusy, guest.providers, guest.date]);
+  }, [otherBusy, guest.providers, guest.date, slots.list]);
 
   const crossBusyKey = [...crossBusy].sort().join(',');
 
@@ -1449,8 +1491,11 @@ function MultiGuestEditor({
               ) : slots.status === 'error' ? (
                 <p style={{ color: '#f87171', fontSize: '0.75rem', marginBottom: '0.6rem', fontFamily: tokens.font.family }}>{t(lang, 'time.loadError')}</p>
               ) : null}
+              {slots.closed || (slots.status === 'ready' && slots.list.length === 0) ? (
+                <div className="info-box" style={{ display: 'flex', gap: '0.5rem' }}><Ico.Info s={13} /><span>{slots.note || t(lang, 'time.salonClosed')}</span></div>
+              ) : (
               <div className="mg-slot-grid">
-                {TIME_SLOTS.map(slot => {
+                {(slots.list.length ? slots.list : []).map(slot => {
                   const busy = isBusy(slot);
                   const sel  = guest.timeSlot === slot;
                   const takenBy = takenByLabel(slot);
@@ -1468,6 +1513,7 @@ function MultiGuestEditor({
                   );
                 })}
               </div>
+              )}
             </div>
           )}
         </div>
@@ -1899,6 +1945,9 @@ export default function BookingPage() {
 
   const [bookedSlots,   setBookedSlots]   = useState<Set<string>>(new Set());
   const [providerSlots, setProviderSlots] = useState<Record<string, string[]>>({});
+  const [daySlots,      setDaySlots]      = useState<string[]>([]);
+  const [salonClosed,   setSalonClosed]   = useState(false);
+  const [closedNote,    setClosedNote]    = useState('');
   const [loadingSlots,  setLoadingSlots]  = useState(false);
   const [slotsError,    setSlotsError]    = useState('');
   const [conflictModal, setConflictModal] = useState<ConflictModalData | null>(null);
@@ -1931,8 +1980,8 @@ export default function BookingPage() {
 
     const slotResults = useMemo<Record<string, SlotResult>>(() => {
     if (providers.length === 0 || services.length === 0) return {};
-    return buildSlotResults(providers, services, providerSlots, bookedSlots);
-  }, [providers, services, providerSlots, bookedSlots]);
+    return buildSlotResults(providers, services, providerSlots, bookedSlots, daySlots);
+  }, [providers, services, providerSlots, bookedSlots, daySlots]);
 
     const highlightedSlots = useMemo<Set<string>>(() => {
     const hovered = getHighlightedSlots(hoveredSlot, slotResults);
@@ -2006,8 +2055,9 @@ export default function BookingPage() {
 
 
     useEffect(() => {
-    if (mode !== 'without_confirmation' || !date || providers.length === 0) {
-      setBookedSlots(new Set()); setProviderSlots({}); return;
+    if (!date) {
+      setBookedSlots(new Set()); setProviderSlots({}); setDaySlots([]); setSalonClosed(false); setClosedNote('');
+      return;
     }
     const ctrl = new AbortController();
     (async () => {
@@ -2019,9 +2069,14 @@ export default function BookingPage() {
         const res = await fetch(`/api/bookings/availability?${p}`, { signal: ctrl.signal });
         const d   = await res.json();
         if (d.success) {
+          const slots = Array.isArray(d.slots) ? d.slots as string[] : [];
+          setDaySlots(slots);
+          setSalonClosed(Boolean(d.salonClosed) || !d.open);
+          setClosedNote(d.remarks || (d.salonClosed || !d.open ? t(lang, 'time.salonClosed') : ''));
           const nb = new Set<string>(d.bookedSlots || []);
           setBookedSlots(nb); setProviderSlots(d.providerSlots || {});
-          if (timeSlot && nb.has(timeSlot)) setTimeSlot('');
+          if (timeSlot && (nb.has(timeSlot) || (slots.length > 0 && !slots.includes(timeSlot)))) setTimeSlot('');
+          if (d.salonClosed || !d.open) setTimeSlot('');
         } else setSlotsError(t(lang, 'time.loadError'));
       } catch (e) {
         if ((e as Error).name !== 'AbortError') setSlotsError(t(lang, 'time.loadError'));
@@ -2037,7 +2092,7 @@ export default function BookingPage() {
 
     function classifySlot(slot: string): SlotResult {
     if (providers.length === 0) return SLOT_AVAILABLE_EMPTY;
-    return evaluateSlot(slot, providers, services, providerSlots, bookedSlots);
+    return evaluateSlot(slot, providers, services, providerSlots, bookedSlots, daySlots);
   }
 
     function handleSlotClick(slot: string) {
@@ -2058,7 +2113,7 @@ export default function BookingPage() {
       const busy         = providerSlots[p.name] ?? [];
       const isFree       = !busy.includes(slot);
       const nextFreeSlot = !isFree
-        ? TIME_SLOTS.find(s => timeToMinutes(s) > sm && !busy.includes(s)) ?? null
+        ? daySlots.find(s => timeToMinutes(s) > sm && !busy.includes(s)) ?? null
         : null;
       return {
         providerName:  p.name,
@@ -2126,7 +2181,7 @@ export default function BookingPage() {
   }
 
   function handleBookBackToBack(slot: string) {
-    const result = evaluateSlot(slot, providers, services, providerSlots, bookedSlots);
+    const result = evaluateSlot(slot, providers, services, providerSlots, bookedSlots, daySlots);
     if (result.status !== 'available') {
       setSlotsError(t(lang, 'err.slotTaken', { slot }));
       setConflictModal(null);
@@ -2308,8 +2363,11 @@ export default function BookingPage() {
     setHoveredSlot(null); setServiceSchedule([]);
   };
 
+  const dayHoursValue = { slots: daySlots, closed: salonClosed, note: closedNote };
+
     if (confirmed) {
     return (
+      <DayHoursContext.Provider value={dayHoursValue}>
       <>
         <style>{globalCss}</style>
         <main style={{ minHeight: '100vh', fontFamily: tokens.font.family, backgroundImage: 'url(/booking.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', position: 'relative' }}>
@@ -2341,10 +2399,12 @@ export default function BookingPage() {
           </div>
         </main>
       </>
+      </DayHoursContext.Provider>
     );
   }
 
     return (
+    <DayHoursContext.Provider value={dayHoursValue}>
     <CatalogContext.Provider value={catalog}>
       <style>{globalCss}</style>
       <main style={{ minHeight: '100vh', fontFamily: tokens.font.family, backgroundImage: 'url(/booking.jpg)', backgroundSize: 'cover', backgroundPosition: 'center', position: 'relative' }}>
@@ -2701,5 +2761,6 @@ export default function BookingPage() {
         />
       )}
     </CatalogContext.Provider>
+    </DayHoursContext.Provider>
   );
 }

@@ -74,12 +74,9 @@ export function slotToMinutes(slot: string): number {
 }
 
 export function minutesToSlot(minutes: number): string | null {
-  const h24      = Math.floor(minutes / 60);
-  const mn       = minutes % 60;
-  const period   = h24 >= 12 ? 'PM' : 'AM';
-  const h12      = h24 % 12 === 0 ? 12 : h24 % 12;
-  const candidate = `${String(h12).padStart(2, '0')}:${String(mn).padStart(2, '0')} ${period}`;
-  return (TIME_SLOTS as readonly string[]).includes(candidate) ? candidate : null;
+  if (minutes < 0 || minutes > 1439) return null;
+  if (minutes % SLOT_INCREMENT !== 0) return null;
+  return minutesToDisplay(minutes);
 }
 
 function minutesToDisplay(minutes: number): string {
@@ -225,11 +222,11 @@ function findNextFreeStart(
   earliestStart: number,
   durationMins:  number,
   providerSlots: Record<string, string[]>,
+  lastSlotMins:  number = LAST_SLOT_MINS,
 ): number | null {
-  /* Only return starts that actually exist in TIME_SLOTS. */
   for (
     let t = Math.max(SLOT_INCREMENT, nextGridStart(earliestStart));
-    t <= LAST_SLOT_MINS;
+    t <= lastSlotMins;
     t += SLOT_INCREMENT
   ) {
     if (isProviderFreeFor(providerName, t, durationMins, providerSlots)) return t;
@@ -251,6 +248,7 @@ function checkSequence(
   providers:     Provider[],
   services:      ServiceItem[],
   providerSlots: Record<string, string[]>,
+  lastSlotMins:  number = LAST_SLOT_MINS,
 ): SeqOk | SeqFail {
   let cursor = baseMinutes;
   for (let i = 0; i < services.length; i++) {
@@ -261,7 +259,7 @@ function checkSequence(
     }
     const duration = parseDurationMins(svc.duration);
     if (!isProviderFreeFor(prov.name, cursor, duration, providerSlots)) {
-      const nextFreeAt = findNextFreeStart(prov.name, cursor + 1, duration, providerSlots);
+      const nextFreeAt = findNextFreeStart(prov.name, cursor + 1, duration, providerSlots, lastSlotMins);
       return { ok: false, failIndex: i, failProvider: prov.name, failService: svc.name, nextFreeAt };
     }
 
@@ -285,6 +283,7 @@ function calculateSequenceGap(
   providers:     Provider[],
   services:      ServiceItem[],
   providerSlots: Record<string, string[]>,
+  lastSlotMins:  number = LAST_SLOT_MINS,
 ): GapResult {
   let cursor             = baseMinutes;
   let totalGap           = 0;
@@ -315,6 +314,7 @@ function calculateSequenceGap(
           earliestStart,
           nextDur,
           providerSlots,
+          lastSlotMins,
         );
         if (found !== null) earliestStart = found;
         else complete = false;
@@ -343,18 +343,20 @@ function findRecommendedOriginalTime(
   providers:     Provider[],
   services:      ServiceItem[],
   providerSlots: Record<string, string[]>,
+  daySlots:      readonly string[] = TIME_SLOTS,
+  lastSlotMins:  number = LAST_SLOT_MINS,
 ): string | undefined {
-  const fromIdx = TIME_SLOTS.indexOf(fromSlot as typeof TIME_SLOTS[number]);
+  const fromIdx = daySlots.indexOf(fromSlot);
   if (fromIdx === -1) return undefined;
 
-  // Only scan FUTURE slots (fromIdx + 1 onwards)
-  for (let i = fromIdx + 1; i < TIME_SLOTS.length; i++) {
-    const candidateSlot = TIME_SLOTS[i];
+  for (let i = fromIdx + 1; i < daySlots.length; i++) {
+    const candidateSlot = daySlots[i];
     const result = checkSequence(
       slotToMinutes(candidateSlot),
       providers,
       services,
       providerSlots,
+      lastSlotMins,
     );
     if (result.ok) return candidateSlot;
   }
@@ -366,12 +368,13 @@ function findRecommendedSingleProviderTime(
   providerName:   string,
   durationMins:   number,
   providerSlots: Record<string, string[]>,
+  daySlots:      readonly string[] = TIME_SLOTS,
 ): string | undefined {
-  const fromIdx = TIME_SLOTS.indexOf(fromSlot as typeof TIME_SLOTS[number]);
+  const fromIdx = daySlots.indexOf(fromSlot);
   if (fromIdx === -1) return undefined;
 
-  for (let i = fromIdx + 1; i < TIME_SLOTS.length; i++) {
-    const candidateSlot = TIME_SLOTS[i];
+  for (let i = fromIdx + 1; i < daySlots.length; i++) {
+    const candidateSlot = daySlots[i];
     if (isProviderFreeFor(
       providerName,
       slotToMinutes(candidateSlot),
@@ -406,6 +409,7 @@ function findWorkingPermutation(
   originalFailProvider: string,
   originalFailService:  string,
   originalNextFreeAt:   number | null,
+  lastSlotMins:         number = LAST_SLOT_MINS,
 ): SwappedDetails | null {
   const n = providers.length;
   if (n < 2) return null;
@@ -444,6 +448,7 @@ function findWorkingPermutation(
       permProviders,
       permServices,
       providerSlots,
+      lastSlotMins,
     );
 
     let accepted = false;
@@ -462,6 +467,7 @@ function findWorkingPermutation(
       permProviders,
       permServices,
       providerSlots,
+      lastSlotMins,
     );
     if (!gapResult.complete) continue;
     candidates.push({ perm, gapMinutes: gapResult.gapMinutes, gapResult });
@@ -511,7 +517,11 @@ export function evaluateSlot(
   services:      ServiceItem[],
   providerSlots: Record<string, string[]>,
   bookedSlots:   Set<string> | string[],
+  daySlots:      readonly string[] = TIME_SLOTS,
 ): SlotResult {
+  const lastSlotMins = daySlots.length
+    ? slotToMinutes(daySlots[daySlots.length - 1])
+    : LAST_SLOT_MINS;
 
   /* Guard: globally blocked */
   const blocked = bookedSlots instanceof Set ? bookedSlots : new Set(bookedSlots);
@@ -564,6 +574,7 @@ export function evaluateSlot(
       providers[0].name,
       totalDuration,
       providerSlots,
+      daySlots,
     );
     return {
       status: recommendedOriginalTime ? 'partial' : 'booked',
@@ -579,7 +590,7 @@ export function evaluateSlot(
 
   
   /* Step 1: Try original order */
-  const originalCheck = checkSequence(baseMins, pairedProviders, pairedServices, providerSlots);
+  const originalCheck = checkSequence(baseMins, pairedProviders, pairedServices, providerSlots, lastSlotMins);
 
   if (originalCheck.ok) {
     const gapResult = calculateSequenceGap(
@@ -587,6 +598,7 @@ export function evaluateSlot(
       pairedProviders,
       pairedServices,
       providerSlots,
+      lastSlotMins,
     );
     const slots = buildOccupiedSlots(gapResult.segments);
     return {
@@ -607,6 +619,7 @@ export function evaluateSlot(
     originalCheck.failProvider,
     originalCheck.failService,
     originalCheck.nextFreeAt,
+    lastSlotMins,
   );
 
   /* Step 3: Check gap-only path (R4) */
@@ -624,6 +637,7 @@ export function evaluateSlot(
         pairedProviders,
         pairedServices,
         providerSlots,
+        lastSlotMins,
       );
 
       if (gapResult.complete && gapResult.gapMinutes > 0) {
@@ -643,7 +657,7 @@ export function evaluateSlot(
   // #4: Only find recommended time when there's actually a conflict
   // This prevents showing "start at 09:00 AM" for an 11:30 AM booking
   const recommendedOriginalTime = (swappedDetails !== null || gapOnlyDetails !== undefined)
-    ? findRecommendedOriginalTime(slot, pairedProviders, pairedServices, providerSlots)
+    ? findRecommendedOriginalTime(slot, pairedProviders, pairedServices, providerSlots, daySlots, lastSlotMins)
     : undefined;
 
   /* Step 5: Final status */

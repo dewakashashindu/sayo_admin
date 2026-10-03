@@ -275,8 +275,8 @@ function HoursPageContent() {
 
   const today = todayISO();
   const [ym, setYm] = useState(today.slice(0, 7));
-  const [picked, setPicked] = useState<string[]>([today]);
-  const [anchor, setAnchor] = useState(today);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [anchor, setAnchor] = useState('');
   const [rows, setRows] = useState<HoursRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -308,16 +308,11 @@ function HoursPageContent() {
     const res = await apiFetch<HoursRow[]>(`${API}?from=${month}-01&to=${month}-${last}`);
     if (res.success && res.data) {
       setRows(res.data);
-      setPicked((prev) => {
-        const next = prev.length ? prev : [today.startsWith(month) ? today : `${month}-01`];
-        loadForm(next[0], res.data!);
-        return next;
-      });
     } else {
       setLoadError(res.message ?? 'Failed to load operational hours');
     }
     setLoading(false);
-  }, [loadForm, today]);
+  }, []);
 
   useEffect(() => { fetchMonth(ym); }, [ym]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -559,7 +554,7 @@ export default function OperationalHoursPage() {
       </div>
     );
   }
-  if (enforce && !has('ADHRS', 'ACCESS')) {
+  if (enforce && !(has('ADMINGRP', 'ACCESS') && has('ADHRS', 'ACCESS'))) {
     return <NoAccess screen="Operational Hours" />;
   }
   return <HoursPageContent />;

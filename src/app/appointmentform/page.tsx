@@ -9,6 +9,7 @@ import AccessLoading from "@/components/AccessLoading";
 import NoAccess from "@/components/NoAccess";
 import { useRouter, useSearchParams } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
+import { generateDaySlots } from "@/lib/operatingHours";
 
 interface Branch {
   LocCode: string;
@@ -2160,6 +2161,7 @@ function TimeSlotPicker({
   clientLabel,
   availability,
   availabilityStatus = "idle",
+  date,
 }: {
   selectedSlot: string;
   onSelect: (slot: string) => void;
@@ -2167,16 +2169,50 @@ function TimeSlotPicker({
   clientLabel?: string;
   availability?: Record<string, boolean>;
   availabilityStatus?: "idle" | "loading" | "ready" | "error";
+  date?: string;
 }) {
   const [liveTime, setLiveTime] = useState(nowSlot());
   const [openBase, setOpenBase] = useState<string | null>(() =>
     getBaseSlot(selectedSlot),
   );
+  const [hoursSlots, setHoursSlots] = useState<string[] | null>(null);
+  const [hoursClosed, setHoursClosed] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setLiveTime(nowSlot()), 30000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!date) {
+      setHoursSlots(null);
+      setHoursClosed(false);
+      return;
+    }
+    let live = true;
+    fetch(`/api/bookings/hours?from=${date}&to=${date}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!live) return;
+        const row = Array.isArray(d.days) ? d.days[0] : null;
+        if (!row?.open) {
+          setHoursSlots([]);
+          setHoursClosed(true);
+          return;
+        }
+        const [sh, sm] = String(row.startTime || "09:00").split(":").map(Number);
+        const [ch, cm] = String(row.closingTime || "18:00").split(":").map(Number);
+        setHoursSlots(generateDaySlots(sh * 60 + sm, ch * 60 + cm, false));
+        setHoursClosed(false);
+      })
+      .catch(() => {
+        if (live) {
+          setHoursSlots([]);
+          setHoursClosed(true);
+        }
+      });
+    return () => { live = false; };
+  }, [date]);
 
   useEffect(() => {
     if (!selectedSlot) setOpenBase(null);
@@ -2356,8 +2392,13 @@ function TimeSlotPicker({
         >
           Main Slots (30 min intervals)
         </p>
+        {hoursClosed ? (
+          <p style={{ fontSize: 13, color: "#b91c1c", fontWeight: 600 }}>
+            The salon is closed on this date. Set operational hours first.
+          </p>
+        ) : (
         <div className={`ts-main-grid${hasError ? " err-t" : ""}`}>
-          {MAIN_TIME_SLOTS.map((slot) => {
+          {(hoursSlots ?? MAIN_TIME_SLOTS).map((slot) => {
             const isExact = selectedSlot === slot;
             const isParent = !isExact && selectedBase === slot;
             const unavailable =
@@ -2379,9 +2420,10 @@ function TimeSlotPicker({
             );
           })}
         </div>
+        )}
       </div>
 
-      {openBase && (
+      {openBase && !hoursClosed && (
         <div className="ts-offset-wrap">
           <div className="ts-offset-label">
             <Ico.Clock /> Fine-tune from{" "}
@@ -5636,6 +5678,7 @@ function WalkInPage() {
                       <div className="tab-in" key={`${activeTab}-ts`}>
                         <TimeSlotPicker
                           key={activeTab}
+                          date={form.date}
                           selectedSlot={tabTimeSlot}
                           onSelect={handleTabTimeSlot}
                           hasError={
