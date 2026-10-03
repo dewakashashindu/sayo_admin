@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef, Suspense } from 'react';
 import UserName from "@/components/UserName";
+import SalonReceipt from "@/components/billing/SalonReceipt";
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 /* Payment methods + split-payment maths live in one shared module so the bill
@@ -433,9 +434,81 @@ const CSS = `
 
   @media print {
     .no-print { display:none !important; }
-    body, html { overflow:visible !important; background:#fff !important; }
-    .print-area { box-shadow:none !important; border:1px solid #ddd !important; }
+    html, body { overflow:visible !important; background:#fff !important; height:auto !important; }
+    .main-body { padding: 12px !important; overflow:visible !important; background:#fff !important; }
+    .print-area, .rcpt-card {
+      box-shadow: none !important;
+      margin: 0 auto !important;
+    }
+    @page { margin: 0; size: auto; }
   }
+
+  .rcpt-card {
+    max-width: 400px;
+    margin: 0 auto;
+    background: #fff;
+    padding: 28px 22px 30px;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.12);
+    line-height: 1.35;
+    border-radius: 0;
+    border: none;
+    color: #1a1a1a;
+    font-family: Inter, "Helvetica Neue", Arial, sans-serif;
+  }
+  .rcpt-id { text-align: center; }
+  .rcpt-id h1 {
+    font-size: 21px; font-weight: 700; color: #1a1a1a; letter-spacing: 0.3px; margin: 0;
+  }
+  .rcpt-loc { font-size: 13px; font-weight: 700; color: #1a1a1a; margin: 6px 0 0; }
+  .rcpt-dash { border-top: 1.5px dashed #2b2b2b; }
+  .rcpt-mode {
+    border: 1.5px dashed #2b2b2b; border-radius: 6px;
+    padding: 9px 12px; text-align: center; margin: 8px 0;
+    font-size: 15px; font-weight: 700; letter-spacing: 1px; color: #1a1a1a;
+  }
+  .rcpt-meta {
+    display: flex; justify-content: space-between; gap: 14px;
+    font-size: 12.5px; color: #1a1a1a;
+  }
+  .rcpt-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+  .rcpt-col.right { text-align: right; }
+  .rcpt-meta a { color: #1a0dab; text-decoration: none; }
+  .rcpt-head {
+    display: flex; justify-content: space-between;
+    background: #f7f6f0; border-top: 1px solid #e5e3da; border-bottom: 1px solid #e5e3da;
+    border-radius: 4px; padding: 7px 10px; font-size: 12.5px; font-weight: 700;
+    letter-spacing: 0.5px; color: #1a1a1a; margin-bottom: 12px;
+  }
+  .rcpt-items { padding-bottom: 4px; }
+  .rcpt-item { margin-bottom: 12px; }
+  .rcpt-item-row { display: flex; justify-content: space-between; gap: 14px; }
+  .rcpt-item-name { font-size: 13.5px; font-weight: 700; color: #1a1a1a; line-height: 1.2; }
+  .rcpt-item-amt { font-size: 13.5px; font-weight: 700; color: #1a1a1a; white-space: nowrap; }
+  .rcpt-item-sub { font-size: 11.5px; font-style: italic; font-weight: 400; color: #555555; margin-top: 3px; }
+  .rcpt-totals { display: flex; flex-direction: column; gap: 7px; }
+  .rcpt-tot { display: flex; justify-content: space-between; font-size: 13px; color: #1a1a1a; font-weight: 500; }
+  .rcpt-tot.gross { font-weight: 700; }
+  .rcpt-net {
+    display: flex; justify-content: space-between;
+    font-size: 15.5px; font-weight: 700; color: #1a1a1a;
+    margin-top: 12px; padding-top: 10px; border-top: 1.5px dashed #2b2b2b;
+  }
+  .rcpt-pay {
+    margin: 20px 0 0; padding: 13px 0;
+    border-top: 1.5px dashed #2b2b2b; border-bottom: 1.5px dashed #2b2b2b;
+    text-align: center; color: #555555; font-size: 11.5px; line-height: 1.4;
+  }
+  .rcpt-pay p { font-weight: 700; color: #1a1a1a; margin: 0; }
+  .rcpt-pay-row { display: flex; justify-content: space-between; gap: 12px; margin-top: 3px; color: #1a1a1a; }
+  .rcpt-thanks { text-align: center; margin: 16px 0 0; color: #555555; font-size: 11.5px; }
+  .rcpt-end { border-top: 2px solid #1a1a1a; margin: 20px 0 0; }
+  .rcpt-dl {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 13px 24px; background: #1a1a1a; color: #fff; border: none; border-radius: 8px;
+    font-family: Inter, sans-serif; font-size: 13.5px; font-weight: 700; letter-spacing: 0.5px;
+    cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  }
+  .rcpt-dl:hover { opacity: .92; }
 
   .add-row-inp {
     border:1px solid #c8d6d8; border-radius:7px; padding:7px 9px;
@@ -1191,7 +1264,12 @@ function BillingContent() {
     }
   }
 
-  function handlePrint() { window.print(); }
+  function handlePrint() {
+    const prev = document.title;
+    document.title = 'SAYO SALON';
+    window.print();
+    window.setTimeout(() => { document.title = prev; }, 500);
+  }
 
   const PAGE = '#c2d4d4';
   const HDR  = '#dae6e6';
@@ -1767,130 +1845,57 @@ function BillingContent() {
                   </div>
                 )}
 
-                <div className="bill-card print-area" style={{fontFamily:"'Inter',sans-serif"}}>
-                  <div style={{textAlign:'center',marginBottom:14}}>
-                    <p style={{fontSize:17,fontWeight:800,color:'#1e3a40'}}>SAYO SALON</p>
-                    <p style={{fontSize:11,color:'#6b7280'}}>Official Receipt</p>
-                  </div>
-                  <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:'#374151',marginBottom:10}}>
-                    <span>Bill No: <b>{billNo || '—'}</b></span>
-                    <span>{fmtDateLong(view.date)} · {paidAt}</span>
-                  </div>
-                  <div style={{fontSize:12.5,color:'#374151',marginBottom:10,lineHeight:1.6}}>
-                    <div><b>Client:</b> {view.clientName} ({view.clientPhone})</div>
-                    <div><b>Location:</b> {view.location} · Booking {bookingID || '—'}</div>
-                  </div>
-
-                  <p className="bill-sec-title" style={{marginBottom:6}}>Services</p>
-                  <table className="item-tbl">
-                    <thead>
-                      <tr>
-                        <th>Item</th>
-                        <th style={{textAlign:'center'}}>Qty</th>
-                        <th style={{textAlign:'right'}}>Amount</th>
-                        <th>Main Technician</th>
-                        <th>Supporters</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {shownServices.map(svc=>(
-                        <tr key={`rcpt-svc-${svc.key}`}>
-                          <td>{svc.name}</td>
-                          <td style={{textAlign:'center'}}>{svc.qty}</td>
-                          <td style={{textAlign:'right'}}>{fmtMoney(svc.qty*svc.price)}</td>
-                          <td style={{fontSize:11,color:'#374151'}}>{svc.mainTech||'—'}</td>
-                          <td style={{fontSize:11,color:'#6b7280'}}>{svc.supporters||'—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-
-                  {items.length>0&&(
-                    <>
-                      <p className="bill-sec-title" style={{margin:'12px 0 6px'}}>Items</p>
-                      <table className="item-tbl">
-                        <thead>
-                          <tr>
-                            <th>Item</th>
-                            <th style={{textAlign:'center'}}>Qty</th>
-                            <th style={{textAlign:'right'}}>Amount</th>
-                            <th>Sales by</th>
-                            <th>Supporters</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {items.map(it=>(
-                            <tr key={`rcpt-item-${it.id}`}>
-                              <td>{it.name}</td>
-                              <td style={{textAlign:'center'}}>{it.qty}</td>
-                              <td style={{textAlign:'right'}}>{fmtMoney(it.qty*it.price)}</td>
-                              <td style={{fontSize:11,color:'#374151'}}>{it.salesBy||'—'}</td>
-                              <td style={{fontSize:11,color:'#6b7280'}}>{it.supporters||'—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </>
+                <SalonReceipt
+                  billNo={billNo || booking?.billNo || ''}
+                  date={view.date}
+                  time={view.timeSlot || paidAt}
+                  status={booking?.billed || paid ? 'PAID' : statusLabel(view.status)}
+                  mode={view.mode}
+                  pax={booking?.pax}
+                  cashier={access.displayName || ''}
+                  technician={[...new Set(shownServices.map(s => s.mainTech).filter(Boolean))].join(', ')}
+                  clientName={view.clientName}
+                  clientPhone={view.clientPhone}
+                  location={view.location}
+                  bookingID={bookingID}
+                  lines={[
+                    ...shownServices.map(svc => ({
+                      key: `svc-${svc.key}`,
+                      name: svc.name,
+                      qty: svc.qty,
+                      price: svc.price,
+                      tech: svc.mainTech || undefined,
+                      extra: svc.supporters ? `Support: ${svc.supporters}` : undefined,
+                    })),
+                    ...items.map(it => ({
+                      key: `item-${it.id}`,
+                      name: it.name,
+                      qty: it.qty,
+                      price: it.price,
+                      tech: it.salesBy || undefined,
+                      extra: it.supporters ? `Support: ${it.supporters}` : undefined,
+                    })),
+                  ]}
+                  gross={gross}
+                  discount={discAmt}
+                  discountPercent={Number(discountPct) || undefined}
+                  grossAfterDis={grossAfterDis}
+                  taxes={taxLines.map(line => ({
+                    code: `${line.code}-${line.stage}`,
+                    label: `${line.label} (${percentLabel(line.percentage)})`,
+                    amount: line.amount,
+                  }))}
+                  netTotal={netTotal}
+                  payments={payments
+                    .filter(p => (Number(p.amount) || 0) > 0)
+                    .map(p => ({ id: p.id, label: paymentLabel(p), amount: Number(p.amount) || 0 }))}
+                />
+                <div className="no-print" style={{display:'flex',gap:10,width:'100%',maxWidth:400,margin:'4px auto 0'}}>
+                  {canPrint && (
+                    <button className="btn-ghost" style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6}} onClick={handlePrint}>
+                      <IPrinter/> Print Receipt
+                    </button>
                   )}
-
-                  <div style={{height:1,background:'rgba(30,58,64,0.15)',margin:'10px 0'}}/>
-                  <div className="sum-row"><span>Gross</span><span>{fmtMoney(gross)}</span></div>
-                  {discAmt>0&&<div className="sum-row"><span>Discount</span><span style={{color:'#b91c1c'}}>– {fmtMoney(discAmt)}</span></div>}
-                  {discAmt>0&&<div className="sum-row"><span>Gross After Dis.</span><span>{fmtMoney(grossAfterDis)}</span></div>}
-                  {taxLines.map(line=>(
-                    <div className="sum-row" key={`rcpt-tax-${line.code}-${line.stage}`}>
-                      <span>{line.label} ({percentLabel(line.percentage)})</span>
-                      <span>+ {fmtMoney(line.amount)}</span>
-                    </div>
-                  ))}
-                  <div className="sum-row total-row"><span>Net Total</span><span>{fmtMoney(netTotal)}</span></div>
-                  <div className="sum-row"><span>Paid Amount</span><span>{fmtMoney(paidAmt)}</span></div>
-                  {remaining>0 ? (
-                    <div className="sum-row" style={{fontWeight:700}}>
-                      <span>Balance Due</span>
-                      <span style={{color:'#b91c1c'}}>{fmtMoney(remaining)}</span>
-                    </div>
-                  ) : (
-                    <div className="sum-row" style={{fontWeight:700}}>
-                      <span>Balance</span>
-                      <span style={{color: balance>0 ? '#15803d' : '#1e3a40'}}>{fmtMoney(Math.max(0, balance))}</span>
-                    </div>
-                  )}
-                  {balance>0 && (
-                    <p style={{fontSize:11.5,color:'#15803d',fontWeight:600,marginTop:6}}>
-                      Balance {fmtMoney(balance)} returned to the customer.
-                    </p>
-                  )}
-                  {payments.length > 0 && (
-                    <>
-                      <p className="bill-sec-title" style={{margin:'12px 0 6px'}}>Payment</p>
-                      <table className="item-tbl">
-                        <thead>
-                          <tr>
-                            <th>Method</th>
-                            <th style={{textAlign:'right'}}>Amount</th>
-                            <th>Remark</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {payments
-                            .filter(p => (Number(p.amount) || 0) > 0)
-                            .map(p => (
-                              <tr key={`rcpt-pay-${p.id}`}>
-                                <td style={{fontSize:11.5,color:'#374151'}}>{paymentLabel(p)}</td>
-                                <td style={{textAlign:'right',fontSize:11.5,fontWeight:700}}>{fmtMoney(Number(p.amount) || 0)}</td>
-                                <td style={{fontSize:11,color:'#6b7280'}}>{p.remark || '—'}</td>
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
-                    </>
-                  )}
-                  {billNotes&&<p style={{fontSize:11.5,color:'#9ca3af',marginTop:8,fontStyle:'italic'}}>"{billNotes}"</p>}
-                  <p style={{textAlign:'center',fontSize:11,color:'#9ca3af',marginTop:16}}>Thank you for visiting us!</p>
-                </div>
-                <div className="no-print" style={{display:'flex',gap:10}}>
-                  {canPrint && <button className="btn-ghost" style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6}} onClick={handlePrint}><IPrinter/> Print Receipt</button>}
                   <button className="btn-primary" style={{flex:1}} onClick={()=>router.push('/billing/dashboard')}>Back to Billing Dashboard</button>
                 </div>
               </div>
