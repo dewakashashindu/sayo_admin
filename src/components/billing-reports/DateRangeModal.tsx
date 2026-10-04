@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MOCK_LOCATIONS, MOCK_PAY_MODES } from "@/lib/billingReports/mock";
 import { DatePreset, presetRange } from "@/lib/billingReports/dates";
-import type { ReportDef } from "@/lib/billingReports/types";
+import type { MockLocation, MockPayMode, ReportDef } from "@/lib/billingReports/types";
 
 const PRESETS: { id: DatePreset; label: string }[] = [
   { id: "today", label: "Today" },
@@ -25,19 +24,23 @@ export default function DateRangeModal({
   open,
   report,
   initial,
+  locations,
+  payModes,
   onClose,
   onApply,
 }: {
   open: boolean;
   report: ReportDef;
   initial: AppliedRange;
+  locations: MockLocation[];
+  payModes: MockPayMode[];
   onClose: () => void;
   onApply: (next: AppliedRange) => void;
 }) {
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
   const [loc, setLoc] = useState(initial.loc);
-  const [pm, setPm] = useState(initial.pm || MOCK_PAY_MODES[0].payCode);
+  const [pm, setPm] = useState(initial.pm);
   const [err, setErr] = useState("");
 
   useEffect(() => {
@@ -45,7 +48,7 @@ export default function DateRangeModal({
     setFrom(initial.from);
     setTo(initial.to);
     setLoc(initial.loc);
-    setPm(initial.pm || MOCK_PAY_MODES[0].payCode);
+    setPm(initial.pm);
     setErr("");
   }, [open, initial.from, initial.to, initial.loc, initial.pm]);
 
@@ -99,7 +102,7 @@ export default function DateRangeModal({
             Location
             <select value={loc} onChange={(e) => setLoc(e.target.value)}>
               <option value="">All Locations</option>
-              {MOCK_LOCATIONS.map((l) => (
+              {locations.map((l) => (
                 <option key={l.locCode} value={l.locCode}>{l.locCode} — {l.locName}</option>
               ))}
             </select>
@@ -109,7 +112,8 @@ export default function DateRangeModal({
             <label className="br-field">
               Pay Mode
               <select value={pm} onChange={(e) => setPm(e.target.value)}>
-                {MOCK_PAY_MODES.map((m) => (
+                <option value="">All pay modes</option>
+                {payModes.map((m) => (
                   <option key={m.payCode} value={m.payCode}>{m.payCode} — {m.payDes}</option>
                 ))}
               </select>

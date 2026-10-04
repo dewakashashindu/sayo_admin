@@ -14,7 +14,7 @@ import ReportCharts from "@/components/billing-reports/ReportCharts";
 import { chartsFor, renderReport, searchBills, searchCredit } from "@/components/billing-reports/renderers";
 import { isReportId, reportById } from "@/lib/billingReports/config";
 import { presetRange, todayISO, yearStartISO } from "@/lib/billingReports/dates";
-import { filterBills, filterCredit } from "@/lib/billingReports/mock";
+import type { CreditTxn, MockBill, MockLocation, MockPayMode } from "@/lib/billingReports/types";
 
 export default function BillingReportPage() {
   const router = useRouter();
@@ -28,6 +28,12 @@ export default function BillingReportPage() {
   const [loading, setLoading] = useState(true);
   const [pdfBusy, setPdfBusy] = useState(false);
   const [toast, setToast] = useState("");
+  const [err, setErr] = useState("");
+  const [rawBills, setRawBills] = useState<MockBill[]>([]);
+  const [rawCredit, setRawCredit] = useState<CreditTxn[]>([]);
+  const [unusedItems, setUnusedItems] = useState<{ itemId: string; name: string }[]>([]);
+  const [locations, setLocations] = useState<MockLocation[]>([]);
+  const [payModes, setPayModes] = useState<MockPayMode[]>([]);
 
   const reportId = String(params.reportId || "");
   const report = isReportId(reportId) ? reportById(reportId) : undefined;
@@ -35,17 +41,23 @@ export default function BillingReportPage() {
   const from = searchParams.get("from") || presetRange("month").from || yearStartISO();
   const to = searchParams.get("to") || presetRange("month").to || todayISO();
   const loc = searchParams.get("loc") || "";
-  const pmRaw = searchParams.get("pm") || "";
-  const pm = report?.extraFilter === "payMode" ? pmRaw || "CASH" : pmRaw;
+  const pm = searchParams.get("pm") || "";
 
-  const setRange = useCallback(
-    (nextFrom: string, nextTo: string) => {
+  const patchQuery = useCallback(
+    (patch: Record<string, string>) => {
       const q = new URLSearchParams(searchParams.toString());
-      q.set("from", nextFrom);
-      q.set("to", nextTo);
+      for (const [k, v] of Object.entries(patch)) {
+        if (v) q.set(k, v);
+        else q.delete(k);
+      }
       router.replace(`/billing/reports/${reportId}?${q.toString()}`);
     },
     [router, reportId, searchParams],
+  );
+
+  const setRange = useCallback(
+    (nextFrom: string, nextTo: string) => patchQuery({ from: nextFrom, to: nextTo }),
+    [patchQuery],
   );
 
   useEffect(() => {
@@ -55,19 +67,53 @@ export default function BillingReportPage() {
   }, [reportId]);
 
   useEffect(() => {
+    if (!report) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
     setLoading(true);
-    const t = window.setTimeout(() => setLoading(false), 350);
-    return () => window.clearTimeout(t);
-  }, [reportId, from, to, loc, pm]);
+    setErr("");
+    const q = new URLSearchParams({ reportId, from, to });
+    if (loc) q.set("loc", loc);
+    if (pm) q.set("pm", pm);
+    void fetch(`/api/billing/reports?${q.toString()}`)
+      .then(async (r) => {
+        const j = await r.json().catch(() => ({ success: false, error: "Bad response" }));
+        if (cancelled) return;
+        if (!r.ok || !j.success) {
+          setErr(j.error || "Failed to load report");
+          setRawBills([]);
+          setRawCredit([]);
+          setUnusedItems([]);
+          return;
+        }
+        setRawBills(Array.isArray(j.bills) ? j.bills : []);
+        setRawCredit(Array.isArray(j.credit) ? j.credit : []);
+        setUnusedItems(Array.isArray(j.unusedItems) ? j.unusedItems : []);
+        if (Array.isArray(j.locations)) setLocations(j.locations);
+        if (Array.isArray(j.payModes)) setPayModes(j.payModes);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setErr("Failed to load report");
+          setRawBills([]);
+          setRawCredit([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [report, reportId, from, to, loc, pm]);
 
   const bills = useMemo(() => {
-    const raw = filterBills(from, to, loc, report?.extraFilter === "payMode" ? pm : "");
-    return searchBills(raw, search, isReportId(reportId) ? reportId : "sales-summary");
-  }, [from, to, loc, pm, search, report, reportId]);
+    return searchBills(rawBills, search, isReportId(reportId) ? reportId : "sales-summary");
+  }, [rawBills, search, reportId]);
 
-  const credit = useMemo(() => {
-    return searchCredit(filterCredit(from, to, loc), search);
-  }, [from, to, loc, search]);
+  const credit = useMemo(() => searchCredit(rawCredit, search), [rawCredit, search]);
 
   const charts = useMemo(() => {
     if (!report) return [];
@@ -151,11 +197,17 @@ export default function BillingReportPage() {
                 report={report}
                 from={from}
                 to={to}
+                loc={loc}
+                pm={pm}
+                locations={locations}
+                payModes={payModes}
                 search={search}
                 zoom={zoom}
                 chartMode={chartMode}
                 onSearch={setSearch}
                 onDates={setRange}
+                onLoc={(next) => patchQuery({ loc: next })}
+                onPm={(next) => patchQuery({ pm: next })}
                 onZoom={setZoom}
                 onToggleChart={() => setChartMode((v) => !v)}
                 onPdf={onPdf}
@@ -176,6 +228,8 @@ export default function BillingReportPage() {
                       <div className="br-spin" />
                       <p style={{ fontWeight: 700 }}>Loading Report Data...</p>
                     </div>
+                  ) : err ? (
+                    <div className="br-err">{err}</div>
                   ) : chartMode ? (
                     charts.length ? (
                       <ReportCharts title={report.title} charts={charts} />
@@ -183,7 +237,7 @@ export default function BillingReportPage() {
                       <div className="br-empty">No chart points for this range.</div>
                     )
                   ) : (
-                    renderReport(report.id, bills, credit)
+                    renderReport(report.id, bills, credit, unusedItems)
                   )}
                 </div>
               </div>

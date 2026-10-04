@@ -39,6 +39,12 @@ export const REPORT_CSS = `
   .br-dates input[type=date] {
     border: none; outline: none; font-family: Inter, sans-serif; font-size: 12.5px; color: #1e3a40; background: transparent;
   }
+  .br-filter {
+    height: 36px; max-width: 220px; min-width: 140px;
+    padding: 0 8px; border: 1.5px solid #c8d6d8; border-radius: 9px;
+    font-family: Inter, sans-serif; font-size: 12.5px; color: #1e3a40; background: #fff; outline: none;
+  }
+  .br-filter:focus { border-color: #1e3a40; box-shadow: 0 0 0 3px rgba(30,58,64,.08); }
   .br-zoom {
     display: flex; align-items: center; height: 36px; border: 1.5px solid #c8d6d8; border-radius: 9px; overflow: hidden; background: #fff;
   }

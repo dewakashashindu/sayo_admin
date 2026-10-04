@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { ReportDef } from "@/lib/billingReports/types";
+import type { MockLocation, MockPayMode, ReportDef } from "@/lib/billingReports/types";
 import { DatePreset, matchPreset, presetRange } from "@/lib/billingReports/dates";
 
 const PRESETS: { id: DatePreset; label: string }[] = [
@@ -17,11 +17,17 @@ export default function ReportToolbar({
   report,
   from,
   to,
+  loc,
+  pm,
+  locations,
+  payModes,
   search,
   zoom,
   chartMode,
   onSearch,
   onDates,
+  onLoc,
+  onPm,
   onZoom,
   onToggleChart,
   onPdf,
@@ -31,11 +37,17 @@ export default function ReportToolbar({
   report: ReportDef;
   from: string;
   to: string;
+  loc: string;
+  pm: string;
+  locations: MockLocation[];
+  payModes: MockPayMode[];
   search: string;
   zoom: number;
   chartMode: boolean;
   onSearch: (q: string) => void;
   onDates: (from: string, to: string) => void;
+  onLoc: (loc: string) => void;
+  onPm: (pm: string) => void;
   onZoom: (z: number) => void;
   onToggleChart: () => void;
   onPdf: () => void;
@@ -80,6 +92,20 @@ export default function ReportToolbar({
           />
         </div>
 
+        <select className="br-filter" value={loc} onChange={(e) => onLoc(e.target.value)} aria-label="Location">
+          <option value="">All locations</option>
+          {locations.map((l) => (
+            <option key={l.locCode} value={l.locCode}>{l.locCode} — {l.locName}</option>
+          ))}
+        </select>
+        {report.extraFilter === "payMode" && (
+          <select className="br-filter" value={pm} onChange={(e) => onPm(e.target.value)} aria-label="Pay mode">
+            <option value="">All pay modes</option>
+            {payModes.map((m) => (
+              <option key={m.payCode} value={m.payCode}>{m.payCode} — {m.payDes}</option>
+            ))}
+          </select>
+        )}
         <div className="br-dates">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2">
             <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" />

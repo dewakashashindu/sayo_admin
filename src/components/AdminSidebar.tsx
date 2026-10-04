@@ -42,6 +42,13 @@ export function IHeart()     { return <svg width="18" height="18" viewBox="0 0 2
 export function IBook()      { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>; }
 export function IStar()      { return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>; }
 export function IChevRight() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>; }
+export function IMenu() {
+  return (
+    <span className="mob-burger" aria-hidden>
+      <span /><span /><span />
+    </span>
+  );
+}
 
 // ─── Access visibility map ─────────────────────────────────────────────
 // Nav leaf key  ->  access screen code ("<code>.ACCESS" must be granted).
@@ -388,39 +395,82 @@ export const SIDEBAR_CSS = `
 
   .mob-nav {
     display:none;
-    position:fixed; bottom:0; left:0; right:0; z-index:100;
+    position:fixed; bottom:0; left:0; right:0; z-index:130;
     background:linear-gradient(180deg,#1a2e35 0%,#111e24 100%);
     height:64px;
-    align-items:center; justify-content:flex-start;
+    align-items:center; justify-content:center;
     padding:0 6px;
     border-top:1px solid rgba(255,255,255,0.07);
     box-shadow:0 -4px 20px rgba(0,0,0,0.25);
-    overflow-x:auto; overflow-y:hidden;
+    overflow:hidden;
   }
-  .mob-nav::-webkit-scrollbar { height:0; }
-  .mob-btn {
-    display:flex; flex-direction:column;
-    align-items:center; justify-content:center;
-    gap:3px; padding:6px 10px;
-    border:none; background:transparent;
-    color:rgba(255,255,255,0.4); cursor:pointer;
-    border-radius:8px; transition:all 0.18s; min-width:52px;
-    flex-shrink:0;
+  .mob-menu-btn {
+    width:52px; height:52px; border-radius:16px;
+    border:none; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(180deg,#2d5a46 0%,#166534 100%);
+    color:#fff;
+    box-shadow:0 4px 16px rgba(22,101,52,.45);
+    transition:transform .22s cubic-bezier(.32,.72,.25,1), background .2s, box-shadow .2s;
   }
-  .mob-btn.active { color:#fff; background:rgba(255,255,255,0.1); }
-  .mob-btn:hover  { color:rgba(255,255,255,0.75); }
-  .mob-lbl {
-    font-size:9px; font-weight:600;
-    letter-spacing:0.02em;
-    font-family:'Inter',sans-serif;
-    white-space:nowrap;
+  .mob-menu-btn:active { transform:scale(.94); }
+  .mob-menu-btn.open {
+    background:linear-gradient(180deg,#1f3d32 0%,#14532d 100%);
+    box-shadow:0 2px 10px rgba(22,101,52,.35);
+  }
+  .mob-burger {
+    width:20px; height:14px; position:relative; display:block;
+  }
+  .mob-burger span {
+    position:absolute; left:0; right:0; height:2px; border-radius:99px;
+    background:#fff; transition:transform .28s cubic-bezier(.32,.72,.25,1), opacity .2s, top .28s cubic-bezier(.32,.72,.25,1);
+  }
+  .mob-burger span:nth-child(1) { top:0; }
+  .mob-burger span:nth-child(2) { top:6px; }
+  .mob-burger span:nth-child(3) { top:12px; }
+  .mob-menu-btn.open .mob-burger span:nth-child(1) { top:6px; transform:rotate(45deg); }
+  .mob-menu-btn.open .mob-burger span:nth-child(2) { opacity:0; transform:scaleX(.3); }
+  .mob-menu-btn.open .mob-burger span:nth-child(3) { top:6px; transform:rotate(-45deg); }
+
+  .mob-drawer-bg {
+    display:none;
   }
 
   @media(max-width:767px) {
-    .sb-desktop { display:none !important; }
     .mob-nav    { display:flex !important; }
     .main-body  { padding-bottom:72px !important; }
     .hdr-name   { display:none !important; }
+    .sb-grip    { display:none !important; }
+    .mob-drawer-bg {
+      display:block;
+      position:fixed; inset:0; bottom:64px;
+      background:rgba(8,16,20,.5);
+      z-index:110;
+      opacity:0; pointer-events:none;
+      transition:opacity .28s ease;
+      backdrop-filter:blur(2px);
+      -webkit-backdrop-filter:blur(2px);
+    }
+    .mob-drawer-bg.open { opacity:1; pointer-events:auto; }
+    .sb-desktop {
+      display:flex !important;
+      position:fixed !important;
+      left:0; top:0; bottom:64px;
+      height:auto !important;
+      width:220px !important;
+      min-width:220px !important;
+      z-index:120;
+      transform:translateX(-108%);
+      pointer-events:none;
+      box-shadow:none;
+      transition:transform .32s cubic-bezier(.32,.72,.25,1);
+    }
+    .sb-desktop.mob-open {
+      transform:translateX(0);
+      pointer-events:auto;
+      box-shadow:16px 0 40px rgba(0,0,0,.38);
+      z-index:120 !important;
+    }
   }
   @media(max-width:480px) {
     .main-body  { padding:10px 10px 72px !important; }
@@ -433,12 +483,6 @@ export const SIDEBAR_CSS = `
 function leafItemsOf(item: SubItem): { key: string; path: string; label: string }[] {
   if (!item.children?.length) return item.path ? [{ key: item.key, path: item.path, label: item.label }] : [];
   return item.children.flatMap(leafItemsOf);
-}
-
-/** First reachable page under a group (the mobile tap target). */
-function firstLeafPath(g: NavGroup): string {
-  if (g.path) return g.path;
-  return (g.children ?? []).flatMap(leafItemsOf)[0]?.path ?? '/';
 }
 
 /** Group + subgroup keys that contain the given item key. */
@@ -469,12 +513,17 @@ function rowsOf(items: SubItem[]): number {
 
 const SB_EXPANDED_KEY = 'sayo.sb.expanded';
 
-function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
+function DesktopSidebar({
+  active, onNav, onLogout, mobileOpen, onMobileClose,
+}: AdminSidebarProps & { mobileOpen?: boolean; onMobileClose?: () => void }) {
   /* Sign-out does two things first: kill the session cookie and drop the
      cached access profile — pages only supply the navigation. */
   const handleLogout = () => { void logoutAdmin().finally(() => onLogout()); };
   const pathname = usePathname() || '';
   const [open, setOpen] = useState(true);
+  useEffect(() => {
+    if (mobileOpen) setOpen(true);
+  }, [mobileOpen]);
   const { perms, loaded, superAdmin } = useMyAccess();
   const groups = useMemo(() => visibleNavGroups(perms, loaded, superAdmin), [perms, loaded, superAdmin]);
 
@@ -522,7 +571,13 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
     try { window.localStorage.setItem(SB_EXPANDED_KEY, JSON.stringify(expanded)); } catch { /* private mode */ }
   }, [expanded]);
 
-  const W = open ? 210 : 64;
+  const showExpanded = open || !!mobileOpen;
+  const W = showExpanded ? 210 : 64;
+
+  function go(key: string, path: string) {
+    onNav(key, path);
+    onMobileClose?.();
+  }
 
   function toggleGroup(key: string) {
     if (!open) {
@@ -546,7 +601,7 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
         <button
           key={child.key}
           className={`sb-sub-btn ${effActive === child.key ? 'active' : ''}`}
-          onClick={() => child.path && onNav(child.key, child.path)}
+          onClick={() => child.path && go(child.key, child.path)}
         >
           <span style={{
             width: 4, height: 4, borderRadius: '50%', flexShrink: 0,
@@ -585,7 +640,7 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
 
   return (
     <aside
-      className="sb-desktop"
+      className={`sb-desktop${mobileOpen ? ' mob-open' : ''}`}
       style={{
         width: W, minWidth: W, height: '100vh',
         background: 'linear-gradient(180deg,#1c2f37 0%,#111e25 100%)',
@@ -597,8 +652,8 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
       {/* Logo */}
       <div style={{
         display: 'flex',
-        justifyContent: open ? 'flex-start' : 'center',
-        padding: open ? '12px 14px 6px' : '12px 0 6px',
+        justifyContent: showExpanded ? 'flex-start' : 'center',
+        padding: showExpanded ? '12px 14px 6px' : '12px 0 6px',
         flexShrink: 0,
       }}>
         <Image src="/sayologo.png" alt="Sayo" width={40} height={40} style={{ objectFit: 'contain' }} />
@@ -609,9 +664,9 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
         className="sb-nav-scroll"
         style={{
           flex: 1, overflowY: 'auto', overflowX: 'hidden',
-          padding: open ? '4px 8px' : '4px 0',
+          padding: showExpanded ? '4px 8px' : '4px 0',
           display: 'flex', flexDirection: 'column',
-          alignItems: open ? 'stretch' : 'center',
+          alignItems: showExpanded ? 'stretch' : 'center',
           gap: 1,
         }}
       >
@@ -620,7 +675,7 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
           const isExpanded    = !!expanded[group.key];
           const isDirect      = !group.children;
 
-          if (!open) {
+          if (!showExpanded) {
             return (
               <button
                 key={group.key}
@@ -628,7 +683,7 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
                 className={`sb-group-btn icon-mode ${isGroupActive ? 'active' : ''}`}
                 onClick={() =>
                   isDirect && group.path
-                    ? onNav(group.key, group.path)
+                    ? go(group.key, group.path)
                     : toggleGroup(group.key)
                 }
               >
@@ -643,7 +698,7 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
                 className={`sb-group-btn row-mode ${isGroupActive ? 'active' : ''}`}
                 onClick={() =>
                   isDirect && group.path
-                    ? onNav(group.key, group.path)
+                    ? go(group.key, group.path)
                     : toggleGroup(group.key)
                 }
                 style={{ justifyContent: 'space-between' }}
@@ -684,12 +739,12 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
 
       {/* Logout */}
       <div style={{
-        padding: open ? '6px 8px' : '6px 0',
+        padding: showExpanded ? '6px 8px' : '6px 0',
         display: 'flex', flexDirection: 'column',
-        alignItems: open ? 'stretch' : 'center',
+        alignItems: showExpanded ? 'stretch' : 'center',
         flexShrink: 0,
       }}>
-        {open ? (
+        {showExpanded ? (
           <button
             className="sb-group-btn row-mode"
             onClick={handleLogout}
@@ -724,55 +779,61 @@ function DesktopSidebar({ active, onNav, onLogout }: AdminSidebarProps) {
   );
 }
 
-function MobileNav({ active, onNav, onLogout }: AdminSidebarProps) {
-  const handleLogout = () => { void logoutAdmin().finally(() => onLogout()); };
-  const pathname = usePathname() || '';
-  const { perms, loaded, superAdmin } = useMyAccess();
-  const groups = useMemo(() => visibleNavGroups(perms, loaded, superAdmin), [perms, loaded, superAdmin]);
-  const activeKey = useMemo(() => {
-    let best: { key: string; path: string } | null = null;
-    for (const g of NAV_GROUPS) {
-      const leaves = g.path ? [{ key: g.key, path: g.path }] : (g.children ?? []).flatMap(leafItemsOf);
-      for (const l of leaves) {
-        if (pathname === l.path || (l.path !== '/' && pathname.startsWith(l.path + '/'))) {
-          if (!best || l.path.length > best.path.length) best = l;
-        }
-      }
-    }
-    return best?.key || active;
-  }, [pathname, active]);
-  const ag = ancestorKeysOf(activeKey)[0] ?? '';
-
+function MobileNav({
+  mobileOpen, onToggle,
+}: {
+  mobileOpen: boolean;
+  onToggle: () => void;
+}) {
   return (
     <nav className="mob-nav">
-      {groups.map(g => (
-        <button
-          key={g.key}
-          className={`mob-btn ${ag === g.key ? 'active' : ''}`}
-          onClick={() =>
-            g.path
-              ? onNav(g.key, g.path)
-              : onNav(g.key, firstLeafPath(g))
-          }
-        >
-          {g.icon}
-          <span className="mob-lbl">{g.label}</span>
-        </button>
-      ))}
-      <button className="mob-btn" onClick={handleLogout} style={{ color: '#f87171' }}>
-        <ILogout />
-        <span className="mob-lbl">Logout</span>
+      <button
+        type="button"
+        className={`mob-menu-btn${mobileOpen ? ' open' : ''}`}
+        aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+        aria-expanded={mobileOpen}
+        onClick={onToggle}
+      >
+        <IMenu />
       </button>
     </nav>
   );
 }
 
 export default function AdminSidebar(props: AdminSidebarProps) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [mobileOpen]);
+
   return (
     <>
       <style>{SIDEBAR_CSS}</style>
-      <DesktopSidebar {...props} />
-      <MobileNav      {...props} />
+      <div
+        className={`mob-drawer-bg${mobileOpen ? ' open' : ''}`}
+        onClick={() => setMobileOpen(false)}
+        aria-hidden={!mobileOpen}
+      />
+      <DesktopSidebar
+        {...props}
+        mobileOpen={mobileOpen}
+        onMobileClose={() => setMobileOpen(false)}
+      />
+      <MobileNav
+        mobileOpen={mobileOpen}
+        onToggle={() => setMobileOpen((o) => !o)}
+      />
     </>
   );
 }

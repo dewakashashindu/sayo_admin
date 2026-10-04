@@ -984,7 +984,13 @@ function ItemIssue({ bills, byDate }: { bills: MockBill[]; byDate: boolean }) {
   );
 }
 
-function ItemMovement({ bills }: { bills: MockBill[] }) {
+function ItemMovement({
+  bills,
+  unusedItems = MOCK_UNUSED_ITEMS,
+}: {
+  bills: MockBill[];
+  unusedItems?: { itemId: string; name: string }[];
+}) {
   const [mode, setMode] = useState<"fast" | "slow" | "non">("fast");
   const [threshold, setThreshold] = useState(10);
   const sold = groupBy(issueLines(bills), (l) => `${l.locCode}|${l.itemId}`).map((g) => ({
@@ -996,16 +1002,16 @@ function ItemMovement({ bills }: { bills: MockBill[] }) {
   }));
   const locs = groupBy(sold, (r) => r.locCode);
 
-  const ranked = locs.map((l) => {
+  const ranked = (locs.length ? locs : [{ key: "ALL", rows: [] as typeof sold, name: "All locations" }]).map((l) => {
     if (mode === "non") {
-      const soldIds = new Set(l.rows.map((r) => r.itemId));
-      const unused = MOCK_UNUSED_ITEMS.filter((u) => !soldIds.has(u.itemId)).map((u) => ({
+      const soldIds = new Set(l.rows.map((r) => r.itemId.toUpperCase()));
+      const unused = unusedItems.filter((u) => !soldIds.has(u.itemId.toUpperCase())).map((u) => ({
         locCode: l.key, locName: l.rows[0]?.locName || l.key, itemId: u.itemId, name: u.name, qty: 0,
       }));
       return { key: l.key, name: l.rows[0]?.locName || l.key, rows: unused };
     }
     const sorted = [...l.rows].sort((a, b) => (mode === "fast" ? b.qty - a.qty : a.qty - b.qty));
-    return { key: l.key, name: l.rows[0].locName, rows: sorted.slice(0, Math.max(1, threshold)) };
+    return { key: l.key, name: l.rows[0]?.locName || l.key, rows: sorted.slice(0, Math.max(1, threshold)) };
   });
 
   const title = mode === "fast" ? "Fast Moving Items" : mode === "slow" ? "Slow Moving Items" : "NON-Moving Items";
@@ -1176,7 +1182,12 @@ export function searchCredit(rows: CreditTxn[], q: string): CreditTxn[] {
   );
 }
 
-export function renderReport(id: ReportId, bills: MockBill[], credit: CreditTxn[]) {
+export function renderReport(
+  id: ReportId,
+  bills: MockBill[],
+  credit: CreditTxn[],
+  unusedItems?: { itemId: string; name: string }[],
+) {
   switch (id) {
     case "sales-details": return <SalesDetails bills={bills} />;
     case "sales-category-summary": return <CategorySummary bills={bills} />;
@@ -1197,7 +1208,7 @@ export function renderReport(id: ReportId, bills: MockBill[], credit: CreditTxn[
     case "credit-account-detail": return <AccountDetail rows={credit} />;
     case "menu-item-issue": return <ItemIssue bills={bills} byDate={false} />;
     case "menu-item-issue-date": return <ItemIssue bills={bills} byDate />;
-    case "item-movement": return <ItemMovement bills={bills} />;
+    case "item-movement": return <ItemMovement bills={bills} unusedItems={unusedItems} />;
     case "transaction-summary": return <TransactionSummary bills={bills} />;
     default: return <Empty text="Unknown report." />;
   }
