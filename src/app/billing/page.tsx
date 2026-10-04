@@ -424,9 +424,11 @@ const CSS = `
   }
   @media(max-width:767px) {
     .hdr-name { display:none !important; }
+    .main-body { padding-bottom:88px !important; }
+    .item-tbl { display:block; overflow-x:auto; -webkit-overflow-scrolling:touch; }
   }
   @media(max-width:480px) {
-    .main-body { padding:10px !important; }
+    .main-body { padding:10px 10px 88px !important; }
     .hdr-inner { padding:0 12px !important; height:52px !important; }
     .srch      { width:100% !important; font-size:13px !important; height:38px !important; }
     .srch-wrap { flex:1 !important; }

@@ -193,7 +193,7 @@ const PAGE_CSS = `
   .toast-error   { background:#dc2626; }
 
 
-  @media(max-width:767px) { .left-panel { display:none !important; } }
+  @media(max-width:767px) { .main-body { padding-bottom:88px !important; } }
 `;
 
 function IBell({ s=21 }: { s?: number })     { return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>; }
@@ -551,7 +551,7 @@ function LocationsPageContent() {
           )}
 
           {/* BODY */}
-          <div style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', gap: 13 }}>
+          <div className="main-body" style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', gap: 13 }}>
 
             {}
             <div className="left-panel" style={{ width: 260, flexShrink: 0, background: '#deeaea', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 1px 5px rgba(0,0,0,0.08)' }}>

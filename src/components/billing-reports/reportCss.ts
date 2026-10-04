@@ -26,6 +26,12 @@ export const REPORT_CSS = `
     font-family: Inter, sans-serif; font-size: 12.5px; font-weight: 700;
   }
   .br-pdf:disabled { opacity: .65; cursor: wait; }
+  @media (max-width: 767px) {
+    .br-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+    .br-t-row { gap: 8px; }
+    .br-search { min-width: 140px; flex: 1 1 140px; }
+    .br-filter { max-width: 160px; }
+  }
   .br-search {
     height: 36px; max-width: 300px; min-width: 180px; flex: 1 1 210px;
     padding: 0 12px 0 34px; border: 1.5px solid #c8d6d8; border-radius: 9px;

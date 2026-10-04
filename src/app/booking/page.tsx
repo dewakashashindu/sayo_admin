@@ -428,6 +428,13 @@ const globalCss = `
     .loc-cards-wrap{grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));}
     .time-section-header{flex-direction:column;align-items:flex-start;}   
   }
+  @media(max-width:767px){
+    .time-grid{grid-template-columns:repeat(3,1fr) !important;}
+    .appt-header-right{align-items:flex-start !important;text-align:left !important;}
+    .phone-plain-input{text-align:left !important;}
+    .loc-cards-wrap{grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));}
+    .time-section-header{flex-direction:column;align-items:flex-start;}
+  }
 
   /* ── Multi-booking tab ── */
   .btype-tabs{display:flex;justify-content:center;gap:0.6rem;margin-bottom:1.4rem;flex-wrap:wrap;}

@@ -400,9 +400,32 @@ const CSS = `
   .period-tab.active { background: #1e3a40; color: #fff; font-weight: 700; box-shadow: 0 1px 4px rgba(30,58,64,.35); }
 
   @media (min-width: 700px) { .modal-bg { align-items: center; } }
-  @media (max-width: 767px) { .main-body { padding-bottom: 72px !important; } .hdr-name { display: none !important; } }
-  @media (max-width: 640px) { .toolbar-row, .filters-row { align-items: stretch !important; flex-direction: column; } .stats-row-wrap { gap: 7px; } .stat-card { min-width: calc(50% - 4px); } }
-  @media (max-width: 480px) { .srch { width: 100% !important; } }
+  @media (max-width: 767px) {
+    .main-body { padding-bottom: 88px !important; }
+    .hdr-name { display: none !important; }
+    .stats-row-wrap { gap: 8px; }
+    .stat-card { flex: 1 1 calc(50% - 8px); min-width: calc(50% - 8px); max-width: calc(50% - 4px); padding: 10px 12px; }
+    .stat-card .sc-value { font-size: 22px; }
+    .stat-card .sc-icon { display: none; }
+    .stat-new-btn { flex: 1 1 100% !important; min-width: 100% !important; min-height: 48px !important; flex-direction: row !important; }
+    .filters-row {
+      flex-direction: row !important;
+      flex-wrap: nowrap !important;
+      align-items: center !important;
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: 2px;
+    }
+    .filters-row .f-sel { min-width: 138px; flex: 0 0 auto; }
+    .toolbar-row {
+      flex-direction: row !important;
+      flex-wrap: wrap !important;
+      align-items: center !important;
+      gap: 6px !important;
+    }
+    .srch { width: min(100%, 220px) !important; }
+  }
 `;
 
 const Ico = {
@@ -1204,6 +1227,7 @@ function StatsRow({
       {showNewBooking && (
       <button
         type="button"
+        className="stat-new-btn"
         onClick={onNewAppointment}
         style={{
           minWidth: 130,

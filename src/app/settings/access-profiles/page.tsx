@@ -616,6 +616,7 @@ const CSS = `
   .toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#1e3a40;color:#fff;padding:11px 20px;border-radius:10px;font-size:13px;font-weight:600;z-index:99;box-shadow:0 8px 24px rgba(0,0,0,.25)}
   .toast.err{background:#b91c1c}
   @media(max-width:1080px){.panel{width:100%}.body{flex-direction:column}.card{min-height:0}}
+  @media(max-width:767px){.main{padding-bottom:88px!important}.panel{max-height:240px}}
 `;
 
 export default function AccessProfilesPage() {

@@ -158,6 +158,11 @@ const PAGE_CSS = `
   ::-webkit-scrollbar       { width:9px; height:9px; }
   ::-webkit-scrollbar-track  { background:transparent; }
   ::-webkit-scrollbar-thumb  { background:rgba(30,58,64,0.22); border-radius:5px; }
+
+  @media(max-width:767px) {
+    .up-table-wrap { -webkit-overflow-scrolling:touch; }
+    .main-body { padding-bottom:88px !important; }
+  }
 `;
 
 function IBell() {
@@ -640,7 +645,7 @@ export default function UploadDataPage() {
           </header>
 
           {/* BODY */}
-          <div style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="main-body" style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', flexDirection: 'column', gap: 10 }}>
 
             {/* the two tabs, at the top of this page */}
             <div style={{

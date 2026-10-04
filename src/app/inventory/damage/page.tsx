@@ -529,6 +529,20 @@ const PAGE_CSS = `
   .mail-attach{font-size:11.5px;color:#3c5a60;background:#eef4f4;border-radius:8px;padding:8px 10px}
 
   @media print{.no-print{display:none!important} html,body{background:#fff!important} .po-shell{display:block;height:auto} .po-main{overflow:visible;padding:0} .po-card{border:none;padding:0;background:transparent!important} .po-grid-wrap{display:none!important}}
+
+  @media (max-width:767px) {
+    .po-main { padding:10px 10px 88px !important; }
+    .po-head { flex-direction:column; align-items:stretch !important; }
+    .po-tabs { margin-left:0 !important; flex-wrap:wrap; width:100%; }
+    .po-form { grid-template-columns:88px 1fr !important; }
+    .po-find { flex-direction:column; align-items:stretch !important; }
+    .po-find input[type=text], .po-find input:not([type]) { min-width:0 !important; width:100% !important; }
+    .po-actions { flex-wrap:wrap !important; }
+    .po-grid-wrap, .po-list-wrap { -webkit-overflow-scrolling:touch; }
+    .toast { bottom:80px !important; }
+    .inbox-fab { bottom:80px !important; right:12px !important; }
+    .entry-strip { flex-direction:column; align-items:stretch !important; }
+  }
 `;
 export default function DamageNotePage() {
   const { loaded, enforce, has } = useMyAccess();

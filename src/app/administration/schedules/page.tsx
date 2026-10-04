@@ -244,7 +244,32 @@ const PAGE_CSS = `
   .toast { position:fixed; bottom:24px; right:24px; z-index:9999; padding:12px 20px; border-radius:10px; font-family:'Inter',sans-serif; font-size:13px; font-weight:600; color:#fff; box-shadow:0 4px 20px rgba(0,0,0,0.2); animation:fadeUp 0.25s ease both; max-width:360px; }
   .toast-success { background:#15803d; }
   .toast-error { background:#dc2626; }
-  @media(max-width:767px) { .left-panel { display:none !important; } }
+  @media(max-width:767px) {
+    .sch-split {
+      display:block !important;
+      overflow:auto !important;
+      -webkit-overflow-scrolling:touch;
+      padding-bottom:88px !important;
+    }
+    .sch-cal { display:block !important; width:100% !important; height:auto !important; overflow:visible !important; margin-bottom:13px; }
+    .left-panel { display:flex !important; width:100% !important; max-height:180px !important; margin-bottom:13px; }
+    .sch-cal .cal-body {
+      display:block !important;
+      height:auto !important;
+      overflow:visible !important;
+    }
+    .sch-editor {
+      display:block !important;
+      width:100% !important;
+      height:auto !important;
+      max-height:none !important;
+      overflow:visible !important;
+    }
+    .hdr-month { min-width:0 !important; }
+    .toast { bottom:80px !important; right:12px !important; }
+    .cal-day { min-height:52px; padding:6px 4px 4px; }
+    .cal-meta { font-size:9px; }
+  }
 `;
 
 function IBell({ s = 21 }: { s?: number }) {
@@ -566,7 +591,7 @@ function SchedulesPageContent() {
             </select>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button className="btn-clear" style={{ padding: 0, width: 36 }} onClick={() => setYm(shiftMonth(ym, -1))} aria-label="Previous month"><IChevL /></button>
-              <span style={{ fontSize: 16, fontWeight: 800, color: '#1e3a40', minWidth: 160, textAlign: 'center' }}>{monthLabel(ym)}</span>
+              <span className="hdr-month" style={{ fontSize: 16, fontWeight: 800, color: '#1e3a40', minWidth: 160, textAlign: 'center' }}>{monthLabel(ym)}</span>
               <button className="btn-clear" style={{ padding: 0, width: 36 }} onClick={() => setYm(shiftMonth(ym, 1))} aria-label="Next month"><IChevR /></button>
               <button className="btn-print" style={{ height: 36, padding: '0 12px' }} onClick={() => {
                 if (ym === today.slice(0, 7)) handleSelectDay(today);
@@ -575,7 +600,7 @@ function SchedulesPageContent() {
             </div>
             <div style={{ flex: 1 }} />
             <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#374151', display: 'flex', padding: 4 }}><IBell /></button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div className="hdr-name" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ fontSize: 14, fontWeight: 500, color: '#1f2937' }}><UserName /></span>
               <IChevD />
             </div>
@@ -592,7 +617,7 @@ function SchedulesPageContent() {
             </div>
           )}
 
-          <div style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', gap: 13 }}>
+          <div className="sch-split" style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', gap: 13 }}>
             <div className="left-panel" style={{ width: 240, flexShrink: 0, background: '#deeaea', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 1px 5px rgba(0,0,0,0.08)' }}>
               <div style={{ padding: '12px 12px 8px', borderBottom: '1px solid rgba(30,58,64,0.1)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -629,14 +654,14 @@ function SchedulesPageContent() {
               </div>
             </div>
 
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#e8f0f1', borderRadius: 12 }}>
+            <div className="sch-cal" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#e8f0f1', borderRadius: 12 }}>
               <div style={{ background: '#1e3a40', borderRadius: '12px 12px 0 0', padding: '14px 18px', flexShrink: 0 }}>
                 <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
                   {selStaff.length === 0 ? 'No staff selected' : selStaff.length === 1 ? selStaff[0].UserName : `${selStaff.length} staff selected`}
                 </p>
                 <p style={{ color: '#fff', fontSize: 18, fontWeight: 800, marginTop: 2 }}>STAFF SCHEDULE</p>
               </div>
-              <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+              <div className="cal-body" style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
                 {!selStaff.length ? (
                   <p style={{ textAlign: 'center', color: '#9ca3af', paddingTop: 48, fontSize: 13 }}>Select staff to edit this location’s month</p>
                 ) : loading ? (
@@ -694,7 +719,7 @@ function SchedulesPageContent() {
               </div>
             </div>
 
-            <div style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#deeaea', borderRadius: 12 }}>
+            <div className="sch-editor" style={{ width: 300, flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#deeaea', borderRadius: 12 }}>
               <div style={{ padding: '14px 16px 10px', borderBottom: '1px solid rgba(30,58,64,0.1)' }}>
                 <p style={{ fontSize: 11, fontWeight: 700, color: '#5b7377', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                   {picked.length <= 1 ? 'Selected day' : `${picked.length} days selected`}

@@ -436,11 +436,54 @@ export const SIDEBAR_CSS = `
     display:none;
   }
 
+  .sb-slot { display:contents; }
+
   @media(max-width:767px) {
     .mob-nav    { display:flex !important; }
-    .main-body  { padding-bottom:72px !important; }
+    .main-body  { padding-bottom:88px !important; }
     .hdr-name   { display:none !important; }
     .sb-grip    { display:none !important; }
+    .srch       { width:min(48vw, 180px) !important; }
+    .stat-grid  { grid-template-columns:repeat(2, minmax(0,1fr)) !important; gap:8px !important; }
+    .filters-row {
+      flex-wrap:nowrap !important;
+      overflow-x:auto !important;
+      -webkit-overflow-scrolling:touch;
+    }
+    .f-sel { flex:0 0 auto; }
+    .item-tbl, .bk-tbl, .rng-tbl, .sch-tbl, .br-table {
+      display:block;
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+      max-width:100%;
+    }
+    .po-grid-wrap, .po-list-wrap, .up-table-wrap {
+      overflow-x:auto !important;
+      -webkit-overflow-scrolling:touch;
+    }
+    .po-main { padding:10px 10px 88px !important; }
+    .po-head { flex-direction:column; align-items:stretch !important; }
+    .po-tabs { margin-left:0 !important; flex-wrap:wrap; width:100%; }
+    .po-form { grid-template-columns:88px 1fr !important; }
+    .po-find input[type=text], .po-find input:not([type]) { min-width:0 !important; width:100% !important; }
+    .po-actions { flex-wrap:wrap !important; }
+    .inbox-fab { bottom:80px !important; }
+    .main { padding-bottom:88px !important; }
+    header input[type="text"], header input:not([type]) {
+      width:min(48vw, 180px) !important;
+      max-width:180px !important;
+    }
+    .main-body:has(.left-panel) {
+      flex-direction:column !important;
+      overflow:auto !important;
+    }
+    .left-panel {
+      display:flex !important;
+      width:100% !important;
+      max-height:220px;
+      flex-shrink:0;
+    }
+    .m-grid { grid-template-columns:1fr 1fr !important; }
     .mob-drawer-bg {
       display:block;
       position:fixed; inset:0; bottom:64px;
@@ -452,28 +495,35 @@ export const SIDEBAR_CSS = `
       -webkit-backdrop-filter:blur(2px);
     }
     .mob-drawer-bg.open { opacity:1; pointer-events:auto; }
+    .sb-slot {
+      display:block !important;
+      width:0 !important;
+      min-width:0 !important;
+      max-width:0 !important;
+      flex:0 0 0 !important;
+      overflow:visible !important;
+      height:0 !important;
+    }
     .sb-desktop {
+      display:none !important;
+    }
+    .sb-desktop.mob-open {
       display:flex !important;
       position:fixed !important;
       left:0; top:0; bottom:64px;
       height:auto !important;
       width:220px !important;
       min-width:220px !important;
-      z-index:120;
-      transform:translateX(-108%);
-      pointer-events:none;
-      box-shadow:none;
-      transition:transform .32s cubic-bezier(.32,.72,.25,1);
-    }
-    .sb-desktop.mob-open {
+      max-width:220px !important;
+      overflow:hidden !important;
+      z-index:120 !important;
       transform:translateX(0);
       pointer-events:auto;
       box-shadow:16px 0 40px rgba(0,0,0,.38);
-      z-index:120 !important;
     }
   }
   @media(max-width:480px) {
-    .main-body  { padding:10px 10px 72px !important; }
+    .main-body  { padding:10px 10px 88px !important; }
     .hdr-inner  { padding:0 12px !important; height:52px !important; }
   }
 `;
@@ -825,11 +875,13 @@ export default function AdminSidebar(props: AdminSidebarProps) {
         onClick={() => setMobileOpen(false)}
         aria-hidden={!mobileOpen}
       />
-      <DesktopSidebar
-        {...props}
-        mobileOpen={mobileOpen}
-        onMobileClose={() => setMobileOpen(false)}
-      />
+      <div className="sb-slot">
+        <DesktopSidebar
+          {...props}
+          mobileOpen={mobileOpen}
+          onMobileClose={() => setMobileOpen(false)}
+        />
+      </div>
       <MobileNav
         mobileOpen={mobileOpen}
         onToggle={() => setMobileOpen((o) => !o)}

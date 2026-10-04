@@ -186,7 +186,7 @@ export default function BillingReportPage() {
             }}
           >
             <div style={{ flex: 1 }} />
-            <span style={{ fontSize: 12, color: "#64748b" }}><UserName /></span>
+            <span className="hdr-name" style={{ fontSize: 12, color: "#64748b" }}><UserName /></span>
           </header>
 
           {!report ? (
@@ -214,7 +214,7 @@ export default function BillingReportPage() {
                 onShare={onShare}
                 pdfBusy={pdfBusy}
               />
-              <div style={{ flex: 1, overflow: "auto", background: "#f8fafc" }}>
+              <div className="main-body" style={{ flex: 1, overflow: "auto", background: "#f8fafc" }}>
                 <div
                   id="report-zoom-area"
                   style={{

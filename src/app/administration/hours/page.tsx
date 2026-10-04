@@ -246,7 +246,31 @@ const PAGE_CSS = `
   .toast-success { background:#15803d; }
   .toast-error { background:#dc2626; }
 
-  @media(max-width:900px) { .hours-editor { width:100% !important; } }
+  @media(max-width:767px) {
+    .oh-split {
+      display:block !important;
+      overflow:auto !important;
+      -webkit-overflow-scrolling:touch;
+      padding-bottom:88px !important;
+    }
+    .oh-cal,
+    .hours-editor {
+      display:block !important;
+      width:100% !important;
+      height:auto !important;
+      max-height:none !important;
+      overflow:visible !important;
+      margin-bottom:13px;
+    }
+    .oh-cal .cal-body {
+      display:block !important;
+      height:auto !important;
+      overflow:visible !important;
+    }
+    .hdr-month { min-width:0 !important; font-size:14px !important; }
+    .toast { bottom:80px !important; right:12px !important; }
+    .cal-day { min-height:52px; padding:6px 4px 4px; }
+  }
 `;
 
 function IBell({ s = 21 }: { s?: number }) {
@@ -488,7 +512,7 @@ function HoursPageContent() {
           <header style={{ background: HDR, height: 56, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 18px', gap: 12, borderBottom: '1px solid rgba(0,0,0,0.06)', zIndex: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button className="btn-clear" style={{ padding: 0, width: 36 }} onClick={() => setYm(shiftMonth(ym, -1))} aria-label="Previous month"><IChevL /></button>
-              <span style={{ fontSize: 16, fontWeight: 800, color: '#1e3a40', minWidth: 160, textAlign: 'center' }}>{monthLabel(ym)}</span>
+              <span className="hdr-month" style={{ fontSize: 16, fontWeight: 800, color: '#1e3a40', minWidth: 160, textAlign: 'center' }}>{monthLabel(ym)}</span>
               <button className="btn-clear" style={{ padding: 0, width: 36 }} onClick={() => setYm(shiftMonth(ym, 1))} aria-label="Next month"><IChevR /></button>
               <button className="btn-print" style={{ height: 36, padding: '0 12px' }} onClick={() => {
                 if (ym === today.slice(0, 7)) handleSelect(today);
@@ -499,7 +523,7 @@ function HoursPageContent() {
             <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#374151', display: 'flex', alignItems: 'center', padding: 4, borderRadius: 8 }}>
               <IBell />
             </button>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+            <div className="hdr-name" style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
               <span style={{ fontSize: 14, fontWeight: 500, color: '#1f2937' }}><UserName /></span>
               <IChevD />
             </div>
@@ -516,8 +540,8 @@ function HoursPageContent() {
             </div>
           )}
 
-          <div style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', gap: 13 }}>
-            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#e8f0f1', borderRadius: 12 }}>
+          <div className="oh-split" style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', gap: 13 }}>
+            <div className="oh-cal" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#e8f0f1', borderRadius: 12 }}>
               <div style={{ background: '#1e3a40', borderRadius: '12px 12px 0 0', padding: '14px 18px', flexShrink: 0 }}>
                 <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Salon calendar</p>
                 <p style={{ color: '#fff', fontSize: 18, fontWeight: 800, marginTop: 2 }}>OPERATIONAL HOURS</p>
@@ -537,7 +561,7 @@ function HoursPageContent() {
                   </div>
                 )}
               </div>
-              <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+              <div className="cal-body" style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
                 {loading ? (
                   <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 60 }}><div className="spinner" /></div>
                 ) : (

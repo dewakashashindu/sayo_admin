@@ -90,8 +90,16 @@ const CSS = `
   .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 60px 20px; color: #9ca3af; }
   .empty-ico { display: flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 50%; background: rgba(30,58,64,.08); }
 
-  @media (max-width: 767px) { .main-body { padding-bottom: 72px !important; } .hdr-name { display: none !important; } }
-  @media (max-width: 640px) { .toolbar-row { align-items: stretch !important; flex-direction: column; } .srch { width: 100% !important; } }
+  @media (max-width: 767px) {
+    .main-body { padding-bottom: 88px !important; }
+    .hdr-name { display: none !important; }
+    .toolbar-row {
+      flex-direction: row !important;
+      flex-wrap: wrap !important;
+      align-items: center !important;
+    }
+    .srch { width: min(100%, 220px) !important; }
+  }
 `;
 
 const Ico = {

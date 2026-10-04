@@ -1469,6 +1469,20 @@ const PAGE_CSS = `
     .po-grid-wrap { display:none !important; }
     .po-totals, .entry-strip, .code-hint { display:none !important; }
   }
+
+  @media (max-width:767px) {
+    .po-main { padding:10px 10px 88px !important; }
+    .po-head { flex-direction:column; align-items:stretch !important; }
+    .po-tabs { margin-left:0 !important; flex-wrap:wrap; width:100%; }
+    .po-form { grid-template-columns:88px 1fr !important; }
+    .po-find { flex-direction:column; align-items:stretch !important; }
+    .po-find input[type=text], .po-find input:not([type]) { min-width:0 !important; width:100% !important; }
+    .po-actions { flex-wrap:wrap !important; }
+    .po-grid-wrap, .po-list-wrap { -webkit-overflow-scrolling:touch; }
+    .toast { bottom:80px !important; }
+    .inbox-fab { bottom:80px !important; right:12px !important; }
+    .entry-strip { flex-direction:column; align-items:stretch !important; }
+  }
 `;
 export default function GrnPage() {
   const { loaded, enforce, has } = useMyAccess();

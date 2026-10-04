@@ -283,6 +283,21 @@ const CSS = `
 
   @media(max-width:1199px) { .right-col{width:220px!important;} .srch{width:200px!important;} }
   @media(max-width:960px)  { .right-col{display:none!important;} }
+  @media(max-width:767px) {
+    .main-body { padding-bottom:88px !important; }
+    .hdr-name { display:none !important; }
+    .stat-grid { grid-template-columns:repeat(2, minmax(0,1fr)) !important; gap:8px !important; }
+    .filters-row {
+      flex-wrap:nowrap !important;
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+    }
+    .filters-row .f-sel { min-width:138px; flex:0 0 auto; }
+    .srch { width:min(48vw, 180px) !important; }
+    .cal-grid-wrap { overflow-x:auto !important; }
+    .provider-col { min-width:108px !important; }
+    .time-gutter { width:52px !important; }
+  }
 `;
 
 function IBell()   { return <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>; }
@@ -1230,7 +1245,7 @@ function DashboardInner() {
                   style={{background:PANEL,borderRadius:12,boxShadow:'0 1px 5px rgba(0,0,0,0.08)',display:'flex',flexDirection:'column',overflow:'hidden'}}
                 >
                   {/* Filters */}
-                  <div style={{display:'flex',gap:9,padding:'13px 15px 0',flexWrap:'wrap',flexShrink:0}}>
+                  <div className="filters-row" style={{display:'flex',gap:9,padding:'13px 15px 0',flexWrap:'wrap',flexShrink:0}}>
                     <select className="f-sel" value={filterCat} onChange={e => setFilterCat(e.target.value)} title="Service category">
                       <option value="ALL">All Services</option>
                       {filters.categories.map(c => <option key={c.Code} value={c.Code}>{c.Des}</option>)}

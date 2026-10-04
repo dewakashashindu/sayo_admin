@@ -164,8 +164,7 @@ const PAGE_CSS = `
 
 
   @media(max-width:767px) {
-    .left-panel { display:none !important; }
-    .main-body  { padding-bottom:72px !important; }
+    .main-body  { padding-bottom:88px !important; }
   }
 `;
 

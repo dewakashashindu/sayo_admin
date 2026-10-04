@@ -335,7 +335,12 @@ const PAGE_CSS = `
   .recent-card{flex-shrink:0;width:210px;border-radius:12px;border:1.5px solid #d8e4e6;background:#fff;padding:12px 14px;cursor:pointer;transition:all 0.15s;display:flex;flex-direction:column;gap:6px;box-shadow:0 1px 4px rgba(30,58,64,0.07);text-align:left;font-family:'Inter',sans-serif;}
   .recent-card:hover{border-color:#1e3a40;box-shadow:0 3px 12px rgba(30,58,64,0.14);transform:translateY(-2px);}
   .recipe-blocked{border-radius:12px;border:2px dashed #d1d9da;padding:40px 24px;text-align:center;color:#9ca3af;background:#fafafa;}
-  @media(max-width:767px){.flags-grid{grid-template-columns:1fr !important;}}
+  @media(max-width:767px){
+    .flags-grid{grid-template-columns:1fr !important;}
+    .main-body{padding-bottom:88px !important;overflow:auto !important;}
+    .m-grid{grid-template-columns:1fr 1fr !important;}
+    .items-modal-overlay{padding:8px !important;}
+  }
 `;
 
 const IBell = ({ s = 21 }: { s?: number }) => (
@@ -3212,6 +3217,7 @@ function ItemMasterPageContent() {
           </header>
 
           <div
+            className="main-body"
             style={{
               flex: 1,
               overflow: "hidden",
@@ -3716,7 +3722,7 @@ function ItemMasterPageContent() {
                       title="Item Identification"
                       icon={<ITag s={13} />}
                     >
-                      <div
+                      <div className="m-grid"
                         style={{
                           display: "grid",
                           gridTemplateColumns: "1fr 2fr",
@@ -3749,7 +3755,7 @@ function ItemMasterPageContent() {
                           />
                         </FieldRow>
                       </div>
-                      <div
+                      <div className="m-grid"
                         style={{
                           display: "grid",
                           gridTemplateColumns: "2fr 1fr 1fr",
@@ -3869,7 +3875,7 @@ function ItemMasterPageContent() {
                       title="Item Categories"
                       icon={<IArchive s={13} />}
                     >
-                      <div
+                      <div className="m-grid"
                         style={{
                           display: "grid",
                           gridTemplateColumns: "1fr 1fr 1fr 1fr",
@@ -3981,7 +3987,7 @@ function ItemMasterPageContent() {
                       title="Cost & Margin"
                       icon={<IDollar s={13} />}
                     >
-                      <div
+                      <div className="m-grid"
                         style={{
                           display: "grid",
                           gridTemplateColumns: "1fr 1fr 1fr",
@@ -4098,7 +4104,7 @@ function ItemMasterPageContent() {
                       title="Reorder Levels & Stock Limits"
                       icon={<ILayers s={13} />}
                     >
-                      <div
+                      <div className="m-grid"
                         style={{
                           display: "grid",
                           gridTemplateColumns: "1fr 1fr 1fr 1fr",
@@ -4201,7 +4207,7 @@ function ItemMasterPageContent() {
                         onError={(message) => showToast(message, true)}
                       />
                       {current.locationDetails.length > 0 && (
-                        <div
+                        <div className="m-grid"
                           style={{
                             display: "grid",
                             gridTemplateColumns:

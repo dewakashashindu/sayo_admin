@@ -176,7 +176,7 @@ const CSS = `
   .back-btn { display: flex; align-items: center; gap: 6px; background: none; border: none; cursor: pointer; color: #1e3a40; font-family: 'Inter',sans-serif; font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 8px; }
   .back-btn:hover { background: rgba(0,0,0,0.05); }
 
-  @media (max-width: 767px) { .main-body { padding-bottom: 72px !important; } .hdr-name { display: none !important; } }
+  @media (max-width: 767px) { .main-body { padding-bottom: 88px !important; } .hdr-name { display: none !important; } }
   @media (max-width: 560px) { .tab-btn span.lbl { display: none; } .tab-btn { font-size: 12px; } .info-grid { grid-template-columns: 1fr !important; } }
 `;
 

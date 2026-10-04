@@ -1132,6 +1132,20 @@ const PAGE_CSS = `
   .inbox-date { font-size:11px; color:#75868c; }
   .inbox-row-locs { font-size:12px; font-weight:600; color:#1e3a40; }
   .inbox-row-meta { font-size:11px; color:#75868c; }
+
+  @media (max-width:767px) {
+    .po-main { padding:10px 10px 88px !important; }
+    .po-head { flex-direction:column; align-items:stretch !important; }
+    .po-tabs { margin-left:0 !important; flex-wrap:wrap; width:100%; }
+    .po-form { grid-template-columns:88px 1fr !important; }
+    .po-find { flex-direction:column; align-items:stretch !important; }
+    .po-find input[type=text], .po-find input:not([type]) { min-width:0 !important; width:100% !important; }
+    .po-actions { flex-wrap:wrap !important; }
+    .po-grid-wrap, .po-list-wrap { -webkit-overflow-scrolling:touch; }
+    .toast { bottom:80px !important; }
+    .inbox-fab { bottom:80px !important; right:12px !important; }
+    .entry-strip { flex-direction:column; align-items:stretch !important; }
+  }
 `;
 export default function IssueNotePage() {
   const { loaded, enforce, has } = useMyAccess();

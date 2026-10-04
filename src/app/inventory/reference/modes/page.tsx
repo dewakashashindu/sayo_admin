@@ -242,8 +242,7 @@ const PAGE_CSS = `
   .warn-strip { background:#fffbeb; border:1.5px solid #fde68a; color:#92400e; border-radius:10px; padding:9px 12px; font-size:12px; }
 
   @media(max-width:767px) {
-    .left-panel { display:none !important; }
-    .main-body  { padding-bottom:72px !important; }
+    .main-body  { padding-bottom:88px !important; }
   }
 `;
 

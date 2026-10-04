@@ -229,6 +229,7 @@ const CSS = `
   .toast.err{background:#b91c1c}
   @media(max-width:860px){.panel{width:100%}
     .body{flex-direction:column}}
+  @media(max-width:767px){.main{padding-bottom:88px!important}.panel{max-height:240px}}
 `;
 export default function UserGroupsPage() {
   const { loaded, enforce, has } = useMyAccess();

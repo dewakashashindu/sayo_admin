@@ -191,7 +191,9 @@ const PAGE_CSS = `
   }
   @media(max-width:600px) {
     .grid-2,.grid-3,.grid-id { grid-template-columns:1fr; }
-    .left-panel { display:none !important; }
+  }
+  @media(max-width:767px) {
+    .main-body { padding-bottom:88px !important; }
   }
 
   /* highlight search match */
@@ -540,7 +542,7 @@ function SupplierMasterPageContent() {
           </header>
 
           {}
-          <div style={{ flex:1, overflow:'hidden', padding:'12px 14px', display:'flex', gap:12 }}>
+          <div className="main-body" style={{ flex:1, overflow:'hidden', padding:'12px 14px', display:'flex', gap:12 }}>
 
             {/* LEFT PANEL */}
             <div className="left-panel" style={{ width:262, flexShrink:0, background:'#deeaea', borderRadius:12, display:'flex', flexDirection:'column', overflow:'hidden', boxShadow:'0 1px 5px rgba(0,0,0,0.08)' }}>
