@@ -9,12 +9,14 @@ import NoAccess from '@/components/NoAccess';
 import AccessLoading from '@/components/AccessLoading';
 
 interface HoursRow {
+  LocCode: string;
   TxnDate: string;
   StartTime: string;
   ClosingTime: string;
   Open: boolean;
   ClosingRemarks: string;
 }
+interface LocOpt { LocCode: string; LocDes: string; }
 
 const API = '/api/administration/hours';
 const MAX_RMK = 200;
@@ -76,6 +78,17 @@ function weekdaysInMonth(ym: string): string[] {
     const iso = `${ym}-${String(d).padStart(2, '0')}`;
     const day = new Date(`${iso}T00:00:00`).getDay();
     if (day >= 1 && day <= 5) out.push(iso);
+  }
+  return out;
+}
+
+function weekendsInMonth(ym: string): string[] {
+  const n = daysInMonth(ym);
+  const out: string[] = [];
+  for (let d = 1; d <= n; d++) {
+    const iso = `${ym}-${String(d).padStart(2, '0')}`;
+    const day = new Date(`${iso}T00:00:00`).getDay();
+    if (day === 0 || day === 6) out.push(iso);
   }
   return out;
 }
@@ -175,6 +188,9 @@ const PAGE_CSS = `
 
   .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
   .cal-dow { text-align:center; font-size:10px; font-weight:800; letter-spacing:0.06em; text-transform:uppercase; color:#5b7377; padding:4px 0; }
+  .cal-dow.wknd { background:#ede9fe; color:#6d28d9; border-radius:8px; }
+  .cal-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+  .cal-actions .btn-new, .cal-actions .btn-clear { height:36px; padding:0 14px; }
   .cal-day {
     border:none; background:#f7fbfb; border-radius:10px; min-height:78px;
     padding:8px 8px 6px; text-align:left; cursor:pointer; font-family:'Inter',sans-serif;
@@ -183,12 +199,26 @@ const PAGE_CSS = `
   }
   .cal-day:hover { transform:translateY(-1px); box-shadow:0 2px 8px rgba(30,58,64,0.12); }
   .cal-day.empty { background:transparent; cursor:default; min-height:78px; }
+  .cal-day.empty.wknd { background:#f3eefc; }
+  .cal-day.wknd:not(.selected):not(.open):not(.closed):not(.mixed) { background:#efe7f8; }
+  .cal-day.wknd.open:not(.selected) { background:#d1fae5; }
+  .cal-day.wknd.closed:not(.selected) { background:#fce7f3; }
+  .cal-day.wknd.mixed:not(.selected) { background:#fae8ff; }
   .cal-day.today { box-shadow:inset 0 0 0 1.5px #1e3a40; }
   .cal-day.selected { border-color:#1e3a40; background:#1e3a40; }
   .cal-day.selected .cal-num, .cal-day.selected .cal-meta { color:#fff; }
   .cal-day.open { background:#dcfce7; }
   .cal-day.closed { background:#fee2e2; }
+  .cal-day.mixed { background:#fef3c7; }
   .cal-hint { font-size:11.5px; color:#5b7377; margin-top:10px; }
+  .cal-rmk { font-size:10px; font-weight:600; color:#b45309; line-height:1.2; max-height:2.4em; overflow:hidden; }
+  .cal-day.selected .cal-rmk { color:#fde68a; }
+  .loc-bar { display:flex; flex-wrap:wrap; gap:6px; }
+  .loc-chip {
+    border:1.5px solid #c5d4d6; background:#fff; color:#1e3a40; border-radius:99px;
+    padding:4px 11px; font-size:11.5px; font-weight:700; cursor:pointer; font-family:'Inter',sans-serif;
+  }
+  .loc-chip.on { background:#1e3a40; border-color:#1e3a40; color:#fff; }
   .date-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; max-height:92px; overflow:auto; }
   .date-chip {
     display:inline-flex; align-items:center; gap:4px;
@@ -278,6 +308,8 @@ function HoursPageContent() {
   const [picked, setPicked] = useState<string[]>([]);
   const [anchor, setAnchor] = useState('');
   const [rows, setRows] = useState<HoursRow[]>([]);
+  const [locations, setLocations] = useState<LocOpt[]>([]);
+  const [selLocs, setSelLocs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -287,11 +319,33 @@ function HoursPageContent() {
   const [fClose, setFClose] = useState('18:00');
   const [fRemarks, setFRemarks] = useState('');
 
+  const locSet = useMemo(() => new Set(selLocs.map((c) => c.toUpperCase())), [selLocs]);
+  const visibleRows = useMemo(
+    () => rows.filter((r) => locSet.has(String(r.LocCode || '').toUpperCase())),
+    [rows, locSet],
+  );
   const byDate = useMemo(() => {
-    const m = new Map<string, HoursRow>();
-    rows.forEach((r) => m.set(r.TxnDate, r));
+    const m = new Map<string, HoursRow[]>();
+    visibleRows.forEach((r) => {
+      const list = m.get(r.TxnDate) ?? [];
+      list.push(r);
+      m.set(r.TxnDate, list);
+    });
     return m;
-  }, [rows]);
+  }, [visibleRows]);
+
+  function cellMeta(iso: string): { kind: 'none' | 'open' | 'closed' | 'mixed'; text: string; remark: string } {
+    const list = byDate.get(iso) ?? [];
+    if (!list.length) return { kind: 'none', text: '—', remark: '' };
+    const allClosed = list.every((r) => !r.Open);
+    const allOpenSame = list.every((r) => r.Open && r.StartTime === list[0].StartTime && r.ClosingTime === list[0].ClosingTime);
+    if (allClosed) {
+      const remarks = [...new Set(list.map((r) => r.ClosingRemarks).filter(Boolean))];
+      return { kind: 'closed', text: 'Closed', remark: remarks.length === 1 ? remarks[0] : remarks.length ? remarks.join(' · ') : '' };
+    }
+    if (allOpenSame) return { kind: 'open', text: `${list[0].StartTime}–${list[0].ClosingTime}`, remark: '' };
+    return { kind: 'mixed', text: 'Mixed', remark: '' };
+  }
 
   const loadForm = useCallback((iso: string, list: HoursRow[]) => {
     const found = list.find((r) => r.TxnDate === iso);
@@ -308,6 +362,14 @@ function HoursPageContent() {
     const res = await apiFetch<HoursRow[]>(`${API}?from=${month}-01&to=${month}-${last}`);
     if (res.success && res.data) {
       setRows(res.data);
+      const locs = ((res as ApiResponse<HoursRow[]> & { locations?: LocOpt[] }).locations) ?? [];
+      setLocations(locs);
+      setSelLocs((prev) => {
+        if (prev.length) return prev.filter((c) => locs.some((l) => l.LocCode === c));
+        const work = access.workLoc.trim();
+        if (work && locs.some((l) => l.LocCode === work)) return [work];
+        return locs[0] ? [locs[0].LocCode] : [];
+      });
     } else {
       setLoadError(res.message ?? 'Failed to load operational hours');
     }
@@ -324,7 +386,7 @@ function HoursPageContent() {
     }
     setPicked((prev) => {
       if (prev.includes(iso)) return prev.filter((d) => d !== iso);
-      if (prev.length === 0) loadForm(iso, rows);
+      if (prev.length === 0) loadForm(iso, visibleRows);
       return mergeDates(prev, [iso]);
     });
     setAnchor(iso);
@@ -345,8 +407,16 @@ function HoursPageContent() {
     setAnchor(days[0] ?? anchor);
   }
 
+  function selectWeekends() {
+    const days = weekendsInMonth(ym);
+    if (!days.length) { showToast('No weekends in this month', 'error'); return; }
+    setPicked((prev) => mergeDates(prev, days));
+    setAnchor(days[0] ?? anchor);
+  }
+
   async function saveDates(dates: string[], label: string) {
     if (!canSave) { showToast('You do not have permission to save', 'error'); return; }
+    if (!selLocs.length) { showToast('Select at least one location', 'error'); return; }
     if (!dates.length) { showToast('Select at least one day on the calendar', 'error'); return; }
     if (dates.length > 100) { showToast('Select at most 100 days at a time', 'error'); return; }
     setSaving(true);
@@ -356,6 +426,8 @@ function HoursPageContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dates,
+          locCodes: selLocs,
+          allLocations: locations.length > 0 && selLocs.length === locations.length,
           startTime: fStart,
           closingTime: fClose,
           open: fOpen,
@@ -387,9 +459,18 @@ function HoursPageContent() {
   const cells: (string | null)[] = [...Array(offset).fill(null), ...Array.from({ length: nDays }, (_, i) => `${ym}-${String(i + 1).padStart(2, '0')}`)];
   while (cells.length % 7 !== 0) cells.push(null);
 
-  const primary = picked[0] ?? today;
-  const selected = byDate.get(primary);
+  const primary = picked[0] ?? '';
+  const selectedList = primary ? (byDate.get(primary) ?? []) : [];
+  const selected = selectedList.length === 1 ? selectedList[0] : undefined;
   const pickedSet = useMemo(() => new Set(picked), [picked]);
+  const allLocsOn = locations.length > 0 && selLocs.length === locations.length;
+
+  function toggleLoc(code: string) {
+    setSelLocs((prev) => prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]);
+  }
+  function toggleAllLocs() {
+    setSelLocs(allLocsOn ? [] : locations.map((l) => l.LocCode));
+  }
 
   return (
     <>
@@ -440,36 +521,75 @@ function HoursPageContent() {
               <div style={{ background: '#1e3a40', borderRadius: '12px 12px 0 0', padding: '14px 18px', flexShrink: 0 }}>
                 <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Salon calendar</p>
                 <p style={{ color: '#fff', fontSize: 18, fontWeight: 800, marginTop: 2 }}>OPERATIONAL HOURS</p>
+                {locations.length > 0 && (
+                  <div className="loc-bar" style={{ marginTop: 10 }}>
+                    <button type="button" className={`loc-chip ${allLocsOn ? 'on' : ''}`} onClick={toggleAllLocs}>All locations</button>
+                    {locations.map((l) => (
+                      <button
+                        key={l.LocCode}
+                        type="button"
+                        className={`loc-chip ${selLocs.includes(l.LocCode) ? 'on' : ''}`}
+                        onClick={() => toggleLoc(l.LocCode)}
+                      >
+                        {l.LocDes || l.LocCode}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
                 {loading ? (
                   <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 60 }}><div className="spinner" /></div>
                 ) : (
                   <div className="cal-grid">
-                    {DOW.map((d) => <div key={d} className="cal-dow">{d}</div>)}
+                    {DOW.map((d, i) => <div key={d} className={`cal-dow${i >= 5 ? ' wknd' : ''}`}>{d}</div>)}
                     {cells.map((iso, i) => {
-                      if (!iso) return <div key={`e${i}`} className="cal-day empty" />;
-                      const row = byDate.get(iso);
+                      const wknd = i % 7 >= 5;
+                      if (!iso) return <div key={`e${i}`} className={`cal-day empty${wknd ? ' wknd' : ''}`} />;
+                      const meta = cellMeta(iso);
                       const isPicked = pickedSet.has(iso);
                       const cls = [
                         'cal-day',
+                        wknd ? 'wknd' : '',
                         iso === today ? 'today' : '',
                         isPicked ? 'selected' : '',
-                        !isPicked && row?.Open ? 'open' : '',
-                        !isPicked && row && !row.Open ? 'closed' : '',
+                        !isPicked && meta.kind === 'open' ? 'open' : '',
+                        !isPicked && meta.kind === 'closed' ? 'closed' : '',
+                        !isPicked && meta.kind === 'mixed' ? 'mixed' : '',
                       ].filter(Boolean).join(' ');
                       return (
                         <button key={iso} className={cls} onClick={(e) => handleSelect(iso, e)}>
                           <span className="cal-num">{Number(iso.slice(8))}</span>
-                          <span className="cal-meta">
-                            {!row ? '—' : row.Open ? `${row.StartTime}–${row.ClosingTime}` : 'Closed'}
-                          </span>
+                          <span className="cal-meta">{meta.text}</span>
+                          {meta.kind === 'closed' && meta.remark ? <span className="cal-rmk">{meta.remark}</span> : null}
                         </button>
                       );
                     })}
                   </div>
                 )}
-                <p className="cal-hint">Click days to select · Shift-click a range · then Save once for all</p>
+                <div className="cal-actions">
+                  {canSave && (
+                    <button className="btn-new" onClick={selectWeekdays} disabled={saving || loading}>
+                      Select weekdays this month
+                    </button>
+                  )}
+                  {canSave && (
+                    <button className="btn-new" onClick={selectWeekends} disabled={saving || loading}>
+                      Select weekends this month
+                    </button>
+                  )}
+                  <button className="btn-clear" onClick={() => setPicked([])} disabled={saving || picked.length === 0}>
+                    Clear selection
+                  </button>
+                  <button className="btn-clear" onClick={handleClear} disabled={saving}>
+                    <IRefresh s={14} /> Reset
+                  </button>
+                </div>
+                <p className="cal-hint">
+                  {selLocs.length === 0
+                    ? 'Select a location first'
+                    : `Saving applies to ${selLocs.length} location${selLocs.length > 1 ? 's' : ''} · Click days · Shift-click a range · Save once`}
+                </p>
               </div>
             </div>
 
@@ -522,20 +642,9 @@ function HoursPageContent() {
               <div style={{ background: '#dce8e8', borderTop: '1.5px solid rgba(30,58,64,0.12)', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {canSave && (
                   <button className="btn-save" onClick={handleSave} disabled={saving || loading || picked.length === 0}>
-                    <ISave /> {saving ? 'Saving…' : picked.length > 1 ? `Save ${picked.length} days` : 'Save day'}
+                    <ISave /> {saving ? 'Saving…' : `Save ${picked.length} day${picked.length > 1 ? 's' : ''} × ${selLocs.length || 0} loc`}
                   </button>
                 )}
-                {canSave && (
-                  <button className="btn-new" onClick={selectWeekdays} disabled={saving || loading}>
-                    Select weekdays this month
-                  </button>
-                )}
-                <button className="btn-clear" onClick={() => setPicked([])} disabled={saving || picked.length === 0}>
-                  Clear selection
-                </button>
-                <button className="btn-clear" onClick={handleClear} disabled={saving}>
-                  <IRefresh s={14} /> Reset
-                </button>
               </div>
             </div>
           </div>

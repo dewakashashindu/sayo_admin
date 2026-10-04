@@ -406,8 +406,8 @@ function MIBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DayScheduleGrid({ bookings, providers, onCardClick, date }: {
-  bookings: Booking[]; providers: string[]; onCardClick: (b: Booking) => void; date: string;
+function DayScheduleGrid({ bookings, providers, onCardClick, date, locCode }: {
+  bookings: Booking[]; providers: string[]; onCardClick: (b: Booking) => void; date: string; locCode?: string;
 }) {
   const [slots, setSlots] = useState<string[]>(TIME_SLOTS);
   const [dayStart, setDayStart] = useState(DAY_START);
@@ -415,7 +415,10 @@ function DayScheduleGrid({ bookings, providers, onCardClick, date }: {
 
   useEffect(() => {
     let live = true;
-    fetch(`/api/bookings/hours?from=${date}&to=${date}`)
+    const q = locCode
+      ? `/api/bookings/hours?from=${date}&to=${date}&locCode=${encodeURIComponent(locCode)}`
+      : `/api/bookings/hours?from=${date}&to=${date}`;
+    fetch(q)
       .then((r) => r.json())
       .then((d) => {
         if (!live) return;
@@ -439,7 +442,7 @@ function DayScheduleGrid({ bookings, providers, onCardClick, date }: {
       })
       .catch(() => { if (live) { setClosed(true); setSlots([]); } });
     return () => { live = false; };
-  }, [date]);
+  }, [date, locCode]);
 
   const totalSlots = slots.length;
   const gridH      = totalSlots * SLOT_H;
@@ -1295,7 +1298,7 @@ function DashboardInner() {
                   {viewTab === 'schedule' && (
                     <div className="fade-up" style={{height:480,display:'flex',flexDirection:'column',overflow:'hidden'}}>
                       {period === 'today'
-                        ? <DayScheduleGrid date={date} bookings={data.bookings} providers={data.providers} onCardClick={b => setSelBooking(b)}/>
+                        ? <DayScheduleGrid date={date} locCode={filterLoc !== 'ALL' ? filterLoc : undefined} bookings={data.bookings} providers={data.providers} onCardClick={b => setSelBooking(b)}/>
                         : <RangeScheduleGrid dates={rangeDates} providers={rangeProviders} counts={rangeGrid} onCellClick={iso => { setPeriod('today'); setDate(iso); }}/>
                       }
                     </div>

@@ -1,5 +1,6 @@
-// Server-only: company hours + staff schedule for a booking date.
-// Missing tables or a missing row ⇒ the salon is closed that day.
+// Server-only: company hours + staff schedule for a booking date + location.
+// Missing tables or a missing row ⇒ that branch is closed that day.
+// Staff with no roster row at that branch/date do not appear (not salon-hours).
 
 import { prisma } from "@/lib/prisma";
 import {
@@ -12,6 +13,7 @@ import {
 
 export interface CompanyDay {
   date: string;
+  locCode: string;
   open: boolean;
   startMin: number;
   closeMin: number;
@@ -47,9 +49,10 @@ interface SchedRow {
   Remarks: string;
 }
 
-export function closedCompanyDay(date: string, remarks = ""): CompanyDay {
+export function closedCompanyDay(date: string, locCode = "", remarks = ""): CompanyDay {
   return {
     date,
+    locCode,
     open: false,
     startMin: 0,
     closeMin: 0,
@@ -60,20 +63,21 @@ export function closedCompanyDay(date: string, remarks = ""): CompanyDay {
   };
 }
 
-function mapCompany(date: string, row: HoursRow | undefined): CompanyDay {
-  if (!row) return closedCompanyDay(date);
+function mapCompany(date: string, locCode: string, row: HoursRow | undefined): CompanyDay {
+  if (!row) return closedCompanyDay(date, locCode);
   const startMin = clockToMinutes(`${row.StartTime}`);
   const closeMin = clockToMinutes(`${row.ClosingTime}`);
   const open = asBool(row.OpemOrClose) && startMin >= 0 && closeMin > startMin;
   if (!open) {
     return {
-      ...closedCompanyDay(date, String(row.ClosingRemarks ?? "").trim()),
+      ...closedCompanyDay(date, locCode, String(row.ClosingRemarks ?? "").trim()),
       startTime: String(row.StartTime ?? "").slice(0, 5),
       closingTime: String(row.ClosingTime ?? "").slice(0, 5),
     };
   }
   return {
     date,
+    locCode,
     open: true,
     startMin,
     closeMin,
@@ -84,10 +88,11 @@ function mapCompany(date: string, row: HoursRow | undefined): CompanyDay {
   };
 }
 
-export async function loadCompanyDays(from: string, to: string): Promise<CompanyDay[]> {
+export async function loadCompanyDays(from: string, to: string, locCode: string): Promise<CompanyDay[]> {
   const a = parseIsoDate(from);
   const b = parseIsoDate(to);
-  if (!a || !b || a > b) return [];
+  const loc = String(locCode ?? "").trim();
+  if (!a || !b || a > b || !loc) return [];
   try {
     const rows = await prisma.$queryRawUnsafe<HoursRow[]>(
       `SELECT DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
@@ -96,28 +101,35 @@ export async function loadCompanyDays(from: string, to: string): Promise<Company
               OpemOrClose, ClosingRemarks
          FROM tbl_companyoperatinghours
         WHERE DATE(TxnDate) BETWEEN ? AND ?
+          AND RTRIM(LocCode) = ?
         ORDER BY TxnDate`,
       a,
       b,
+      loc,
     );
-    return rows.map((r) => mapCompany(String(r.TxnDate).slice(0, 10), r));
+    const byDate = new Map(rows.map((r) => [String(r.TxnDate).slice(0, 10), r]));
+    // Return only stored days (calendar clients collect open dates from this list).
+    return rows.map((r) => mapCompany(String(r.TxnDate).slice(0, 10), loc, byDate.get(String(r.TxnDate).slice(0, 10))));
   } catch (e) {
     if (missingHoursTable(e)) return [];
     throw e;
   }
 }
 
-export async function loadCompanyDay(date: string): Promise<CompanyDay> {
+export async function loadCompanyDay(date: string, locCode: string): Promise<CompanyDay> {
   const iso = parseIsoDate(date);
-  if (!iso) return closedCompanyDay(String(date ?? ""));
-  const days = await loadCompanyDays(iso, iso);
-  return days[0] ?? closedCompanyDay(iso);
+  const loc = String(locCode ?? "").trim();
+  if (!iso) return closedCompanyDay(String(date ?? ""), loc);
+  if (!loc) return closedCompanyDay(iso, "");
+  const days = await loadCompanyDays(iso, iso, loc);
+  return days[0] ?? closedCompanyDay(iso, loc);
 }
 
-export async function loadStaffDays(date: string): Promise<Map<string, StaffDay>> {
+export async function loadStaffDays(date: string, locCode: string): Promise<Map<string, StaffDay>> {
   const iso = parseIsoDate(date);
+  const loc = String(locCode ?? "").trim();
   const out = new Map<string, StaffDay>();
-  if (!iso) return out;
+  if (!iso || !loc) return out;
   try {
     const rows = await prisma.$queryRawUnsafe<SchedRow[]>(
       `SELECT RTRIM(StaffID) AS StaffID,
@@ -125,8 +137,10 @@ export async function loadStaffDays(date: string): Promise<Map<string, StaffDay>
               DATE_FORMAT(ClosingTime, '%H:%i') AS ClosingTime,
               Offday, LeveOn, Remarks
          FROM tbl_staffschedule
-        WHERE DATE(TxnDate) = ?`,
+        WHERE DATE(TxnDate) = ?
+          AND RTRIM(LocCode) = ?`,
       iso,
+      loc,
     );
     for (const r of rows) {
       const staffId = String(r.StaffID ?? "").trim();
@@ -152,23 +166,18 @@ export async function loadStaffDays(date: string): Promise<Map<string, StaffDay>
   }
 }
 
-/** Staff with no row inherit salon hours. Off / leave ⇒ not working. */
+/** No roster row ⇒ not working (hidden from appointments). Off / leave ⇒ not working. */
 export function resolveStaffWindow(company: CompanyDay, staff: StaffDay | undefined): {
   working: boolean;
   startMin: number;
   closeMin: number;
-  reason: "salon-closed" | "off" | "leave" | "shift" | "salon-hours";
+  reason: "salon-closed" | "off" | "leave" | "shift" | "unscheduled";
 } {
   if (!company.open) {
     return { working: false, startMin: 0, closeMin: 0, reason: "salon-closed" };
   }
   if (!staff) {
-    return {
-      working: true,
-      startMin: company.startMin,
-      closeMin: company.closeMin,
-      reason: "salon-hours",
-    };
+    return { working: false, startMin: 0, closeMin: 0, reason: "unscheduled" };
   }
   if (staff.leaveOn) {
     return { working: false, startMin: 0, closeMin: 0, reason: "leave" };

@@ -203,14 +203,17 @@ export async function GET(req: NextRequest) {
     }
 
     const [company, staffDays, rows, branchProviders] = await Promise.all([
-      loadCompanyDay(date),
-      loadStaffDays(date),
+      loadCompanyDay(date, locCode || ""),
+      loadStaffDays(date, locCode || ""),
       loadLegacyBookings(date, locCode),
       locCode ? loadBranchProviders(locCode) : Promise.resolve([] as { userId: string; name: string }[]),
     ]);
 
+    const scheduledProviders = branchProviders.filter((person) =>
+      resolveStaffWindow(company, staffDays.get(person.userId.trim().toUpperCase())).working,
+    );
     const daySlots = company.open ? company.slots : [];
-    const rosterNames = branchProviders.map((p) => p.name);
+    const rosterNames = scheduledProviders.map((p) => p.name);
 
     if (!company.open) {
       return NextResponse.json({
@@ -223,6 +226,7 @@ export async function GET(req: NextRequest) {
         slots: [] as string[],
         bookedSlots: [] as string[],
         providerSlots: {} as Record<string, string[]>,
+        scheduledProviders: [] as string[],
       });
     }
 
@@ -308,7 +312,7 @@ export async function GET(req: NextRequest) {
       providerSlots[booking.providerName] = slots;
     }
 
-    for (const person of branchProviders) {
+    for (const person of scheduledProviders) {
       const window = resolveStaffWindow(company, staffDays.get(person.userId.trim().toUpperCase()));
       const extra = window.working
         ? slotsOutsideWindow(daySlots, window.startMin, window.closeMin)
@@ -346,6 +350,7 @@ export async function GET(req: NextRequest) {
       slots: daySlots,
       bookedSlots,
       providerSlots,
+      scheduledProviders: rosterNames,
     });
   } catch (error) {
     console.error('[AVAILABILITY_API_ERROR]', error);

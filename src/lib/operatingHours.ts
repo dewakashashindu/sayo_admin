@@ -3,11 +3,11 @@
 // via DATE_FORMAT so Node's timezone cannot shift the date or the clock.
 
 export const HOURS_TABLE_HINT =
-  "Tables are not created yet. Run scripts/create-Tbl_OperatingHours-mysql.sql on the live database (phpMyAdmin), then retry.";
+  "Hours tables need LocCode. Run scripts/create-Tbl_OperatingHours-mysql.sql then scripts/alter-Tbl_OperatingHours-loccode-mysql.sql on the live database (phpMyAdmin). Do not prisma db push.";
 
 export function missingHoursTable(e: unknown): boolean {
   const msg = String((e as { message?: string } | undefined)?.message ?? e);
-  return /tbl_companyoperatinghours|tbl_staffschedule|doesn't exist|ER_NO_SUCH_TABLE|1146|P2021/i.test(msg);
+  return /tbl_companyoperatinghours|tbl_staffschedule|doesn't exist|ER_NO_SUCH_TABLE|1146|P2021|unknown column ['`]?loccode/i.test(msg);
 }
 
 export function parseIsoDate(v: unknown): string | null {
@@ -38,6 +38,21 @@ export function minutesOf(hhmm: string): number {
 
 export function padStaffId(id: string): string {
   return String(id ?? "").trim().padEnd(10, " ").slice(0, 10);
+}
+
+export function padLocCode(id: string): string {
+  return String(id ?? "").trim().padEnd(10, " ").slice(0, 10);
+}
+
+export function parseLocCodes(v: unknown): string[] {
+  const out: string[] = [];
+  const push = (x: unknown) => {
+    const s = String(x ?? "").trim();
+    if (s) out.push(s.slice(0, 10));
+  };
+  if (Array.isArray(v)) v.forEach(push);
+  else if (typeof v === "string" && v.trim()) v.split(",").forEach(push);
+  return [...new Set(out)];
 }
 
 export function bit(v: unknown): number {

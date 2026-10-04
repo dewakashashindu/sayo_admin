@@ -16,6 +16,7 @@ interface StaffRow {
   WorkingLocID: string;
 }
 interface HoursRow {
+  LocCode?: string;
   TxnDate: string;
   StartTime: string;
   ClosingTime: string;
@@ -23,6 +24,7 @@ interface HoursRow {
   ClosingRemarks: string;
 }
 interface SchedRow {
+  LocCode?: string;
   TxnDate: string;
   StaffID: string;
   StartTime: string;
@@ -31,10 +33,13 @@ interface SchedRow {
   LeaveOn: boolean;
   Remarks: string;
 }
+interface LocOpt { LocCode: string; LocDes: string; }
 interface Bundle {
   staff: StaffRow[];
   schedules: SchedRow[];
   hours: HoursRow[];
+  locations?: LocOpt[];
+  locCode?: string;
 }
 
 const API = '/api/administration/schedules';
@@ -90,6 +95,16 @@ function weekdaysInMonth(ym: string): string[] {
     const iso = `${ym}-${String(d).padStart(2, '0')}`;
     const day = new Date(`${iso}T00:00:00`).getDay();
     if (day >= 1 && day <= 5) out.push(iso);
+  }
+  return out;
+}
+function weekendsInMonth(ym: string): string[] {
+  const n = daysInMonth(ym);
+  const out: string[] = [];
+  for (let d = 1; d <= n; d++) {
+    const iso = `${ym}-${String(d).padStart(2, '0')}`;
+    const day = new Date(`${iso}T00:00:00`).getDay();
+    if (day === 0 || day === 6) out.push(iso);
   }
   return out;
 }
@@ -172,9 +187,17 @@ const PAGE_CSS = `
   }
   .srv-list-item:hover { background:rgba(30,58,64,0.06); }
   .srv-list-item.active { background:rgba(30,58,64,0.1); }
+  .srv-list-item .mini-chk {
+    width:16px; height:16px; border-radius:4px; border:2px solid #9ca3af; flex-shrink:0; background:#fff;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .srv-list-item.active .mini-chk { background:#1e3a40; border-color:#1e3a40; color:#fff; }
 
   .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
   .cal-dow { text-align:center; font-size:10px; font-weight:800; letter-spacing:0.06em; text-transform:uppercase; color:#5b7377; padding:4px 0; }
+  .cal-dow.wknd { background:#ede9fe; color:#6d28d9; border-radius:8px; }
+  .cal-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+  .cal-actions .btn-new, .cal-actions .btn-clear { height:36px; padding:0 14px; }
   .cal-day {
     border:1.5px solid transparent; background:#f7fbfb; border-radius:10px; min-height:74px;
     padding:8px 8px 6px; text-align:left; cursor:pointer; font-family:'Inter',sans-serif;
@@ -182,6 +205,8 @@ const PAGE_CSS = `
   }
   .cal-day:hover { box-shadow:0 2px 8px rgba(30,58,64,0.12); }
   .cal-day.empty { background:transparent; cursor:default; }
+  .cal-day.empty.wknd { background:#f3eefc; }
+  .cal-day.wknd:not(.selected):not(.work):not(.off):not(.leave):not(.shop-closed) { background:#efe7f8; }
   .cal-day.today { box-shadow:inset 0 0 0 1.5px #1e3a40; }
   .cal-day.selected { border-color:#1e3a40; background:#1e3a40; }
   .cal-day.selected .cal-num, .cal-day.selected .cal-meta { color:#fff; }
@@ -199,7 +224,14 @@ const PAGE_CSS = `
   .cal-day.work { background:#dcfce7; }
   .cal-day.off { background:#fef3c7; }
   .cal-day.leave { background:#ede9fe; }
-  .cal-day.shop-closed { background:#fee2e2; }
+  .cal-day.shop-closed { background:#fee2e2; cursor:not-allowed; opacity:0.85; }
+  .cal-day.shop-closed:hover { box-shadow:none; }
+  .cal-rmk { font-size:10px; font-weight:600; color:#b45309; line-height:1.2; max-height:2.4em; overflow:hidden; }
+  .cal-day.selected .cal-rmk { color:#fde68a; }
+  .loc-select {
+    border:1.5px solid #c0cbcc; border-radius:10px; height:40px; padding:0 12px;
+    font-family:'Inter',sans-serif; font-size:13px; font-weight:600; color:#1e3a40; background:#fff;
+  }
   .cal-num { font-size:13px; font-weight:700; color:#1e3a40; }
   .cal-meta { font-size:10.5px; font-weight:600; color:#4b5563; line-height:1.25; }
 
@@ -282,7 +314,9 @@ function SchedulesPageContent() {
   const [anchor, setAnchor] = useState('');
   const [search, setSearch] = useState('');
   const [staff, setStaff] = useState<StaffRow[]>([]);
-  const [selStaff, setSelStaff] = useState<StaffRow | null>(null);
+  const [selStaff, setSelStaff] = useState<StaffRow[]>([]);
+  const [locCode, setLocCode] = useState('');
+  const [locations, setLocations] = useState<LocOpt[]>([]);
   const [schedules, setSchedules] = useState<SchedRow[]>([]);
   const [hours, setHours] = useState<HoursRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -296,15 +330,23 @@ function SchedulesPageContent() {
   const [fClose, setFClose] = useState('18:00');
   const [fRemarks, setFRemarks] = useState('');
 
+  const selIds = useMemo(() => new Set(selStaff.map((s) => s.UserId)), [selStaff]);
   const mine = useMemo(
-    () => (selStaff ? schedules.filter((r) => r.StaffID === selStaff.UserId) : []),
-    [schedules, selStaff],
+    () => schedules.filter((r) => selIds.has(r.StaffID)),
+    [schedules, selIds],
   );
   const byDate = useMemo(() => {
-    const m = new Map<string, SchedRow>();
-    mine.forEach((r) => m.set(r.TxnDate, r));
+    const m = new Map<string, SchedRow[]>();
+    mine.forEach((r) => {
+      const list = m.get(r.TxnDate) ?? [];
+      list.push(r);
+      m.set(r.TxnDate, list);
+    });
     return m;
   }, [mine]);
+  function shopOpen(iso: string): boolean {
+    return hoursByDate.get(iso)?.Open === true;
+  }
   const hoursByDate = useMemo(() => {
     const m = new Map<string, HoursRow>();
     hours.forEach((r) => m.set(r.TxnDate, r));
@@ -331,27 +373,37 @@ function SchedulesPageContent() {
     setLoading(true);
     setLoadError(null);
     const last = String(daysInMonth(month)).padStart(2, '0');
-    const res = await apiFetch<Bundle>(`${API}?from=${month}-01&to=${month}-${last}`);
+    const locQ = locCode ? `&locCode=${encodeURIComponent(locCode)}` : '';
+    const res = await apiFetch<Bundle>(`${API}?from=${month}-01&to=${month}-${last}${locQ}`);
     if (res.success && res.data) {
       setStaff(res.data.staff);
       setSchedules(res.data.schedules);
       setHours(res.data.hours);
-      setSelStaff((prev) =>
-        prev
-          ? res.data!.staff.find((s) => s.UserId === prev.UserId) ?? res.data!.staff[0] ?? null
-          : res.data!.staff[0] ?? null,
-      );
+      const locs = res.data.locations ?? [];
+      setLocations(locs);
+      const nextLoc = res.data.locCode || locCode || access.workLoc || locs[0]?.LocCode || '';
+      if (nextLoc && nextLoc !== locCode) setLocCode(nextLoc);
+      setSelStaff((prev) => {
+        const keep = prev.filter((p) => res.data!.staff.some((s) => s.UserId === p.UserId));
+        if (keep.length) return keep;
+        return res.data!.staff[0] ? [res.data!.staff[0]] : [];
+      });
     } else {
       setLoadError(res.message ?? 'Failed to load staff schedules');
     }
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchMonth(ym); }, [ym]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchMonth(ym); }, [ym, locCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleSelectDay(iso: string, e?: React.MouseEvent) {
+    if (!shopOpen(iso)) {
+      showToast('This location is closed (or hours are not set) — staff cannot be scheduled', 'error');
+      return;
+    }
     if (e?.shiftKey && anchor) {
-      setPicked((prev) => mergeDates(prev, datesBetween(anchor, iso)));
+      const range = datesBetween(anchor, iso).filter((d) => shopOpen(d));
+      setPicked((prev) => mergeDates(prev, range));
       setAnchor(iso);
       return;
     }
@@ -368,9 +420,13 @@ function SchedulesPageContent() {
   }
 
   function handleSelectStaff(s: StaffRow) {
-    setSelStaff(s);
-    const their = schedules.filter((r) => r.StaffID === s.UserId);
-    loadForm(picked[0] ?? today, their, hours);
+    setSelStaff((prev) => {
+      const on = prev.some((p) => p.UserId === s.UserId);
+      const next = on ? prev.filter((p) => p.UserId !== s.UserId) : [...prev, s];
+      const their = schedules.filter((r) => next.some((p) => p.UserId === r.StaffID));
+      loadForm(picked[0] ?? '', their, hours);
+      return next;
+    });
   }
 
   function handleClear() {
@@ -379,7 +435,15 @@ function SchedulesPageContent() {
   }
 
   function selectWeekdays() {
-    const days = weekdaysInMonth(ym);
+    const days = weekdaysInMonth(ym).filter((d) => shopOpen(d));
+    if (!days.length) { showToast('No open weekdays this month at this location', 'error'); return; }
+    setPicked((prev) => mergeDates(prev, days));
+    setAnchor(days[0] ?? anchor);
+  }
+
+  function selectWeekends() {
+    const days = weekendsInMonth(ym).filter((d) => shopOpen(d));
+    if (!days.length) { showToast('No open weekends this month at this location', 'error'); return; }
     setPicked((prev) => mergeDates(prev, days));
     setAnchor(days[0] ?? anchor);
   }
@@ -396,7 +460,8 @@ function SchedulesPageContent() {
 
   async function saveDates(dates: string[], label: string) {
     if (!canSave) { showToast('You do not have permission to save', 'error'); return; }
-    if (!selStaff) { showToast('Select a staff member first', 'error'); return; }
+    if (!locCode) { showToast('Select a location first', 'error'); return; }
+    if (!selStaff.length) { showToast('Select at least one staff member', 'error'); return; }
     if (!dates.length) { showToast('Select at least one day on the calendar', 'error'); return; }
     if (dates.length > 100) { showToast('Select at most 100 days at a time', 'error'); return; }
     setSaving(true);
@@ -405,7 +470,8 @@ function SchedulesPageContent() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          staffId: selStaff.UserId,
+          locCode,
+          staffIds: selStaff.map((s) => s.UserId),
           dates,
           startTime: fStart,
           closingTime: fClose,
@@ -423,7 +489,7 @@ function SchedulesPageContent() {
   }
 
   async function handleSave() {
-    const who = selStaff?.UserName || 'staff';
+    const who = selStaff.length === 1 ? selStaff[0].UserName : `${selStaff.length} staff`;
     const n = picked.length;
     await saveDates(picked, n === 1
       ? `Schedule saved for ${who} · ${longDate(picked[0])} ✓`
@@ -432,14 +498,15 @@ function SchedulesPageContent() {
 
   async function handleDelete() {
     if (!canDelete) { showToast('You do not have permission to delete', 'error'); return; }
-    if (!selStaff) return;
+    if (!selStaff.length) return;
     const existing = picked.filter((d) => byDate.has(d));
     if (!existing.length) { showToast('Nothing to delete on the selected days', 'error'); return; }
-    if (!confirm(`Remove ${selStaff.UserName}'s schedule on ${existing.length} day${existing.length > 1 ? 's' : ''}?`)) return;
+    const who = selStaff.length === 1 ? selStaff[0].UserName : `${selStaff.length} staff`;
+    if (!confirm(`Remove ${who}'s schedule on ${existing.length} day${existing.length > 1 ? 's' : ''} at this location?`)) return;
     setDeleting(true);
     try {
       const res = await apiFetch(
-        `${API}?staffId=${encodeURIComponent(selStaff.UserId)}&dates=${encodeURIComponent(existing.join(','))}`,
+        `${API}?locCode=${encodeURIComponent(locCode)}&staffIds=${encodeURIComponent(selStaff.map((s) => s.UserId).join(','))}&dates=${encodeURIComponent(existing.join(','))}`,
         { method: 'DELETE' },
       );
       if (!res.success) { showToast(res.message ?? 'Delete failed', 'error'); return; }
@@ -460,7 +527,8 @@ function SchedulesPageContent() {
   while (cells.length % 7 !== 0) cells.push(null);
 
   const pickedSet = useMemo(() => new Set(picked), [picked]);
-  const selected = byDate.get(picked[0] ?? '');
+  const selectedRows = byDate.get(picked[0] ?? '') ?? [];
+  const selected = selectedRows[0];
   const shop = hoursByDate.get(picked[0] ?? '');
   const away = fOff || fLeave;
   const hasExisting = picked.some((d) => byDate.has(d));
@@ -485,6 +553,17 @@ function SchedulesPageContent() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
+            <select
+              className="loc-select"
+              value={locCode}
+              onChange={(e) => { setLocCode(e.target.value); setPicked([]); setAnchor(''); }}
+              aria-label="Location"
+            >
+              {locations.length === 0 && <option value="">No locations</option>}
+              {locations.map((l) => (
+                <option key={l.LocCode} value={l.LocCode}>{l.LocDes || l.LocCode}</option>
+              ))}
+            </select>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button className="btn-clear" style={{ padding: 0, width: 36 }} onClick={() => setYm(shiftMonth(ym, -1))} aria-label="Previous month"><IChevL /></button>
               <span style={{ fontSize: 16, fontWeight: 800, color: '#1e3a40', minWidth: 160, textAlign: 'center' }}>{monthLabel(ym)}</span>
@@ -526,14 +605,15 @@ function SchedulesPageContent() {
                   <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><div className="spinner" /></div>
                 ) : filteredStaff.length === 0 ? (
                   <p style={{ textAlign: 'center', color: '#9ca3af', fontSize: 12, padding: '2rem 0' }}>
-                    {search ? 'No matching staff' : 'No staff in user details'}
+                    {search ? 'No matching staff' : 'No staff assigned to this location'}
                   </p>
                 ) : filteredStaff.map((s) => (
                   <button
                     key={s.UserId}
-                    className={`srv-list-item ${selStaff?.UserId === s.UserId ? 'active' : ''}`}
+                    className={`srv-list-item ${selIds.has(s.UserId) ? 'active' : ''}`}
                     onClick={() => handleSelectStaff(s)}
                   >
+                    <span className="mini-chk">{selIds.has(s.UserId) ? <ICheck s={10} /> : null}</span>
                     <div style={{ width: 34, height: 34, borderRadius: 10, background: s.Enable ? 'linear-gradient(135deg,#1e3a40,#2a5260)' : '#d1d5db', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
                       <IUser s={16} />
                     </div>
@@ -552,37 +632,64 @@ function SchedulesPageContent() {
             <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#e8f0f1', borderRadius: 12 }}>
               <div style={{ background: '#1e3a40', borderRadius: '12px 12px 0 0', padding: '14px 18px', flexShrink: 0 }}>
                 <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                  {selStaff ? selStaff.UserName : 'No staff selected'}
+                  {selStaff.length === 0 ? 'No staff selected' : selStaff.length === 1 ? selStaff[0].UserName : `${selStaff.length} staff selected`}
                 </p>
                 <p style={{ color: '#fff', fontSize: 18, fontWeight: 800, marginTop: 2 }}>STAFF SCHEDULE</p>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
-                {!selStaff ? (
-                  <p style={{ textAlign: 'center', color: '#9ca3af', paddingTop: 48, fontSize: 13 }}>Select a staff member to edit their month</p>
+                {!selStaff.length ? (
+                  <p style={{ textAlign: 'center', color: '#9ca3af', paddingTop: 48, fontSize: 13 }}>Select staff to edit this location’s month</p>
                 ) : loading ? (
                   <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 60 }}><div className="spinner" /></div>
                 ) : (
                   <div className="cal-grid">
-                    {DOW.map((d) => <div key={d} className="cal-dow">{d}</div>)}
+                    {DOW.map((d, i) => <div key={d} className={`cal-dow${i >= 5 ? ' wknd' : ''}`}>{d}</div>)}
                     {cells.map((iso, i) => {
-                      if (!iso) return <div key={`e${i}`} className="cal-day empty" />;
-                      const row = byDate.get(iso);
-                      const closed = hoursByDate.get(iso)?.Open === false;
-                      const kind = row?.LeaveOn ? 'leave' : row?.Offday ? 'off' : row ? 'work' : closed ? 'shop-closed' : '';
+                      const wknd = i % 7 >= 5;
+                      if (!iso) return <div key={`e${i}`} className={`cal-day empty${wknd ? ' wknd' : ''}`} />;
+                      const rowsFor = byDate.get(iso) ?? [];
+                      const row = rowsFor[0];
+                      const open = shopOpen(iso);
+                      const closed = !open;
+                      const kind = !open ? 'shop-closed' : row?.LeaveOn ? 'leave' : row?.Offday ? 'off' : row ? 'work' : '';
                       const isPicked = pickedSet.has(iso);
-                      const cls = ['cal-day', iso === today ? 'today' : '', isPicked ? 'selected' : '', !isPicked ? kind : ''].filter(Boolean).join(' ');
-                      const meta = row?.LeaveOn ? 'Leave' : row?.Offday ? 'Off' : row ? `${row.StartTime}–${row.ClosingTime}` : closed ? 'Salon closed' : '—';
+                      const cls = ['cal-day', wknd ? 'wknd' : '', iso === today ? 'today' : '', isPicked ? 'selected' : '', !isPicked ? kind : ''].filter(Boolean).join(' ');
+                      const shopRow = hoursByDate.get(iso);
+                      const meta = !open
+                        ? (shopRow ? 'Closed' : 'Not set')
+                        : row?.LeaveOn ? 'Leave' : row?.Offday ? 'Off' : row ? `${row.StartTime}–${row.ClosingTime}` : '—';
                       return (
-                        <button key={iso} className={cls} onClick={(e) => handleSelectDay(iso, e)}>
+                        <button key={iso} className={cls} onClick={(e) => handleSelectDay(iso, e)} disabled={closed}>
                           <span className="cal-num">{Number(iso.slice(8))}</span>
                           <span className="cal-meta">{meta}</span>
+                          {closed && shopRow?.ClosingRemarks ? <span className="cal-rmk">{shopRow.ClosingRemarks}</span> : null}
                         </button>
                       );
                     })}
                   </div>
                 )}
-                {selStaff && !loading && (
-                  <p className="cal-hint">Click days to select · Shift-click a range · then Save once for all</p>
+                {selStaff.length > 0 && !loading && (
+                  <>
+                    <div className="cal-actions">
+                      {canSave && (
+                        <button className="btn-new" onClick={selectWeekdays} disabled={saving || deleting || !selStaff.length}>
+                          Select weekdays this month
+                        </button>
+                      )}
+                      {canSave && (
+                        <button className="btn-new" onClick={selectWeekends} disabled={saving || deleting || !selStaff.length}>
+                          Select weekends this month
+                        </button>
+                      )}
+                      <button className="btn-clear" onClick={() => setPicked([])} disabled={saving || deleting || picked.length === 0}>
+                        Clear selection
+                      </button>
+                      <button className="btn-clear" onClick={handleClear} disabled={saving || deleting}>
+                        <IRefresh s={14} /> Reset
+                      </button>
+                    </div>
+                    <p className="cal-hint">Closed / unset days cannot be selected · Click open days · Shift-click a range · Save once for selected staff</p>
+                  </>
                 )}
               </div>
             </div>
@@ -641,28 +748,15 @@ function SchedulesPageContent() {
               </div>
               <div style={{ background: '#dce8e8', borderTop: '1.5px solid rgba(30,58,64,0.12)', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {canSave && (
-                  <button className="btn-save" onClick={handleSave} disabled={saving || deleting || !selStaff || picked.length === 0}>
+                  <button className="btn-save" onClick={handleSave} disabled={saving || deleting || !selStaff.length || picked.length === 0}>
                     <ISave /> {saving ? 'Saving…' : picked.length > 1 ? `Save ${picked.length} days` : 'Save day'}
                   </button>
                 )}
-                {canSave && (
-                  <button className="btn-new" onClick={selectWeekdays} disabled={saving || deleting || !selStaff}>
-                    Select weekdays this month
+                {canDelete && (
+                  <button className="btn-del" onClick={handleDelete} disabled={saving || deleting || !selStaff.length || !hasExisting}>
+                    <ITrash s={14} /> Delete
                   </button>
                 )}
-                <button className="btn-clear" onClick={() => setPicked([])} disabled={saving || deleting || picked.length === 0}>
-                  Clear selection
-                </button>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn-clear" style={{ flex: 1 }} onClick={handleClear} disabled={saving || deleting}>
-                    <IRefresh s={14} /> Reset
-                  </button>
-                  {canDelete && (
-                    <button className="btn-del" style={{ flex: 1 }} onClick={handleDelete} disabled={saving || deleting || !selStaff || !hasExisting}>
-                      <ITrash s={14} /> Delete
-                    </button>
-                  )}
-                </div>
               </div>
             </div>
           </div>

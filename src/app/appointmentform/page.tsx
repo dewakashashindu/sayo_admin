@@ -2162,6 +2162,7 @@ function TimeSlotPicker({
   availability,
   availabilityStatus = "idle",
   date,
+  locCode,
 }: {
   selectedSlot: string;
   onSelect: (slot: string) => void;
@@ -2170,6 +2171,7 @@ function TimeSlotPicker({
   availability?: Record<string, boolean>;
   availabilityStatus?: "idle" | "loading" | "ready" | "error";
   date?: string;
+  locCode?: string;
 }) {
   const [liveTime, setLiveTime] = useState(nowSlot());
   const [openBase, setOpenBase] = useState<string | null>(() =>
@@ -2190,7 +2192,10 @@ function TimeSlotPicker({
       return;
     }
     let live = true;
-    fetch(`/api/bookings/hours?from=${date}&to=${date}`)
+    const q = locCode
+      ? `/api/bookings/hours?from=${date}&to=${date}&locCode=${encodeURIComponent(locCode)}`
+      : `/api/bookings/hours?from=${date}&to=${date}`;
+    fetch(q)
       .then((r) => r.json())
       .then((d) => {
         if (!live) return;
@@ -2212,7 +2217,7 @@ function TimeSlotPicker({
         }
       });
     return () => { live = false; };
-  }, [date]);
+  }, [date, locCode]);
 
   useEffect(() => {
     if (!selectedSlot) setOpenBase(null);
@@ -3911,6 +3916,7 @@ function WalkInPage() {
   const [servicesLoading, setServicesLoading] = useState(false);
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [techniciansLoading, setTechniciansLoading] = useState(false);
+  const [scheduledStaffIds, setScheduledStaffIds] = useState<Set<string> | null>(null);
   const [existingAppointments, setExistingAppointments] = useState<
     ExistingAppointment[]
   >([]);
@@ -4082,6 +4088,24 @@ function WalkInPage() {
       .catch(() => {})
       .finally(() => setTechniciansLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!form.branch || !form.date) {
+      setScheduledStaffIds(null);
+      return;
+    }
+    let live = true;
+    fetch(`/api/bookings/hours?from=${form.date}&to=${form.date}&locCode=${encodeURIComponent(form.branch)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (!live) return;
+        const row = Array.isArray(d.days) ? d.days[0] : null;
+        const staff = Array.isArray(row?.staff) ? row.staff as { staffId: string; working: boolean }[] : [];
+        setScheduledStaffIds(new Set(staff.filter((s) => s.working).map((s) => String(s.staffId).trim().toUpperCase())));
+      })
+      .catch(() => { if (live) setScheduledStaffIds(new Set()); });
+    return () => { live = false; };
+  }, [form.branch, form.date]);
 
   useEffect(() => {
     if (!form.branch || !form.date) {
@@ -5545,7 +5569,7 @@ function WalkInPage() {
                               branch={form.branch}
                               selectedProviders={form.providers}
                               onChange={handleProviderChange}
-                              technicians={technicians}
+                              technicians={technicians.filter((t) => !scheduledStaffIds || scheduledStaffIds.has(t.UserId.trim().toUpperCase()))}
                               services={services}
                             />
                           )}
@@ -5577,7 +5601,7 @@ function WalkInPage() {
                                     providers: ps,
                                   })
                                 }
-                                technicians={technicians}
+                                technicians={technicians.filter((t) => !scheduledStaffIds || scheduledStaffIds.has(t.UserId.trim().toUpperCase()))}
                                 services={services}
                               />
                             )}
@@ -5679,6 +5703,7 @@ function WalkInPage() {
                         <TimeSlotPicker
                           key={activeTab}
                           date={form.date}
+                          locCode={form.branch}
                           selectedSlot={tabTimeSlot}
                           onSelect={handleTabTimeSlot}
                           hasError={

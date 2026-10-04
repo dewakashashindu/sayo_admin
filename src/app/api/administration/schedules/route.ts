@@ -1,12 +1,18 @@
-// /api/administration/schedules  — Tbl_StaffSchedule
-// GET     ?from=&to=&staffId=     (ADSCH.ACCESS)
-// POST    upsert one / many dates (ADSCH.SAVE)
+// /api/administration/schedules  — Tbl_StaffSchedule (per LocCode)
+// GET     ?from=&to=&locCode=&staffId=   (ADSCH.ACCESS)
+// POST    upsert dates × staff at one location (ADSCH.SAVE)
 // PUT     same as POST
-// DELETE  ?txnDate=&staffId=      (ADSCH.DELETE)
+// DELETE  ?locCode=&staffId=&txnDate=    (ADSCH.DELETE)
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdminAccess } from "@/lib/sessionGuard";
 import { isSuperAdminGroupId, isSuperAdminUserId } from "@/lib/superAdmin";
+import {
+  foreignLocation,
+  locationDeniedMessage,
+  locationScopeForRequest,
+  scopedLocationRows,
+} from "@/lib/locationScope";
 import {
   HOURS_TABLE_HINT,
   asBool,
@@ -16,9 +22,11 @@ import {
   minutesOf,
   missingHoursTable,
   mysqlDateTime,
+  padLocCode,
   padStaffId,
   parseHhmm,
   parseIsoDate,
+  parseLocCodes,
   trimStr,
 } from "@/lib/operatingHours";
 
@@ -34,6 +42,7 @@ function err(message: string, status = 400) {
 }
 
 interface HoursRow {
+  LocCode: string;
   TxnDate: string;
   StartTime: string;
   ClosingTime: string;
@@ -41,6 +50,7 @@ interface HoursRow {
   ClosingRemarks: string;
 }
 interface SchedRow {
+  LocCode: string;
   TxnDate: string;
   StaffID: string;
   StartTime: string;
@@ -52,6 +62,7 @@ interface SchedRow {
 
 function mapHours(r: HoursRow) {
   return {
+    LocCode: String(r.LocCode ?? "").trim(),
     TxnDate: String(r.TxnDate).slice(0, 10),
     StartTime: String(r.StartTime).slice(0, 5),
     ClosingTime: String(r.ClosingTime).slice(0, 5),
@@ -61,6 +72,7 @@ function mapHours(r: HoursRow) {
 }
 function mapSched(r: SchedRow) {
   return {
+    LocCode: String(r.LocCode ?? "").trim(),
     TxnDate: String(r.TxnDate).slice(0, 10),
     StaffID: String(r.StaffID ?? "").trim(),
     StartTime: String(r.StartTime).slice(0, 5),
@@ -71,18 +83,21 @@ function mapSched(r: SchedRow) {
   };
 }
 
-async function listHours(from: string, to: string) {
+async function listHours(from: string, to: string, locCode: string) {
   try {
     const rows = await prisma.$queryRawUnsafe<HoursRow[]>(
-      `SELECT DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
+      `SELECT RTRIM(LocCode) AS LocCode,
+              DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
               DATE_FORMAT(StartTime, '%H:%i') AS StartTime,
               DATE_FORMAT(ClosingTime, '%H:%i') AS ClosingTime,
               OpemOrClose, ClosingRemarks
          FROM tbl_companyoperatinghours
         WHERE DATE(TxnDate) BETWEEN ? AND ?
+          AND RTRIM(LocCode) = ?
         ORDER BY TxnDate`,
       from,
       to,
+      locCode,
     );
     return rows.map(mapHours);
   } catch (e) {
@@ -91,31 +106,33 @@ async function listHours(from: string, to: string) {
   }
 }
 
-async function listSchedules(from: string, to: string, staffId?: string | null) {
+async function listSchedules(from: string, to: string, locCode: string, staffId?: string | null) {
   const sql = staffId
-    ? `SELECT DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
+    ? `SELECT RTRIM(LocCode) AS LocCode,
+              DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
               RTRIM(StaffID) AS StaffID,
               DATE_FORMAT(StartTime, '%H:%i') AS StartTime,
               DATE_FORMAT(ClosingTime, '%H:%i') AS ClosingTime,
               Offday, LeveOn, Remarks
          FROM tbl_staffschedule
-        WHERE DATE(TxnDate) BETWEEN ? AND ? AND RTRIM(StaffID) = ?
+        WHERE DATE(TxnDate) BETWEEN ? AND ? AND RTRIM(LocCode) = ? AND RTRIM(StaffID) = ?
         ORDER BY TxnDate, StaffID`
-    : `SELECT DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
+    : `SELECT RTRIM(LocCode) AS LocCode,
+              DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
               RTRIM(StaffID) AS StaffID,
               DATE_FORMAT(StartTime, '%H:%i') AS StartTime,
               DATE_FORMAT(ClosingTime, '%H:%i') AS ClosingTime,
               Offday, LeveOn, Remarks
          FROM tbl_staffschedule
-        WHERE DATE(TxnDate) BETWEEN ? AND ?
+        WHERE DATE(TxnDate) BETWEEN ? AND ? AND RTRIM(LocCode) = ?
         ORDER BY TxnDate, StaffID`;
   const rows = staffId
-    ? await prisma.$queryRawUnsafe<SchedRow[]>(sql, from, to, staffId.trim())
-    : await prisma.$queryRawUnsafe<SchedRow[]>(sql, from, to);
+    ? await prisma.$queryRawUnsafe<SchedRow[]>(sql, from, to, locCode, staffId.trim())
+    : await prisma.$queryRawUnsafe<SchedRow[]>(sql, from, to, locCode);
   return rows.map(mapSched);
 }
 
-async function listStaff() {
+async function listStaff(locCode: string) {
   const users = await prisma.tbl_userdetails.findMany({
     orderBy: { UserName: "asc" },
     select: {
@@ -126,8 +143,10 @@ async function listStaff() {
       WorkingLocID: true,
     },
   });
+  const locUp = locCode.trim().toUpperCase();
   return users
     .filter((u) => !isSuperAdminUserId(u.UserId) && !isSuperAdminGroupId(u.GroupId))
+    .filter((u) => String(u.WorkingLocID ?? "").trim().toUpperCase() === locUp)
     .map((u) => ({
       UserId: String(u.UserId ?? "").trim(),
       UserName: String(u.UserName ?? "").trim(),
@@ -137,10 +156,26 @@ async function listStaff() {
     }));
 }
 
+function parseStaffIds(body: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  const one = String(body.staffId ?? body.StaffID ?? "").trim();
+  if (one) ids.push(one);
+  if (Array.isArray(body.staffIds)) {
+    for (const x of body.staffIds) {
+      const s = String(x ?? "").trim();
+      if (s) ids.push(s);
+    }
+  }
+  return [...new Set(ids)];
+}
+
 function parseBody(body: Record<string, unknown>) {
-  const staffId = String(body.staffId ?? body.StaffID ?? "").trim();
-  if (!staffId) return { error: "staffId is required." };
-  if (staffId.length > 10) return { error: "staffId must be 10 characters or less." };
+  const staffIds = parseStaffIds(body);
+  if (staffIds.length === 0) return { error: "Select at least one staff member." };
+  if (staffIds.some((id) => id.length > 10)) return { error: "staffId must be 10 characters or less." };
+
+  const locCodes = parseLocCodes(body.locCode ?? body.LocCode ?? body.locCodes);
+  if (locCodes.length !== 1) return { error: "Exactly one location is required." };
 
   const offday = bit(body.offday ?? body.Offday);
   const leaveOn = bit(body.leaveOn ?? body.LeaveOn ?? body.LeveOn);
@@ -175,26 +210,39 @@ function parseBody(body: Record<string, unknown>) {
   const unique = [...new Set(dates)];
   if (unique.length === 0) return { error: "A date (txnDate) or a date range is required." };
   if (unique.length > 100) return { error: "At most 100 dates can be saved in one request." };
+  if (staffIds.length > 50) return { error: "At most 50 staff can be saved in one request." };
 
-  return { staffId, startTime, closingTime, offday, leaveOn, remarks, dates: unique };
+  return { staffIds, locCode: locCodes[0], startTime, closingTime, offday, leaveOn, remarks, dates: unique };
 }
 
 export async function GET(req: NextRequest) {
   const guard = await requireAdminAccess(req, { screen: "ADSCH", action: "ACCESS" });
   if (!guard.ok) return guard.response;
+  const scoped = await locationScopeForRequest(req);
+  if (!scoped.ok) return scoped.response;
 
   const from = parseIsoDate(req.nextUrl.searchParams.get("from")) ?? "1970-01-01";
   const to = parseIsoDate(req.nextUrl.searchParams.get("to")) ?? "2099-12-31";
   if (from > to) return err("from must be on or before to");
+
+  const locations = await scopedLocationRows(scoped.scope);
+  const asked = parseLocCodes(req.nextUrl.searchParams.get("locCode"))[0]
+    ?? scoped.scope.workingLocId
+    ?? locations[0]?.LocCode
+    ?? "";
+  if (!asked) return ok({ staff: [], schedules: [], hours: [], locations, locCode: "" });
+  const bad = foreignLocation(scoped.scope, [asked]);
+  if (bad) return err(locationDeniedMessage(bad), 403);
+
   const staffId = req.nextUrl.searchParams.get("staffId")?.trim() || null;
 
   try {
     const [staff, schedules, hours] = await Promise.all([
-      listStaff(),
-      listSchedules(from, to, staffId),
-      listHours(from, to),
+      listStaff(asked),
+      listSchedules(from, to, asked, staffId),
+      listHours(from, to, asked),
     ]);
-    return ok({ staff, schedules, hours });
+    return ok({ staff, schedules, hours, locations, locCode: asked });
   } catch (e) {
     console.error("GET /api/administration/schedules", e);
     if (missingHoursTable(e)) return err(HOURS_TABLE_HINT, 503);
@@ -205,6 +253,8 @@ export async function GET(req: NextRequest) {
 async function save(req: NextRequest) {
   const guard = await requireAdminAccess(req, { screen: "ADSCH", action: "SAVE" });
   if (!guard.ok) return guard.response;
+  const scoped = await locationScopeForRequest(req);
+  if (!scoped.ok) return scoped.response;
 
   let body: Record<string, unknown>;
   try {
@@ -216,8 +266,9 @@ async function save(req: NextRequest) {
   const parsed = parseBody(body);
   if ("error" in parsed && parsed.error) return err(parsed.error);
 
-  const { staffId, startTime, closingTime, offday, leaveOn, remarks, dates } = parsed as {
-    staffId: string;
+  const { staffIds, locCode, startTime, closingTime, offday, leaveOn, remarks, dates } = parsed as {
+    staffIds: string[];
+    locCode: string;
     startTime: string;
     closingTime: string;
     offday: number;
@@ -226,26 +277,46 @@ async function save(req: NextRequest) {
     dates: string[];
   };
 
-  const padded = padStaffId(staffId);
+  const denied = foreignLocation(scoped.scope, [locCode]);
+  if (denied) return err(locationDeniedMessage(denied), 403);
 
   try {
-    const placeholders = dates.map(() => "(?, ?, ?, ?, ?, ?, ?)").join(", ");
-    const params: unknown[] = [];
-    for (const txnDate of dates) {
-      params.push(
-        mysqlDateTime(txnDate, "00:00"),
-        padded,
-        mysqlDateTime(txnDate, startTime),
-        mysqlDateTime(txnDate, closingTime),
-        offday,
-        leaveOn,
-        remarks,
+    const hours = await listHours(
+      dates.reduce((a, b) => (a < b ? a : b)),
+      dates.reduce((a, b) => (a > b ? a : b)),
+      locCode,
+    );
+    const openDates = new Set(hours.filter((h) => h.Open).map((h) => h.TxnDate));
+    const blocked = dates.filter((d) => !openDates.has(d));
+    if (blocked.length) {
+      return err(
+        `Cannot save a staff schedule on a closed or unset day for this location (${blocked.slice(0, 5).join(", ")}${blocked.length > 5 ? "…" : ""}).`,
       );
+    }
+
+    const paddedLoc = padLocCode(locCode);
+    const placeholders: string[] = [];
+    const params: unknown[] = [];
+    for (const staffId of staffIds) {
+      const padded = padStaffId(staffId);
+      for (const txnDate of dates) {
+        placeholders.push("(?, ?, ?, ?, ?, ?, ?, ?)");
+        params.push(
+          paddedLoc,
+          mysqlDateTime(txnDate, "00:00"),
+          padded,
+          mysqlDateTime(txnDate, startTime),
+          mysqlDateTime(txnDate, closingTime),
+          offday,
+          leaveOn,
+          remarks,
+        );
+      }
     }
     await prisma.$executeRawUnsafe(
       `INSERT INTO tbl_staffschedule
-          (TxnDate, StaffID, StartTime, ClosingTime, Offday, LeveOn, Remarks)
-       VALUES ${placeholders}
+          (LocCode, TxnDate, StaffID, StartTime, ClosingTime, Offday, LeveOn, Remarks)
+       VALUES ${placeholders.join(", ")}
        ON DUPLICATE KEY UPDATE
           StartTime = VALUES(StartTime),
           ClosingTime = VALUES(ClosingTime),
@@ -256,17 +327,10 @@ async function save(req: NextRequest) {
     );
     const lo = dates.reduce((a, b) => (a < b ? a : b));
     const hi = dates.reduce((a, b) => (a > b ? a : b));
-    const saved = await listSchedules(lo, hi, staffId);
-    const rows = saved.filter((r) => dates.includes(r.TxnDate));
-    return ok(dates.length === 1 ? rows[0] ?? {
-      TxnDate: dates[0],
-      StaffID: staffId,
-      StartTime: startTime,
-      ClosingTime: closingTime,
-      Offday: offday === 1,
-      LeaveOn: leaveOn === 1,
-      Remarks: remarks.trim(),
-    } : rows);
+    const saved = await listSchedules(lo, hi, locCode);
+    const idSet = new Set(staffIds.map((s) => s.trim().toUpperCase()));
+    const rows = saved.filter((r) => dates.includes(r.TxnDate) && idSet.has(r.StaffID.toUpperCase()));
+    return ok(rows);
   } catch (e) {
     console.error("SAVE /api/administration/schedules", e);
     if (missingHoursTable(e)) return err(HOURS_TABLE_HINT, 503);
@@ -284,9 +348,20 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const guard = await requireAdminAccess(req, { screen: "ADSCH", action: "DELETE" });
   if (!guard.ok) return guard.response;
+  const scoped = await locationScopeForRequest(req);
+  if (!scoped.ok) return scoped.response;
 
-  const staffId = req.nextUrl.searchParams.get("staffId")?.trim();
-  if (!staffId) return err("staffId is required");
+  const locCode = parseLocCodes(req.nextUrl.searchParams.get("locCode"))[0] ?? "";
+  if (!locCode) return err("locCode is required");
+  const denied = foreignLocation(scoped.scope, [locCode]);
+  if (denied) return err(locationDeniedMessage(denied), 403);
+
+  const staffIds = [
+    req.nextUrl.searchParams.get("staffId")?.trim() || "",
+    ...(req.nextUrl.searchParams.get("staffIds") ?? "").split(","),
+  ].map((s) => s.trim()).filter(Boolean);
+  const uniqueStaff = [...new Set(staffIds)];
+  if (uniqueStaff.length === 0) return err("staffId is required");
 
   const dates: string[] = [];
   const one = parseIsoDate(req.nextUrl.searchParams.get("txnDate"));
@@ -301,10 +376,15 @@ export async function DELETE(req: NextRequest) {
   if (unique.length > 100) return err("At most 100 dates can be deleted in one request.");
 
   try {
-    const placeholders = unique.map(() => "?").join(",");
+    const datePh = unique.map(() => "?").join(",");
+    const staffPh = uniqueStaff.map(() => "?").join(",");
     const result = await prisma.$executeRawUnsafe(
-      `DELETE FROM tbl_staffschedule WHERE RTRIM(StaffID) = ? AND DATE(TxnDate) IN (${placeholders})`,
-      staffId,
+      `DELETE FROM tbl_staffschedule
+        WHERE RTRIM(LocCode) = ?
+          AND RTRIM(StaffID) IN (${staffPh})
+          AND DATE(TxnDate) IN (${datePh})`,
+      locCode,
+      ...uniqueStaff,
       ...unique,
     );
     return ok({ deleted: Number(result) });

@@ -2752,6 +2752,7 @@ export default function AppointmentsPage() {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [date, setDate] = useState(todayISO);
   const [dayHours, setDayHours] = useState<DayHoursInfo | null>(null);
+  const [scheduledStaffIds, setScheduledStaffIds] = useState<Set<string> | null>(null);
   const [search, setSearch] = useState("");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2830,11 +2831,18 @@ export default function AppointmentsPage() {
   useEffect(() => {
     let live = true;
     setDayHours(null);
-    fetch(`/api/bookings/hours?from=${date}&to=${date}`)
+    setScheduledStaffIds(null);
+    const loc = filterLoc !== "ALL" ? filterLoc : workLoc.trim();
+    const q = loc
+      ? `/api/bookings/hours?from=${date}&to=${date}&locCode=${encodeURIComponent(loc)}`
+      : `/api/bookings/hours?from=${date}&to=${date}`;
+    fetch(q)
       .then((r) => r.json())
       .then((d) => {
         if (!live) return;
         const row = Array.isArray(d.days) ? d.days[0] : null;
+        const staff = Array.isArray(row?.staff) ? row.staff as { staffId: string; working: boolean }[] : [];
+        setScheduledStaffIds(new Set(staff.filter((s) => s.working).map((s) => String(s.staffId).trim().toUpperCase())));
         if (!row || !row.open) {
           setDayHours({ open: false, startMin: 0, closeMin: 0, remarks: row?.remarks || "" });
           return;
@@ -2848,9 +2856,14 @@ export default function AppointmentsPage() {
           remarks: row.remarks || "",
         });
       })
-      .catch(() => { if (live) setDayHours({ open: false, startMin: 0, closeMin: 0, remarks: "" }); });
+      .catch(() => {
+        if (live) {
+          setDayHours({ open: false, startMin: 0, closeMin: 0, remarks: "" });
+          setScheduledStaffIds(new Set());
+        }
+      });
     return () => { live = false; };
-  }, [date]);
+  }, [date, filterLoc, workLoc]);
 
   const fetchAppointments = useCallback(
     async (requestedDate: string, silent = false) => {
@@ -3362,6 +3375,11 @@ export default function AppointmentsPage() {
     const branchTechnicianNames = new Map<string, string>();
     filterMeta.technicians
       .filter((technician) => technicianIsInBranch(technician, filterLoc))
+      .filter((technician) => {
+        if (!scheduledStaffIds) return true;
+        const id = String(technician.UserId ?? "").trim().toUpperCase();
+        return scheduledStaffIds.has(id);
+      })
       .forEach((technician) => {
         const name = technician.UserName.trim();
         if (name) branchTechnicianNames.set(name.toUpperCase(), name);
@@ -3392,7 +3410,7 @@ export default function AppointmentsPage() {
     return Array.from(
       new Set([...branchTechnicianNames.values(), ...appointmentProviders]),
     ).sort();
-  }, [filtered, filterLoc, filterMeta.technicians]);
+  }, [filtered, filterLoc, filterMeta.technicians, scheduledStaffIds]);
 
   const hasActiveFilters =
     filterLoc !== "ALL" ||

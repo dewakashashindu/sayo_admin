@@ -1355,20 +1355,25 @@ model Tbl_SupplierMasterTemp {
 //   dbo.Tbl_CompanyOperatingHours
 //   dbo.Tbl_StaffSchedule
 // Column names keep the original spellings (OpemOrClose, LeveOn).
+// PK is per location (LocCode + date [+ StaffID]).
 // BIT → TINYINT(1) / Boolean so Prisma does not try to convert BIT columns.
 // See scripts/create-Tbl_OperatingHours-mysql.sql
+// and scripts/alter-Tbl_OperatingHours-loccode-mysql.sql (do NOT db push).
 // ─────────────────────────────────────────────────────────────────────────
 model Tbl_CompanyOperatingHours {
-  TxnDate        DateTime @id @db.DateTime(0)
+  LocCode        String   @db.Char(10)
+  TxnDate        DateTime @db.DateTime(0)
   StartTime      DateTime @db.DateTime(0)
   ClosingTime    DateTime @db.DateTime(0)
   OpemOrClose    Boolean  @default(true)
   ClosingRemarks String   @default(" ") @db.VarChar(200)
 
+  @@id([LocCode, TxnDate])
   @@map("tbl_companyoperatinghours")
 }
 
 model Tbl_StaffSchedule {
+  LocCode     String   @db.Char(10)
   TxnDate     DateTime @db.DateTime(0)
   StaffID     String   @db.Char(10)
   StartTime   DateTime @db.DateTime(0)
@@ -1377,6 +1382,6 @@ model Tbl_StaffSchedule {
   LeveOn      Boolean  @default(false)
   Remarks     String   @default(" ") @db.VarChar(200)
 
-  @@id([TxnDate, StaffID])
+  @@id([LocCode, TxnDate, StaffID])
   @@map("tbl_staffschedule")
 }

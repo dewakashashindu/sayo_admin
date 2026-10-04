@@ -1,10 +1,16 @@
-// /api/administration/hours  — Tbl_CompanyOperatingHours
-// GET    ?from=YYYY-MM-DD&to=YYYY-MM-DD
-// POST   upsert one date or a list of dates  (ADHRS.SAVE)
+// /api/administration/hours  — Tbl_CompanyOperatingHours (per LocCode)
+// GET    ?from=&to=&locCode=     (ADHRS.ACCESS)  locCode may be csv / omitted = all allowed
+// POST   upsert dates × locations (ADHRS.SAVE)
 // PUT    same as POST
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAdminAccess } from "@/lib/sessionGuard";
+import {
+  foreignLocation,
+  locationDeniedMessage,
+  locationScopeForRequest,
+  scopedLocationRows,
+} from "@/lib/locationScope";
 import {
   HOURS_TABLE_HINT,
   asBool,
@@ -14,8 +20,10 @@ import {
   minutesOf,
   missingHoursTable,
   mysqlDateTime,
+  padLocCode,
   parseHhmm,
   parseIsoDate,
+  parseLocCodes,
   trimStr,
 } from "@/lib/operatingHours";
 
@@ -23,14 +31,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function ok(data: unknown, status = 200) {
-  return NextResponse.json({ success: true, data }, { status });
+function ok(data: unknown, extra?: Record<string, unknown>, status = 200) {
+  return NextResponse.json({ success: true, data, ...extra }, { status });
 }
 function err(message: string, status = 400) {
   return NextResponse.json({ success: false, message }, { status });
 }
 
 interface HoursRow {
+  LocCode: string;
   TxnDate: string;
   StartTime: string;
   ClosingTime: string;
@@ -40,6 +49,7 @@ interface HoursRow {
 
 function mapHours(r: HoursRow) {
   return {
+    LocCode: String(r.LocCode ?? "").trim(),
     TxnDate: String(r.TxnDate).slice(0, 10),
     StartTime: String(r.StartTime).slice(0, 5),
     ClosingTime: String(r.ClosingTime).slice(0, 5),
@@ -48,17 +58,24 @@ function mapHours(r: HoursRow) {
   };
 }
 
-async function listHours(from: string, to: string): Promise<ReturnType<typeof mapHours>[]> {
+async function listHours(from: string, to: string, locCodes?: string[]) {
+  const locs = (locCodes ?? []).map((c) => c.trim()).filter(Boolean);
+  const locSql = locs.length
+    ? `AND RTRIM(LocCode) IN (${locs.map(() => "?").join(",")})`
+    : "";
   const rows = await prisma.$queryRawUnsafe<HoursRow[]>(
-    `SELECT DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
+    `SELECT RTRIM(LocCode) AS LocCode,
+            DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
             DATE_FORMAT(StartTime, '%H:%i') AS StartTime,
             DATE_FORMAT(ClosingTime, '%H:%i') AS ClosingTime,
             OpemOrClose, ClosingRemarks
        FROM tbl_companyoperatinghours
       WHERE DATE(TxnDate) BETWEEN ? AND ?
-      ORDER BY TxnDate`,
+        ${locSql}
+      ORDER BY LocCode, TxnDate`,
     from,
     to,
+    ...locs,
   );
   return rows.map(mapHours);
 }
@@ -96,19 +113,32 @@ function parseBody(body: Record<string, unknown>) {
   if (unique.length === 0) return { error: "A date (txnDate) or a date range is required." };
   if (unique.length > 100) return { error: "At most 100 dates can be saved in one request." };
 
-  return { startTime, closingTime, open, remarks, dates: unique };
+  const locCodes = parseLocCodes(body.locCodes ?? body.locCode ?? body.LocCode);
+  const allLocations = body.allLocations === true || body.all === true;
+
+  return { startTime, closingTime, open, remarks, dates: unique, locCodes, allLocations };
 }
 
 export async function GET(req: NextRequest) {
   const guard = await requireAdminAccess(req, { screen: "ADHRS", action: "ACCESS" });
   if (!guard.ok) return guard.response;
+  const scoped = await locationScopeForRequest(req);
+  if (!scoped.ok) return scoped.response;
 
   const from = parseIsoDate(req.nextUrl.searchParams.get("from")) ?? "1970-01-01";
   const to = parseIsoDate(req.nextUrl.searchParams.get("to")) ?? "2099-12-31";
   if (from > to) return err("from must be on or before to");
 
+  const asked = parseLocCodes(req.nextUrl.searchParams.get("locCode"));
+  const bad = foreignLocation(scoped.scope, asked);
+  if (bad) return err(locationDeniedMessage(bad), 403);
+
   try {
-    return ok(await listHours(from, to));
+    const locations = await scopedLocationRows(scoped.scope);
+    const allowed = asked.length
+      ? asked.filter((c) => locations.some((l) => l.LocCode.toUpperCase() === c.toUpperCase()))
+      : locations.map((l) => l.LocCode);
+    return ok(await listHours(from, to, allowed), { locations });
   } catch (e) {
     console.error("GET /api/administration/hours", e);
     if (missingHoursTable(e)) return err(HOURS_TABLE_HINT, 503);
@@ -119,6 +149,8 @@ export async function GET(req: NextRequest) {
 async function save(req: NextRequest) {
   const guard = await requireAdminAccess(req, { screen: "ADHRS", action: "SAVE" });
   if (!guard.ok) return guard.response;
+  const scoped = await locationScopeForRequest(req);
+  if (!scoped.ok) return scoped.response;
 
   let body: Record<string, unknown>;
   try {
@@ -130,31 +162,47 @@ async function save(req: NextRequest) {
   const parsed = parseBody(body);
   if ("error" in parsed && parsed.error) return err(parsed.error);
 
-  const { startTime, closingTime, open, remarks, dates } = parsed as {
+  const { startTime, closingTime, open, remarks, dates, locCodes, allLocations } = parsed as {
     startTime: string;
     closingTime: string;
     open: number;
     remarks: string;
     dates: string[];
+    locCodes: string[];
+    allLocations: boolean;
   };
 
+  const locations = await scopedLocationRows(scoped.scope);
+  const allowedUp = new Map(locations.map((l) => [l.LocCode.toUpperCase(), l.LocCode]));
+  let targets = allLocations
+    ? locations.map((l) => l.LocCode)
+    : locCodes.map((c) => allowedUp.get(c.toUpperCase())).filter((c): c is string => Boolean(c));
+
+  if (targets.length === 0) return err("Select at least one location you have access to.");
+  const denied = foreignLocation(scoped.scope, targets);
+  if (denied) return err(locationDeniedMessage(denied), 403);
+  if (targets.length > 50) return err("At most 50 locations can be saved in one request.");
+
   try {
-    /* One statement — Prisma interactive $transaction times out (P2028) on
-       a slow MySQL hop when each date is its own executeRaw. */
-    const placeholders = dates.map(() => "(?, ?, ?, ?, ?)").join(", ");
+    const placeholders: string[] = [];
     const params: unknown[] = [];
-    for (const txnDate of dates) {
-      params.push(
-        mysqlDateTime(txnDate, "00:00"),
-        mysqlDateTime(txnDate, startTime),
-        mysqlDateTime(txnDate, closingTime),
-        open,
-        remarks,
-      );
+    for (const loc of targets) {
+      const padded = padLocCode(loc);
+      for (const txnDate of dates) {
+        placeholders.push("(?, ?, ?, ?, ?, ?)");
+        params.push(
+          padded,
+          mysqlDateTime(txnDate, "00:00"),
+          mysqlDateTime(txnDate, startTime),
+          mysqlDateTime(txnDate, closingTime),
+          open,
+          remarks,
+        );
+      }
     }
     await prisma.$executeRawUnsafe(
       `INSERT INTO tbl_companyoperatinghours
-          (TxnDate, StartTime, ClosingTime, OpemOrClose, ClosingRemarks)
+          (LocCode, TxnDate, StartTime, ClosingTime, OpemOrClose, ClosingRemarks)
        VALUES ${placeholders}
        ON DUPLICATE KEY UPDATE
           StartTime = VALUES(StartTime),
@@ -165,9 +213,9 @@ async function save(req: NextRequest) {
     );
     const lo = dates.reduce((a, b) => (a < b ? a : b));
     const hi = dates.reduce((a, b) => (a > b ? a : b));
-    const list = await listHours(lo, hi);
+    const list = await listHours(lo, hi, targets);
     const saved = list.filter((r) => dates.includes(r.TxnDate));
-    return ok(dates.length === 1 ? saved[0] ?? { TxnDate: dates[0], StartTime: startTime, ClosingTime: closingTime, Open: open === 1, ClosingRemarks: remarks.trim() } : saved);
+    return ok(saved);
   } catch (e) {
     console.error("SAVE /api/administration/hours", e);
     if (missingHoursTable(e)) return err(HOURS_TABLE_HINT, 503);

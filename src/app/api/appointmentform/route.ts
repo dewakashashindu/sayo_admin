@@ -12,6 +12,8 @@ import {
   type StoredBookingScheduleEntry,
 } from "@/lib/bookingSchedule";
 import { nextSerialTx, SERIAL_CODES } from "@/lib/serials";
+import { loadCompanyDay, loadStaffDays, resolveStaffWindow } from "@/lib/dayHours";
+import { slotInList } from "@/lib/operatingHours";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1081,6 +1083,39 @@ export async function POST(req: NextRequest) {
 
   try {
     const locCode = body.locCode.trim();
+    const companyDay = await loadCompanyDay(body.appointmentDate, locCode);
+    if (!companyDay.open) {
+      return NextResponse.json(
+        { success: false, error: "The salon is closed on the selected date at this location." },
+        { status: 422 },
+      );
+    }
+    if (appointmentTime && !slotInList(appointmentTime, companyDay.slots)) {
+      return NextResponse.json(
+        { success: false, error: "That time is outside salon hours for the selected date." },
+        { status: 422 },
+      );
+    }
+    const staffDays = await loadStaffDays(body.appointmentDate, locCode);
+    for (const g of body.guests) {
+      const ids = Array.isArray((g as { providerIds?: string[] }).providerIds)
+        ? (g as { providerIds?: string[] }).providerIds!
+        : [];
+      const techs = Array.isArray((g as { technicians?: { UserId?: string }[] }).technicians)
+        ? (g as { technicians?: { UserId?: string }[] }).technicians!.map((t) => String(t.UserId || "").trim())
+        : [];
+      for (const raw of [...ids, ...techs]) {
+        const techID = String(raw || "").trim();
+        if (!techID || techID === "0") continue;
+        const hours = resolveStaffWindow(companyDay, staffDays.get(techID.toUpperCase()));
+        if (!hours.working) {
+          return NextResponse.json(
+            { success: false, error: "A selected technician is not scheduled at this location on that date." },
+            { status: 422 },
+          );
+        }
+      }
+    }
     const phone = normalizePhoneForStorage(body.regTel.trim());
     const cusName = body.cusName.trim();
     const phoneConditions = phoneSearchConditions(phone);

@@ -128,6 +128,28 @@ export function locationDeniedMessage(code: string): string {
   return `You do not have access to location ${code}. Ask an administrator to add it to your access profile (or set it as your own location).`;
 }
 
+export async function scopedLocationRows(
+  scope: LocationScope,
+): Promise<{ LocCode: string; LocDes: string }[]> {
+  try {
+    const rows = await prisma.$queryRaw<{ LocCode: string; LocDes: string }[]>`
+      SELECT RTRIM(LocCode) AS LocCode, RTRIM(LocDes) AS LocDes
+        FROM tbl_locationmaster
+       WHERE Enable = 1
+       ORDER BY LocDes, LocCode
+    `;
+    if (scope.unlimited) {
+      return rows.map((r) => ({ LocCode: trim(r.LocCode), LocDes: trim(r.LocDes) })).filter((r) => r.LocCode);
+    }
+    const allowedUp = new Set([...scope.allowed].map((c) => c.trim().toUpperCase()));
+    return rows
+      .map((r) => ({ LocCode: trim(r.LocCode), LocDes: trim(r.LocDes) }))
+      .filter((r) => r.LocCode && allowedUp.has(r.LocCode.toUpperCase()));
+  } catch {
+    return [];
+  }
+}
+
 export async function locationScopeForRequest(
   req: NextRequest,
 ): Promise<{ ok: true; scope: LocationScope } | { ok: false; response: NextResponse }> {

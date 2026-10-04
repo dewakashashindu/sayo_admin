@@ -499,9 +499,10 @@ interface InlineCalendarProps {
   onClose:  () => void;
   dropUp:   boolean;
   lang:     Lang;
+  locCode?: string;
 }
 
-function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang }: InlineCalendarProps) {
+function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang, locCode }: InlineCalendarProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const todayISO = new Date().toISOString().split('T')[0];
 
@@ -515,7 +516,10 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang }: Inl
     const last = new Date(vYear, vMonth + 1, 0).getDate();
     const to = `${vYear}-${String(vMonth + 1).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
     let live = true;
-    fetch(`/api/bookings/hours?from=${from}&to=${to}`)
+    const q = locCode
+      ? `/api/bookings/hours?from=${from}&to=${to}&locCode=${encodeURIComponent(locCode)}`
+      : `/api/bookings/hours?from=${from}&to=${to}`;
+    fetch(q)
       .then((r) => r.json())
       .then((d) => {
         if (!live) return;
@@ -525,7 +529,7 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang }: Inl
       })
       .catch(() => { if (live) setOpenDates(new Set()); });
     return () => { live = false; };
-  }, [vYear, vMonth]);
+  }, [vYear, vMonth, locCode]);
 
   useEffect(() => {
     function down(e: MouseEvent) {
@@ -640,10 +644,11 @@ function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang }: Inl
   );
 }
 
-function DatePickerField({ value, minDate, onChange, lang }: {
+function DatePickerField({ value, minDate, onChange, lang, locCode }: {
   value: string; minDate: string;
   onChange: (iso: string) => void;
   lang: Lang;
+  locCode?: string;
 }) {
   const [open,   setOpen]   = useState(false);
   const [dropUp, setDropUp] = useState(false);
@@ -693,7 +698,7 @@ function DatePickerField({ value, minDate, onChange, lang }: {
           value={value} minDate={minDate}
           onChange={iso => { onChange(iso); if (iso) setOpen(false); }}
           onClose={() => setOpen(false)}
-          dropUp={dropUp} lang={lang}
+          dropUp={dropUp} lang={lang} locCode={locCode}
         />
       )}
     </div>
@@ -1218,7 +1223,6 @@ function MultiGuestEditor({
   const guestCats     = Array.from(new Set(guest.services.map(s => s.category)));
   const catFilter     = guestCats.length > 0 ? guestCats : [activeCat];
   const branchProvs   = location ? (providersByLocation[location] ?? []) : [];
-  const filteredProvs = branchProvs.filter(p => p.expertise.some(e => catFilter.includes(e)));
   const isMultiCat    = guestCats.length > 1;
   const maxProvs      = isMultiCat ? guestCats.length : 1;
   const dateAuto      = !isMe && !!meDate && guest.date === meDate;
@@ -1234,11 +1238,12 @@ function MultiGuestEditor({
     list: string[];
     closed: boolean;
     note: string;
-  }>({ status: 'idle', busy: new Set(), list: [], closed: false, note: '' });
+    roster: string[] | null;
+  }>({ status: 'idle', busy: new Set(), list: [], closed: false, note: '', roster: null });
 
   useEffect(() => {
     if (!guest.date) {
-      setSlots({ status: 'idle', busy: new Set(), list: [], closed: false, note: '' });
+      setSlots({ status: 'idle', busy: new Set(), list: [], closed: false, note: '', roster: null });
       return;
     }
     let active = true;
@@ -1259,15 +1264,24 @@ function MultiGuestEditor({
             list: Array.isArray(d.slots) ? d.slots : [],
             closed: Boolean(d.salonClosed) || !d.open,
             note: d.remarks || '',
+            roster: Array.isArray(d.scheduledProviders) ? d.scheduledProviders as string[] : [],
           });
-        } else setSlots({ status: 'error', busy: new Set(), list: [], closed: false, note: '' });
+        } else setSlots({ status: 'error', busy: new Set(), list: [], closed: false, note: '', roster: null });
       } catch (e) {
-        if (active && (e as Error).name !== 'AbortError') setSlots({ status: 'error', busy: new Set(), list: [], closed: false, note: '' });
+        if (active && (e as Error).name !== 'AbortError') setSlots({ status: 'error', busy: new Set(), list: [], closed: false, note: '', roster: null });
       }
     })();
     return () => { active = false; ctrl.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, guest.date, location, provKey]);
+
+  const filteredProvs = branchProvs.filter(p => p.expertise.some(e => catFilter.includes(e)))
+    .filter((p) => {
+      if (!guest.date) return true;
+      if (slots.closed) return false;
+      if (!slots.roster) return true;
+      return slots.roster.some((n) => n.toLowerCase() === p.name.toLowerCase());
+    });
 
   function toggleSvc(svc: ServiceItem) {
     const on = guest.services.some(x => x.name === svc.name && x.price === svc.price);
@@ -1471,7 +1485,7 @@ function MultiGuestEditor({
           {/* date — guests auto-inherit ME's date */}
           <div style={{ marginBottom: '0.9rem' }}>
             <div className="mg-section-title"><Ico.Calendar s={12} /> {t(lang, 's1.preferredDate')}</div>
-            <DatePickerField value={guest.date} minDate={today} onChange={iso => onPatch({ date: iso, timeSlot: '' })} lang={lang} />
+            <DatePickerField value={guest.date} minDate={today} onChange={iso => onPatch({ date: iso, timeSlot: '' })} lang={lang} locCode={location} />
             {dateAuto && <p className="mg-date-hint">✓ {t(lang, 'multi.autoDate')}</p>}
           </div>
 
@@ -1947,6 +1961,7 @@ export default function BookingPage() {
   const [providerSlots, setProviderSlots] = useState<Record<string, string[]>>({});
   const [daySlots,      setDaySlots]      = useState<string[]>([]);
   const [salonClosed,   setSalonClosed]   = useState(false);
+  const [scheduledRoster, setScheduledRoster] = useState<string[] | null>(null);
   const [closedNote,    setClosedNote]    = useState('');
   const [loadingSlots,  setLoadingSlots]  = useState(false);
   const [slotsError,    setSlotsError]    = useState('');
@@ -2040,7 +2055,13 @@ export default function BookingPage() {
   const allBranchProvs   = location ? (catalog.providersByLocation[location] ?? []) : [];
   const selectedCats     = Array.from(new Set(services.map(s => s.category)));
   const catFilter        = selectedCats.length > 0 ? selectedCats : [category];
-  const filteredProvs    = allBranchProvs.filter(p => p.expertise.some(e => catFilter.includes(e)));
+  const filteredProvs    = allBranchProvs.filter(p => p.expertise.some(e => catFilter.includes(e)))
+    .filter((p) => {
+      if (!date) return true;
+      if (salonClosed) return false;
+      if (!scheduledRoster) return true;
+      return scheduledRoster.some((n) => n.toLowerCase() === p.name.toLowerCase());
+    });
   const providerNamesKey = providers.map(p => p.name).sort().join(',');
 
   /* Align the active category tab with the categories the chosen branch and
@@ -2056,7 +2077,7 @@ export default function BookingPage() {
 
     useEffect(() => {
     if (!date) {
-      setBookedSlots(new Set()); setProviderSlots({}); setDaySlots([]); setSalonClosed(false); setClosedNote('');
+      setBookedSlots(new Set()); setProviderSlots({}); setDaySlots([]); setSalonClosed(false); setClosedNote(''); setScheduledRoster(null);
       return;
     }
     const ctrl = new AbortController();
@@ -2075,6 +2096,7 @@ export default function BookingPage() {
           setClosedNote(d.remarks || (d.salonClosed || !d.open ? t(lang, 'time.salonClosed') : ''));
           const nb = new Set<string>(d.bookedSlots || []);
           setBookedSlots(nb); setProviderSlots(d.providerSlots || {});
+          setScheduledRoster(Array.isArray(d.scheduledProviders) ? d.scheduledProviders as string[] : []);
           if (timeSlot && (nb.has(timeSlot) || (slots.length > 0 && !slots.includes(timeSlot)))) setTimeSlot('');
           if (d.salonClosed || !d.open) setTimeSlot('');
         } else setSlotsError(t(lang, 'time.loadError'));
@@ -2623,7 +2645,7 @@ export default function BookingPage() {
 
                   {/* DATE */}
                   <Label text={t(lang, 's1.preferredDate')} />
-                  <DatePickerField value={date} minDate={today} onChange={handleDateChange} lang={lang} />
+                  <DatePickerField value={date} minDate={today} onChange={handleDateChange} lang={lang} locCode={location} />
 
                   {/* TIME */}
                   {date && (

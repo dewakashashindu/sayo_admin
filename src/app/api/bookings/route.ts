@@ -1790,7 +1790,7 @@ export async function POST(req: NextRequest) {
       startMin,
     );
 
-    const companyDay = await loadCompanyDay(date);
+    const companyDay = await loadCompanyDay(date, branch.LocCode.trim());
     if (!companyDay.open) {
       return NextResponse.json(
         { success: false, message: 'The salon is closed on the selected date.' },
@@ -1803,14 +1803,17 @@ export async function POST(req: NextRequest) {
         { status: 422 },
       );
     }
-    const staffDays = await loadStaffDays(date);
+    const staffDays = await loadStaffDays(date, branch.LocCode.trim());
     const plannedWindows = publicProviderWindows(detailRows, startMin, preparedServiceSchedule);
     for (const window of plannedWindows) {
       const staff = staffDays.get(window.techID.trim().toUpperCase());
       const hours = resolveStaffWindow(companyDay, staff);
       const name = providerNames.get(window.techID) || 'Selected provider';
       if (!hours.working) {
-        const why = hours.reason === 'leave' ? 'on leave' : 'off';
+        const why =
+          hours.reason === 'leave' ? 'on leave'
+          : hours.reason === 'unscheduled' ? 'not scheduled at this location'
+          : 'off';
         return NextResponse.json(
           { success: false, message: `${name} is ${why} on the selected date.` },
           { status: 422 },
