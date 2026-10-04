@@ -258,8 +258,9 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Administration',
     icon: <IUsers />,
     children: [
-      { key: 'admin-schedules', label: 'Staff Schedules',   path: '/administration/schedules' },
       { key: 'admin-hours',     label: 'Operational Hours', path: '/administration/hours'     },
+      { key: 'admin-schedules', label: 'Staff Schedules',   path: '/administration/schedules' },
+      
       { key: 'admin-usergen',   label: 'User Creation',     path: '', children: [
         { key: 'settings-user-groups', label: 'User Groups', path: '/settings/user-groups' },
         { key: 'settings-users',       label: 'Users',       path: '/settings/users'       },
