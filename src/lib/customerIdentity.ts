@@ -95,6 +95,14 @@ export async function findCustomerByPhone(phone: unknown): Promise<CustomerIdent
   return rows[0] ?? null;
 }
 
+/** Real e-mail, or '' when the column is blank / a placeholder space. */
+export function usableCustomerEmail(raw: unknown): string {
+  const s = String(raw ?? "").trim();
+  if (!s || !s.includes("@")) return "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return "";
+  return s.toLowerCase();
+}
+
 /** A short, non-reversible form for logs — never a full number. */
 export function phoneForLog(raw: unknown): string {
   const local = localPhoneDigits(raw);

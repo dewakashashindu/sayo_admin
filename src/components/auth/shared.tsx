@@ -37,7 +37,8 @@ export function isValidEmail(v: string) {
 }
 
 export function isValidPhone(v: string) {
-  return /^[\d\s+\-()]{7,20}$/.test(v.trim());
+  const digits = v.replace(/\D/g, '');
+  return digits.length >= 9 && digits.length <= 15;
 }
 
 export function getPasswordStrength(pw: string): number {

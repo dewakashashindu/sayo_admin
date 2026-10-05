@@ -28,6 +28,7 @@ import {
   isUsablePhone,
   phoneForLog,
   type CustomerIdentityRow,
+  usableCustomerEmail,
 } from "@/lib/customerIdentity";
 
 export const runtime = "nodejs";
@@ -120,7 +121,7 @@ export async function POST(req: NextRequest) {
     const code = newCustomerOtp();          // crypto.randomInt — never Math.random
     const salutation = escapeHtml(user.CusName ?? "there");
     const smsNumber = normalizeSmsPhone(user.RegTel ?? phoneRaw);
-    const mailAddress = (user.CusEmail ?? "").trim();
+    const mailAddress = usableCustomerEmail(user.CusEmail);
 
     /* Preferred: text the number. A booking account always has one. */
     if (smsNumber && smsConfigured()) {

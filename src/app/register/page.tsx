@@ -21,6 +21,7 @@ import {
   spinnerStyle,
 } from '@/components/auth/shared';
 import GenderSelect, { type GenderValue } from '@/components/auth/GenderSelect';
+import { passwordProblem, PASSWORD_HINT } from '@/lib/passwordPolicy';
 
 export default function RegisterPage() {
     const [name,            setName           ] = useState('');
@@ -48,7 +49,7 @@ export default function RegisterPage() {
   /* The e-mail is optional on a booking account — only checked when given. */
   const errEmail   = tEmail    && email.trim() && !isValidEmail(email) ? 'Enter a valid email address.'   : '';
   const errGender  = tGender   && !gender                      ? 'Please select your gender.'              : '';
-  const errPass    = tPassword && password.length < 6          ? 'Password must be at least 6 characters.' : '';
+  const errPass    = tPassword && passwordProblem(password, 'customer') ? passwordProblem(password, 'customer')! : '';
   const errConfirm = tConfirm  && confirmPassword !== password ? 'Passwords do not match.'                 : '';
   const errAgree   = tAgree    && !agree                       ? 'You must agree to the terms.'            : '';
 
@@ -57,7 +58,7 @@ export default function RegisterPage() {
     isValidPhone(phone)  &&
     (!email.trim() || isValidEmail(email)) &&
     !!gender             &&
-    password.length >= 6 &&
+    !passwordProblem(password, 'customer') &&
     confirmPassword === password &&
     agree;
 
@@ -380,6 +381,9 @@ export default function RegisterPage() {
                       </div>
                     </div>
                     {errEmail && <p className="field-err">{errEmail}</p>}
+                    <p style={{ color: tokens.color.whiteFaint, fontSize: '0.72rem', marginTop: '0.3rem', fontFamily: tokens.font.family }}>
+                      Optional. Leave blank — you still sign in with your phone.
+                    </p>
                   </div>
 
                   {}
@@ -404,6 +408,9 @@ export default function RegisterPage() {
                       error={errPass}
                     />
                     <PasswordStrengthBar password={password} />
+                    <p style={{ color: tokens.color.whiteFaint, fontSize: '0.72rem', marginTop: '0.3rem', fontFamily: tokens.font.family }}>
+                      {PASSWORD_HINT}
+                    </p>
                   </div>
 
                   {}

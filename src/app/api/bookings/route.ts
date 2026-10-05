@@ -877,7 +877,10 @@ function validateBookingBody(body: Partial<BookingRequestBody>): string | null {
   if (!body.name?.trim())     return 'Name is required.';
   /* The e-mail is optional on a booking account (it is not a key any more —
      the phone number is), so a customer without one can still book. */
-  if (body.email && !body.email.trim()) return 'Email address is not valid.';
+  const emailTrim = String(body.email ?? '').trim();
+  if (emailTrim && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) {
+    return 'Email address is not valid.';
+  }
   if (!body.phone?.trim())    return 'Phone number is required.';
   if (!body.location?.trim()) return 'Location is required.';
   if (!body.date?.trim())     return 'Date is required.';
@@ -2019,9 +2022,11 @@ export async function POST(req: NextRequest) {
     );
 
  // 5. Preserve the existing notification behaviour
+    const mailTo = String(email ?? '').trim().toLowerCase();
+    const hasMail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mailTo);
     const emailPayload = {
       name,
-      email: email.trim().toLowerCase(),
+      email: hasMail ? mailTo : '',
       phone: phone.trim(),
       bookingId: bookingID.trim(),
       location,
@@ -2037,12 +2042,14 @@ export async function POST(req: NextRequest) {
       ...emailPayload,
       mode: isWithoutConfirmation ? 'without_confirmation' : 'confirmed',
     });
-    if (isWithoutConfirmation) {
-      const { subject, html } = buildWithoutConfirmationEmail(emailPayload);
-      sendBookingEmail(emailPayload.email, subject, html, plainText, bookingID.trim());
-    } else {
-      const { subject, html } = buildConfirmedEmail(emailPayload);
-      sendBookingEmail(emailPayload.email, subject, html, plainText, bookingID.trim());
+    if (hasMail) {
+      if (isWithoutConfirmation) {
+        const { subject, html } = buildWithoutConfirmationEmail(emailPayload);
+        sendBookingEmail(emailPayload.email, subject, html, plainText, bookingID.trim());
+      } else {
+        const { subject, html } = buildConfirmedEmail(emailPayload);
+        sendBookingEmail(emailPayload.email, subject, html, plainText, bookingID.trim());
+      }
     }
 
     sendAppointmentSMS({

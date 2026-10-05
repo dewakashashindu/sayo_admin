@@ -39,9 +39,11 @@ export default function LoginContent() {
   const [tPassword, setTPassword] = useState(false);
 
   const typedIsEmail   = phone.includes('@');
-  const errPhone    = tPhone    && !typedIsEmail && !isValidPhone(phone) ? 'Enter a valid phone number.'   : '';
-  const errPassword = tPassword && password.length < 6    ? 'Password must be at least 6 characters.'  : '';
-  const canSubmit   = (typedIsEmail ? isValidEmail(phone) : isValidPhone(phone)) && password.length >= 6;
+  const errPhone    = tPhone && !(typedIsEmail ? isValidEmail(phone) : isValidPhone(phone))
+    ? (typedIsEmail ? 'Enter a valid email address.' : 'Enter a valid phone number.')
+    : '';
+  const errPassword = tPassword && !password ? 'Password is required.' : '';
+  const canSubmit   = (typedIsEmail ? isValidEmail(phone) : isValidPhone(phone)) && !!password;
 
     const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -157,12 +159,12 @@ export default function LoginContent() {
 
                   {/* phone number (an address is accepted too) */}
                   <div>
-                    <FieldLabel text="Phone Number" />
+                    <FieldLabel text="Phone or email" />
                     <div style={{ position: 'relative' }}>
                       <input
                         className={`sayo-input${errPhone ? ' err' : ''}`}
                         type={typedIsEmail ? 'email' : 'tel'}
-                        placeholder="+94 77 000 0000"
+                        placeholder="07X XXX XXXX or you@email.com"
                         value={phone}
                         onChange={e => setPhone(e.target.value)}
                         onBlur={() => setTPhone(true)}
@@ -178,7 +180,7 @@ export default function LoginContent() {
                     </div>
                     {errPhone && <p className="field-err">{errPhone}</p>}
                     <p style={{ color: tokens.color.whiteFaint, fontSize: '0.72rem', marginTop: '0.3rem', fontFamily: tokens.font.family }}>
-                      The number you registered with. An e-mail address works too.
+                      Sign in with your phone number. An e-mail works too if you added one.
                     </p>
                   </div>
 

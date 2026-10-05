@@ -78,6 +78,7 @@ export const translations: Record<string, { en: string; si: string; ta: string }
     'gp.gender':               { en: 'Gender',                                          si: 'ස්ත්‍රී පුරුෂ භාවය',                           ta: 'பாலினம்' },
   'gp.contact':              { en: 'Contact Number',                                  si: 'දුරකථන අංකය',                                 ta: 'தொடர்பு எண்' },
   'gp.required':             { en: 'Required',                                        si: 'අවශ්‍ය වේ',                                     ta: 'தேவை' },
+  'gp.optional':             { en: 'optional',                                        si: 'අත්‍යවශ්‍ය නැත',                                 ta: 'விரும்பினால்' },
   'gp.selectGender':         { en: 'Select gender…',                                  si: 'ස්ත්‍රී පුරුෂ භාවය තෝරන්න…',                    ta: 'பாலினத்தைத் தேர்வுசெய்க…' },
   'gp.selectGenderTitle':    { en: 'Select gender',                                   si: 'ස්ත්‍රී පුරුෂ භාවය තෝරන්න',                     ta: 'பாலினத்தைத் தேர்ந்தெடுக்கவும்' },
   'gender.male':             { en: 'Male',                                            si: 'පිරිමි',                                       ta: 'ஆண்' },
@@ -169,6 +170,7 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   'ok.atOurBranch':          { en: 'at our {loc} branch.',                            si: 'අපගේ {loc} ශාඛාවේදී.',                         ta: 'எங்கள் {loc} கிளையில்.' },
   'ok.walkinNote':           { en: 'Registered without confirmation — please arrive on time.', si: 'තහවුරු කිරීමකින් තොරව ලියාපදිංචි කරන ලදී — කරුණාකර වෙලාවට පැමිණෙන්න.', ta: 'உறுதிப்படுத்தல் இல்லாமல் பதிவு செய்யப்பட்டது — நேரத்திற்கு வாருங்கள்.' },
   'ok.confirmationSentTo':   { en: 'Confirmation sent to {email}',                    si: 'තහවුරු කිරීම {email} වෙත යවන ලදි',               ta: 'உறுதிப்படுத்தல் {email} க்கு அனுப்பப்பட்டது' },
+  'ok.confirmationSentToPhone': { en: 'Confirmation sent to {phone}',                  si: 'තහවුරු කිරීම {phone} වෙත යවන ලදි',               ta: 'உறுதிப்படுத்தல் {phone} க்கு அனுப்பப்பட்டது' },
   'ok.bookAnother':          { en: 'Book Another Appointment',                        si: 'තවත් වෙන්කිරීමක් කරන්න',                        ta: 'மற்றொரு நியமனத்தை முன்பதிவு செய்' },
 
     'cal.today':               { en: 'Today',                                           si: 'අද',                                           ta: 'இன்று' },

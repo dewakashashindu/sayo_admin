@@ -1886,8 +1886,8 @@ function MultiBookingPanel({
               <input className="sayo-input" value={contactPhone} onChange={e => setPhone(e.target.value)} style={{ padding: '0.62rem 0.8rem' }} />
             </div>
             <div style={{ flex: '1 1 200px' }}>
-              <FieldLabel text={t(lang, 'sum.email')} lang={lang} />
-              <input className="sayo-input" type="email" value={contactEmail} onChange={e => setEmail(e.target.value)} style={{ padding: '0.62rem 0.8rem' }} />
+              <FieldLabel text={`${t(lang, 'sum.email')} (${t(lang, 'gp.optional')})`} lang={lang} />
+              <input className="sayo-input" type="email" value={contactEmail} onChange={e => setEmail(e.target.value)} placeholder="" style={{ padding: '0.62rem 0.8rem' }} />
             </div>
           </div>
         </div>
@@ -2031,7 +2031,7 @@ export default function BookingPage() {
         const u = j?.user as SessionUser | undefined;
         if (!u) { router.replace('/login?redirect=/booking'); return; }
         if (u.name)  setName(u.name);
-        if (u.email) setEmail(u.email);
+        if (u.email && u.email.includes('@')) setEmail(u.email);
         if (u.phoneNumber?.trim()) { setPhone(u.phoneNumber.trim()); setPhoneAutoFilled(true); }
         if (u.gender?.trim()) {
           const rg = u.gender.trim().toLowerCase();
@@ -2421,7 +2421,11 @@ export default function BookingPage() {
               {t(lang, 'ok.withProvs', { provs: providers.map(p => p.name).join(' & ') })}<br />
               {t(lang, 'ok.atOurBranch', { loc: locName(lang, location) })}<br />
               <span style={{ color: tokens.color.whiteDim, fontSize: '0.8rem' }}>
-                {mode === 'without_confirmation' ? t(lang, 'ok.walkinNote') : t(lang, 'ok.confirmationSentTo', { email })}
+                {mode === 'without_confirmation'
+                  ? t(lang, 'ok.walkinNote')
+                  : email.includes('@')
+                    ? t(lang, 'ok.confirmationSentTo', { email })
+                    : t(lang, 'ok.confirmationSentToPhone', { phone })}
               </span>
             </p>
             <button className={btnClass} onClick={handleReset} style={{ padding: '0.85rem 2.5rem', fontSize: '0.9rem' }}>{t(lang, 'ok.bookAnother')}</button>
@@ -2725,7 +2729,7 @@ export default function BookingPage() {
                   <div className="cf-block">
                     <SumRow icon={<Ico.User />}     label={t(lang, 'sum.name')}   value={name} />
                     <SumRow icon={<Ico.Phone />}    label={t(lang, 'sum.phone')}  value={phone} />
-                    <SumRow icon={<Ico.Mail />}     label={t(lang, 'sum.email')}  value={email} />
+                    <SumRow icon={<Ico.Mail />}     label={t(lang, 'sum.email')}  value={email.includes('@') ? email : '—'} />
                     <SumRow icon={<GenderSymbol value={gender} s={13} />} label={t(lang, 'sum.gender')} value={gender ? t(lang, `gender.${gender}`) : '—'} />
                     <SumRow icon={<Ico.Location />} label={t(lang, 'sum.branch')} value={locName(lang, location)} />
                   </div>

@@ -20,6 +20,7 @@ import {
   isUsablePhone,
   localPhoneDigits,
   phoneForLog,
+  usableCustomerEmail,
 } from '@/lib/customerIdentity';
 import { nextSerialTx, SERIAL_CODES } from '@/lib/serials';
 import { rateMessage } from "@/lib/rateLimit";
@@ -132,7 +133,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const emailLower = emailTrimmed.toLowerCase().slice(0, 200);
+    const emailLower = usableCustomerEmail(emailTrimmed);
 
     try {
       /* the phone IS the account now — one person, one number */

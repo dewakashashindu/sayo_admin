@@ -18,6 +18,7 @@ import {
   pageWrapStyle,
   spinnerStyle,
 } from '@/components/auth/shared';
+import { passwordProblem, PASSWORD_HINT } from '@/lib/passwordPolicy';
 
 type ForgotStep = 1 | 2 | 3;
 const STEP_LABELS = ['Phone', 'Verify', 'Reset'];
@@ -62,9 +63,9 @@ export default function ForgotPasswordPage() {
   const otpCode    = otp.join('');
   const canSend    = isValidPhone(phone);
   const canVerify  = otpCode.length === 6;
-  const errNew     = tNew     && newPassword.length < 6          ? 'Password must be at least 6 characters.' : '';
+  const errNew     = tNew     && passwordProblem(newPassword, 'customer') ? passwordProblem(newPassword, 'customer')! : '';
   const errConfirm = tConfirm && confirmPassword !== newPassword  ? 'Passwords do not match.'                 : '';
-  const canReset   = newPassword.length >= 6 && confirmPassword === newPassword;
+  const canReset   = !passwordProblem(newPassword, 'customer') && confirmPassword === newPassword;
 
     const handleSendCode = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -326,7 +327,7 @@ export default function ForgotPasswordPage() {
                     color: tokens.color.whiteFaint, fontSize: '0.76rem',
                     fontFamily: tokens.font.family, lineHeight: 1.6,
                   }}>
-                    A one-time verification code will be sent to this phone number.
+                    If this number is registered, a reset code is sent by SMS. If you also added an e-mail, that is used as a backup.
                   </div>
 
                   <button
@@ -351,8 +352,8 @@ export default function ForgotPasswordPage() {
 
                   <p style={{ color: tokens.color.whiteFaint, fontSize: '0.78rem', marginBottom: '1.4rem', fontFamily: tokens.font.family, lineHeight: 1.6 }}>
                     We sent a 6-digit code to{' '}
-                    <strong style={{ color: tokens.color.gold }}>{phone}</strong>.
-                    Check your messages.
+                    <strong style={{ color: tokens.color.gold }}>{phone}</strong>
+                    {' '}by SMS (and e-mail if you registered one). Check your messages.
                   </p>
 
                   <div className="otp-wrap" onPaste={handleOtpPaste}>
@@ -429,6 +430,9 @@ export default function ForgotPasswordPage() {
                       <FieldLabel text="New Password" />
                       <PasswordField value={newPassword} onChange={setNewPassword} onBlur={() => setTNew(true)} error={errNew} />
                       <PasswordStrengthBar password={newPassword} />
+                      <p style={{ color: tokens.color.whiteFaint, fontSize: '0.72rem', marginTop: '0.3rem', fontFamily: tokens.font.family }}>
+                        {PASSWORD_HINT}
+                      </p>
                     </div>
                     <div>
                       <FieldLabel text="Confirm New Password" />
@@ -450,7 +454,7 @@ export default function ForgotPasswordPage() {
                     }}>
                       Password Tips
                     </p>
-                    {['At least 8 characters', 'Mix of uppercase and lowercase', 'Include numbers and symbols'].map(tip => (
+                    {['At least 8 characters', 'At least one letter and one number'].map(tip => (
                       <div key={tip} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}>
                         <div style={{ width: '0.35rem', height: '0.35rem', borderRadius: '50%', background: tokens.color.gold, flexShrink: 0 }} />
                         <span style={{ color: tokens.color.whiteFaint, fontSize: '0.72rem', fontFamily: tokens.font.family }}>{tip}</span>

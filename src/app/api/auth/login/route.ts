@@ -120,7 +120,11 @@ export async function POST(req: NextRequest) {
          screen to find out which numbers exist, for free */
       await rateLimitStrong(accountRule);
       return NextResponse.json(
-        { error: 'No account found with this phone number.' },
+        {
+          error: phoneRaw
+            ? 'No account found with this phone number.'
+            : 'No account found with this email address.',
+        },
         { status: 401 },
       );
     }

@@ -40,7 +40,7 @@ export function passwordProblem(password: string, who: "staff" | "customer" = "s
   if (value.length < MIN_PASSWORD_LENGTH) {
     return `The password must be at least ${MIN_PASSWORD_LENGTH} characters long.`;
   }
-  if (Buffer.byteLength(value, "utf8") > MAX_PASSWORD_BYTES) {
+  if (new TextEncoder().encode(value).length > MAX_PASSWORD_BYTES) {
     return `The password is too long (max ${MAX_PASSWORD_BYTES} characters).`;
   }
   if (!/[A-Za-z]/.test(value) || !/\d/.test(value)) {
