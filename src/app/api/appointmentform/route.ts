@@ -13,7 +13,7 @@ import {
 } from "@/lib/bookingSchedule";
 import { nextSerialTx, SERIAL_CODES } from "@/lib/serials";
 import { loadCompanyDay, loadStaffDays, resolveStaffWindow } from "@/lib/dayHours";
-import { slotInList } from "@/lib/operatingHours";
+import { clockInSpan, clockToMinutes, slotInList } from "@/lib/operatingHours";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1113,6 +1113,16 @@ export async function POST(req: NextRequest) {
             { success: false, error: "A selected technician is not scheduled at this location on that date." },
             { status: 422 },
           );
+        }
+        if (appointmentTime) {
+          const t = clockToMinutes(appointmentTime);
+          const wins = hours.windows.length ? hours.windows : [{ startMin: hours.startMin, closeMin: hours.closeMin }];
+          if (!wins.some((w) => clockInSpan(t, w.startMin, w.closeMin))) {
+            return NextResponse.json(
+              { success: false, error: "A selected technician is not scheduled at the selected time." },
+              { status: 422 },
+            );
+          }
         }
       }
     }

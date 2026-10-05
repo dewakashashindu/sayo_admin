@@ -33,7 +33,7 @@ import {
 import { rateLimit, rateMessage } from "@/lib/rateLimit";
 import { clientIp, ipForLog } from "@/lib/clientIp";
 import { loadCompanyDay, loadStaffDays, resolveStaffWindow } from "@/lib/dayHours";
-import { slotInList } from "@/lib/operatingHours";
+import { intervalInsideSpan, slotInList } from "@/lib/operatingHours";
 
 interface BookingService {
   name:          string;
@@ -1819,7 +1819,9 @@ export async function POST(req: NextRequest) {
           { status: 422 },
         );
       }
-      if (window.startMin < hours.startMin || window.endMin > hours.closeMin) {
+      const fits = (hours.windows.length ? hours.windows : [{ startMin: hours.startMin, closeMin: hours.closeMin }])
+        .some((w) => intervalInsideSpan(window.startMin, window.endMin, w.startMin, w.closeMin));
+      if (!fits) {
         return NextResponse.json(
           { success: false, message: `${name} is not scheduled at the selected time.` },
           { status: 422 },

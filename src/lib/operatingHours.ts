@@ -7,7 +7,12 @@ export const HOURS_TABLE_HINT =
 
 export function missingHoursTable(e: unknown): boolean {
   const msg = String((e as { message?: string } | undefined)?.message ?? e);
-  return /tbl_companyoperatinghours|tbl_staffschedule|doesn't exist|ER_NO_SUCH_TABLE|1146|P2021|unknown column ['`]?loccode/i.test(msg);
+  return /tbl_companyoperatinghours|tbl_staffschedule|tbl_staffsessions|doesn't exist|ER_NO_SUCH_TABLE|1146|P2021|unknown column ['`]?loccode/i.test(msg);
+}
+
+export function missingSessionNo(e: unknown): boolean {
+  const msg = String((e as { message?: string } | undefined)?.message ?? e);
+  return /unknown column ['`]?(sessionno|seasonno)/i.test(msg);
 }
 
 export function parseIsoDate(v: unknown): string | null {
@@ -98,6 +103,117 @@ export function isWeekday(iso: string): boolean {
 }
 
 export const SLOT_MINUTES = 30;
+export const MINUTES_PER_DAY = 24 * 60;
+
+/** Close before start ⇒ overnight (close is next calendar morning). Equal is empty. */
+export function isOvernightClock(startMin: number, closeMin: number): boolean {
+  return startMin >= 0 && closeMin >= 0 && closeMin < startMin;
+}
+
+/** Exclusive end on a 0..2880 timeline. Overnight close is closeMin + 1440. `-1` if empty. */
+export function spanEndMin(startMin: number, closeMin: number): number {
+  if (!(startMin >= 0) || !(closeMin >= 0) || startMin === closeMin) return -1;
+  return closeMin > startMin ? closeMin : closeMin + MINUTES_PER_DAY;
+}
+
+export function clockFromAbs(absMin: number): number {
+  return ((Math.round(absMin) % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+}
+
+/** Slot-start (or any clock) inside [start, close) — wraps midnight when overnight. */
+export function clockInSpan(t: number, startMin: number, closeMin: number): boolean {
+  if (t < 0 || startMin < 0 || closeMin < 0 || startMin === closeMin) return false;
+  if (closeMin > startMin) return t >= startMin && t < closeMin;
+  return t >= startMin || t < closeMin;
+}
+
+/**
+ * Shift a same-day or overnight interval onto the company span.
+ * Tries 0 / +1440 / −1440 so 00:00–06:00 fits a 22:00–06:00 salon night.
+ */
+export function absIntervalOnSpan(
+  startMin: number,
+  closeMin: number,
+  companyStart: number,
+  companyClose: number,
+): { a: number; b: number } | null {
+  const c0 = companyStart;
+  const c1 = spanEndMin(companyStart, companyClose);
+  const s1 = spanEndMin(startMin, closeMin);
+  if (c1 < 0 || s1 < 0) return null;
+  for (const sh of [0, MINUTES_PER_DAY, -MINUTES_PER_DAY]) {
+    const a = startMin + sh;
+    const b = s1 + sh;
+    if (a >= c0 && b <= c1 && b > a) return { a, b };
+  }
+  return null;
+}
+
+/** Session fully inside salon hours (overnight session only fits an overnight salon). */
+export function intervalFitsSpan(
+  startMin: number,
+  closeMin: number,
+  companyStart: number,
+  companyClose: number,
+): boolean {
+  return absIntervalOnSpan(startMin, closeMin, companyStart, companyClose) != null;
+}
+
+/** Intersect a staff window with salon hours; overnight-aware. */
+export function clipClockWindow(
+  startMin: number,
+  closeMin: number,
+  companyStart: number,
+  companyClose: number,
+): { startMin: number; closeMin: number } | null {
+  const c0 = companyStart;
+  const c1 = spanEndMin(companyStart, companyClose);
+  const s1 = spanEndMin(startMin, closeMin);
+  if (c1 < 0 || s1 < 0) return null;
+  for (const sh of [0, MINUTES_PER_DAY, -MINUTES_PER_DAY]) {
+    const lo = Math.max(startMin + sh, c0);
+    const hi = Math.min(s1 + sh, c1);
+    if (hi > lo) {
+      return { startMin: clockFromAbs(lo), closeMin: clockFromAbs(hi) };
+    }
+  }
+  return null;
+}
+
+export function absStartOnSpan(t: number, companyStart: number, companyClose: number): number {
+  const c1 = spanEndMin(companyStart, companyClose);
+  if (c1 < 0 || t < 0) return t;
+  if (t + MINUTES_PER_DAY >= companyStart && t + MINUTES_PER_DAY < c1 && t < companyStart) {
+    return t + MINUTES_PER_DAY;
+  }
+  return t;
+}
+
+/**
+ * Booking interval [from, to) inside a window. `to` may be from+duration (>1440)
+ * or a wrapped clock (to <= from).
+ */
+export function intervalInsideSpan(
+  fromMin: number,
+  toMin: number,
+  startMin: number,
+  closeMin: number,
+): boolean {
+  if (fromMin < 0) return false;
+  let dur = toMin - fromMin;
+  if (dur <= 0) dur += MINUTES_PER_DAY;
+  if (dur <= 0 || dur > MINUTES_PER_DAY) return false;
+  const c0 = startMin;
+  const c1 = spanEndMin(startMin, closeMin);
+  if (c1 < 0) return false;
+  const clock = clockFromAbs(fromMin);
+  for (const sh of [0, MINUTES_PER_DAY]) {
+    const a = clock + sh;
+    const b = a + dur;
+    if (a >= c0 && b <= c1) return true;
+  }
+  return false;
+}
 
 /** Minutes past midnight from `HH:MM` or `h:mm AM/PM`. `-1` when unusable. */
 export function clockToMinutes(value: unknown): number {
@@ -131,11 +247,12 @@ export function minutesToClockSlot(minutes: number, padHour = true): string {
  * Open 10:15 → first slot 10:30. Close 19:00 → last start 07:00 PM.
  */
 export function generateDaySlots(startMin: number, closeMin: number, padHour = true): string[] {
-  if (!(startMin >= 0) || !(closeMin > startMin)) return [];
+  const end = spanEndMin(startMin, closeMin);
+  if (end < 0) return [];
   const first = Math.ceil(startMin / SLOT_MINUTES) * SLOT_MINUTES;
-  const last = Math.floor(closeMin / SLOT_MINUTES) * SLOT_MINUTES;
+  const last = Math.floor(end / SLOT_MINUTES) * SLOT_MINUTES;
   const out: string[] = [];
-  for (let t = first; t <= last && t < 24 * 60; t += SLOT_MINUTES) {
+  for (let t = first; t <= last; t += SLOT_MINUTES) {
     out.push(minutesToClockSlot(t, padHour));
   }
   return out;

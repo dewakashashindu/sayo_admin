@@ -27,12 +27,15 @@ interface SchedRow {
   LocCode?: string;
   TxnDate: string;
   StaffID: string;
+  SessionNo?: number;
   StartTime: string;
   ClosingTime: string;
   Offday: boolean;
   LeaveOn: boolean;
   Remarks: string;
 }
+interface SessionForm { start: string; close: string; }
+const MAX_SEASONS = 8;
 interface LocOpt { LocCode: string; LocDes: string; }
 interface Bundle {
   staff: StaffRow[];
@@ -145,16 +148,23 @@ const PAGE_CSS = `
   .frm-input {
     width:100%; border:1.5px solid #d1d9da; border-radius:8px;
     padding:0 11px; height:36px; font-family:'Inter',sans-serif; font-size:13px; color:#1f2937;
-    background:#fff; outline:none;
+    background:#fff; outline:none; min-width:0;
   }
   .frm-input:focus { border-color:#1e3a40; box-shadow:0 0 0 3px rgba(30,58,64,0.08); }
   .frm-input:disabled { background:#f3f6f6; color:#6b7280; }
+  .frm-input[type=time] { cursor:pointer; position:relative; }
+  .frm-input[type=time]::-webkit-calendar-picker-indicator {
+    position:absolute; inset:0; width:auto; height:auto; margin:0; padding:0;
+    opacity:0; cursor:pointer;
+  }
   .frm-textarea {
     width:100%; border:1.5px solid #d1d9da; border-radius:8px;
     padding:9px 11px; min-height:64px; resize:vertical;
     font-family:'Inter',sans-serif; font-size:13px; color:#1f2937; background:#fff; outline:none; line-height:1.5;
   }
   .frm-label { font-size:11px; font-weight:700; color:#4b5563; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px; display:block; }
+  .season-row { background:#fff; border:1.5px solid #d8e4e6; border-radius:10px; padding:10px; }
+  .season-times { display:grid; grid-template-columns:1fr; gap:10px; }
   .char-count { font-size:10.5px; color:#9ca3af; text-align:right; margin-top:2px; }
   .char-count.warn { color:#dc2626; font-weight:600; }
   .sect-box { background:#fff; border:1.5px solid #d8e4e6; border-radius:12px; overflow:hidden; }
@@ -325,6 +335,11 @@ function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v
   );
 }
 
+function openTimePicker(e: React.MouseEvent<HTMLInputElement> | React.PointerEvent<HTMLInputElement>) {
+  const el = e.currentTarget;
+  try { el.showPicker?.(); } catch { /* browser has no showPicker */ }
+}
+
 function SchedulesPageContent() {
   const access = useMyAccess();
   const canSave = !access.enforce || access.has('ADSCH', 'SAVE');
@@ -351,8 +366,7 @@ function SchedulesPageContent() {
 
   const [fOff, setFOff] = useState(false);
   const [fLeave, setFLeave] = useState(false);
-  const [fStart, setFStart] = useState('09:00');
-  const [fClose, setFClose] = useState('18:00');
+  const [seasons, setSeasons] = useState<SessionForm[]>([{ start: '09:00', close: '18:00' }]);
   const [fRemarks, setFRemarks] = useState('');
 
   const selIds = useMemo(() => new Set(selStaff.map((s) => s.UserId)), [selStaff]);
@@ -385,20 +399,26 @@ function SchedulesPageContent() {
   }, [staff, search]);
 
   const loadForm = useCallback((iso: string, list: SchedRow[], shop: HoursRow[]) => {
-    const found = list.find((r) => r.TxnDate === iso);
+    const found = list.filter((r) => r.TxnDate === iso).sort((a, b) => (a.SessionNo ?? 1) - (b.SessionNo ?? 1));
     const h = shop.find((r) => r.TxnDate === iso);
-    setFOff(found?.Offday ?? false);
-    setFLeave(found?.LeaveOn ?? false);
-    setFStart(found?.StartTime || h?.StartTime || '09:00');
-    setFClose(found?.ClosingTime || h?.ClosingTime || '18:00');
-    setFRemarks(found?.Remarks || '');
+    const first = found[0];
+    setFOff(first?.Offday ?? false);
+    setFLeave(first?.LeaveOn ?? false);
+    const working = found.filter((r) => !r.Offday && !r.LeaveOn);
+    if (working.length) {
+      setSeasons(working.map((r) => ({ start: r.StartTime, close: r.ClosingTime })));
+    } else {
+      setSeasons([{ start: h?.StartTime || '09:00', close: h?.ClosingTime || '18:00' }]);
+    }
+    setFRemarks(first?.Remarks || '');
   }, []);
 
-  const fetchMonth = useCallback(async (month: string) => {
+  const fetchMonth = useCallback(async (month: string, loc = locCode) => {
     setLoading(true);
     setLoadError(null);
     const last = String(daysInMonth(month)).padStart(2, '0');
-    const locQ = locCode ? `&locCode=${encodeURIComponent(locCode)}` : '';
+    const asked = loc.trim();
+    const locQ = asked ? `&locCode=${encodeURIComponent(asked)}` : '';
     const res = await apiFetch<Bundle>(`${API}?from=${month}-01&to=${month}-${last}${locQ}`);
     if (res.success && res.data) {
       setStaff(res.data.staff);
@@ -406,8 +426,10 @@ function SchedulesPageContent() {
       setHours(res.data.hours);
       const locs = res.data.locations ?? [];
       setLocations(locs);
-      const nextLoc = res.data.locCode || locCode || access.workLoc || locs[0]?.LocCode || '';
-      if (nextLoc && nextLoc !== locCode) setLocCode(nextLoc);
+      if (!asked) {
+        const nextLoc = (res.data.locCode || access.workLoc || locs[0]?.LocCode || '').trim();
+        if (nextLoc) setLocCode(nextLoc);
+      }
       setSelStaff((prev) => {
         const keep = prev.filter((p) => res.data!.staff.some((s) => s.UserId === p.UserId));
         if (keep.length) return keep;
@@ -417,9 +439,9 @@ function SchedulesPageContent() {
       setLoadError(res.message ?? 'Failed to load staff schedules');
     }
     setLoading(false);
-  }, []);
+  }, [locCode, access.workLoc]);
 
-  useEffect(() => { fetchMonth(ym); }, [ym, locCode]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void fetchMonth(ym, locCode); }, [ym, locCode, fetchMonth]);
 
   function handleSelectDay(iso: string, e?: React.MouseEvent) {
     if (!shopOpen(iso)) {
@@ -478,9 +500,14 @@ function SchedulesPageContent() {
     if (!h) { showToast('No salon hours set for this day', 'error'); return; }
     setFOff(false);
     setFLeave(false);
-    setFStart(h.StartTime);
-    setFClose(h.ClosingTime);
+    setSeasons([{ start: h.StartTime, close: h.ClosingTime }]);
     if (!h.Open) setFOff(true);
+  }
+
+  function toggleAllStaff() {
+    if (!filteredStaff.length) return;
+    const allOn = filteredStaff.every((s) => selIds.has(s.UserId));
+    setSelStaff(allOn ? [] : filteredStaff);
   }
 
   async function saveDates(dates: string[], label: string) {
@@ -489,6 +516,12 @@ function SchedulesPageContent() {
     if (!selStaff.length) { showToast('Select at least one staff member', 'error'); return; }
     if (!dates.length) { showToast('Select at least one day on the calendar', 'error'); return; }
     if (dates.length > 100) { showToast('Select at most 100 days at a time', 'error'); return; }
+    if (!(fOff || fLeave)) {
+      if (seasons.some((s) => s.start && s.close && s.start === s.close)) {
+        showToast('Each session’s closing time must differ from its start', 'error');
+        return;
+      }
+    }
     setSaving(true);
     try {
       const res = await apiFetch<SchedRow | SchedRow[]>(API, {
@@ -498,8 +531,10 @@ function SchedulesPageContent() {
           locCode,
           staffIds: selStaff.map((s) => s.UserId),
           dates,
-          startTime: fStart,
-          closingTime: fClose,
+          sessions: seasons.map((s) => ({ startTime: s.start, closingTime: s.close })),
+          seasons: seasons.map((s) => ({ startTime: s.start, closingTime: s.close })),
+          startTime: seasons[0]?.start,
+          closingTime: seasons[0]?.close,
           offday: fOff,
           leaveOn: fLeave,
           remarks: fRemarks,
@@ -581,7 +616,12 @@ function SchedulesPageContent() {
             <select
               className="loc-select"
               value={locCode}
-              onChange={(e) => { setLocCode(e.target.value); setPicked([]); setAnchor(''); }}
+              onChange={(e) => {
+                setLocCode(e.target.value);
+                setPicked([]);
+                setAnchor('');
+                setSelStaff([]);
+              }}
               aria-label="Location"
             >
               {locations.length === 0 && <option value="">No locations</option>}
@@ -620,10 +660,14 @@ function SchedulesPageContent() {
           <div className="sch-split" style={{ flex: 1, overflow: 'hidden', padding: '13px 15px', display: 'flex', gap: 13 }}>
             <div className="left-panel" style={{ width: 240, flexShrink: 0, background: '#deeaea', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 1px 5px rgba(0,0,0,0.08)' }}>
               <div style={{ padding: '12px 12px 8px', borderBottom: '1px solid rgba(30,58,64,0.1)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 700, color: '#1e3a40' }}>Staff</span>
-                  <span style={{ fontSize: 11, color: '#6b7280' }}>{staff.length}</span>
+                  <button type="button" className="btn-clear" style={{ height: 28, padding: '0 10px', fontSize: 11 }}
+                    onClick={toggleAllStaff} disabled={!filteredStaff.length}>
+                    {filteredStaff.length > 0 && filteredStaff.every((s) => selIds.has(s.UserId)) ? 'Clear all' : 'Select all'}
+                  </button>
                 </div>
+                <p style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>{selStaff.length} selected · {staff.length} at this location</p>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
                 {loading && staff.length === 0 ? (
@@ -680,9 +724,13 @@ function SchedulesPageContent() {
                       const isPicked = pickedSet.has(iso);
                       const cls = ['cal-day', wknd ? 'wknd' : '', iso === today ? 'today' : '', isPicked ? 'selected' : '', !isPicked ? kind : ''].filter(Boolean).join(' ');
                       const shopRow = hoursByDate.get(iso);
+                      const workRows = rowsFor.filter((r) => !r.Offday && !r.LeaveOn);
                       const meta = !open
                         ? (shopRow ? 'Closed' : 'Not set')
-                        : row?.LeaveOn ? 'Leave' : row?.Offday ? 'Off' : row ? `${row.StartTime}–${row.ClosingTime}` : '—';
+                        : row?.LeaveOn ? 'Leave' : row?.Offday ? 'Off'
+                          : workRows.length === 0 ? '—'
+                          : workRows.length === 1 ? `${workRows[0].StartTime}–${workRows[0].ClosingTime}`
+                          : workRows.map((r) => `${r.StartTime}–${r.ClosingTime}`).join(' · ');
                       return (
                         <button key={iso} className={cls} onClick={(e) => handleSelectDay(iso, e)} disabled={closed}>
                           <span className="cal-num">{Number(iso.slice(8))}</span>
@@ -725,14 +773,16 @@ function SchedulesPageContent() {
                   {picked.length <= 1 ? 'Selected day' : `${picked.length} days selected`}
                 </p>
                 <p style={{ fontSize: 15, fontWeight: 800, color: '#1e3a40', marginTop: 4 }}>
-                  {picked.length === 0 ? 'None' : picked.length === 1 ? longDate(picked[0]) : 'Same shift for every selected day'}
+                  {picked.length === 0 ? 'None' : picked.length === 1 ? longDate(picked[0]) : 'Same sessions for every selected day'}
                 </p>
                 <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {picked.length !== 1 && <span className="badge-none">{picked.length} days</span>}
                   {picked.length === 1 && !selected && <span className="badge-none">Not set</span>}
                   {picked.length === 1 && selected?.LeaveOn && <span className="badge-leave">Leave</span>}
                   {picked.length === 1 && selected?.Offday && <span className="badge-off">Off day</span>}
-                  {picked.length === 1 && selected && !selected.Offday && !selected.LeaveOn && <span className="badge-active">{selected.StartTime}–{selected.ClosingTime}</span>}
+                  {picked.length === 1 && selected && !selected.Offday && !selected.LeaveOn && selectedRows.map((r) => (
+                    <span key={`${r.SessionNo ?? 1}-${r.StartTime}`} className="badge-active">{r.StartTime}–{r.ClosingTime}</span>
+                  ))}
                   {picked.length === 1 && shop && !shop.Open && <span className="badge-inactive">Salon closed</span>}
                 </div>
                 {picked.length > 1 && (
@@ -748,18 +798,48 @@ function SchedulesPageContent() {
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div className="sect-box">
-                  <div className="sect-hdr"><span className="sect-hdr-title">Shift</span></div>
+                  <div className="sect-hdr"><span className="sect-hdr-title">Sessions</span></div>
                   <div className="sect-body">
                     <Checkbox checked={fOff} onChange={setFOff} label="Off day" />
                     <Checkbox checked={fLeave} onChange={setFLeave} label="Leave on" />
-                    <div>
-                      <label className="frm-label" htmlFor="ss-start">Start</label>
-                      <input id="ss-start" type="time" className="frm-input" value={fStart} onChange={(e) => setFStart(e.target.value)} disabled={away} />
-                    </div>
-                    <div>
-                      <label className="frm-label" htmlFor="ss-close">Closing</label>
-                      <input id="ss-close" type="time" className="frm-input" value={fClose} onChange={(e) => setFClose(e.target.value)} disabled={away} />
-                    </div>
+                    {!away && seasons.map((sn, idx) => (
+                      <div key={idx} className="season-row">
+                        <p className="frm-label" style={{ marginBottom: 6 }}>Session {idx + 1}</p>
+                        <div className="season-times">
+                          <div>
+                            <label className="frm-label" htmlFor={`ss-start-${idx}`}>Start</label>
+                            <input id={`ss-start-${idx}`} type="time" className="frm-input" value={sn.start} disabled={away}
+                              onClick={openTimePicker}
+                              onChange={(e) => setSeasons((prev) => prev.map((p, i) => i === idx ? { ...p, start: e.target.value } : p))} />
+                          </div>
+                          <div>
+                            <label className="frm-label" htmlFor={`ss-close-${idx}`}>Closing</label>
+                            <input id={`ss-close-${idx}`} type="time" className="frm-input" value={sn.close} disabled={away}
+                              onClick={openTimePicker}
+                              onChange={(e) => setSeasons((prev) => prev.map((p, i) => i === idx ? { ...p, close: e.target.value } : p))} />
+                          </div>
+                        </div>
+                        {sn.start && sn.close && sn.close < sn.start && (
+                          <p style={{ fontSize: 12, color: '#1e3a40', fontWeight: 600, marginTop: 6 }}>
+                            Overnight — ends next morning at {sn.close}
+                            {shop && shop.Open && !(shop.ClosingTime < shop.StartTime) ? ' (salon must be open overnight)' : ''}
+                          </p>
+                        )}
+                        {seasons.length > 1 && (
+                          <button type="button" className="btn-clear" style={{ height: 30, marginTop: 6 }}
+                            onClick={() => setSeasons((prev) => prev.filter((_, i) => i !== idx))}>
+                            Remove session
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {!away && (
+                      <button type="button" className="btn-clear" style={{ height: 34 }}
+                        disabled={seasons.length >= MAX_SEASONS}
+                        onClick={() => setSeasons((prev) => prev.length >= MAX_SEASONS ? prev : [...prev, { start: '14:00', close: '18:00' }])}>
+                        Add session
+                      </button>
+                    )}
                     <div>
                       <label className="frm-label" htmlFor="ss-rmk">Remarks</label>
                       <textarea id="ss-rmk" className="frm-textarea" maxLength={MAX_RMK} value={fRemarks} onChange={(e) => setFRemarks(e.target.value)} placeholder="Notes…" />

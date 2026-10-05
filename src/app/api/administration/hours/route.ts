@@ -87,8 +87,8 @@ function parseBody(body: Record<string, unknown>) {
   if (!closingTime) return { error: "Closing time is required (HH:MM)." };
 
   const open = bit(body.open ?? body.Open ?? body.OpemOrClose ?? true);
-  if (open && minutesOf(closingTime) <= minutesOf(startTime)) {
-    return { error: "Closing time must be after start time." };
+  if (open && minutesOf(closingTime) === minutesOf(startTime)) {
+    return { error: "Closing time must differ from start time." };
   }
   const remarks = trimStr(body.closingRemarks ?? body.ClosingRemarks, " ").slice(0, 200);
 

@@ -4,11 +4,15 @@
 
 import { prisma } from "@/lib/prisma";
 import {
+  absStartOnSpan,
   asBool,
+  clipClockWindow,
+  clockInSpan,
   clockToMinutes,
   generateDaySlots,
   missingHoursTable,
   parseIsoDate,
+  spanEndMin,
 } from "@/lib/operatingHours";
 
 export interface CompanyDay {
@@ -23,6 +27,11 @@ export interface CompanyDay {
   slots: string[];
 }
 
+export interface StaffWindow {
+  startMin: number;
+  closeMin: number;
+}
+
 export interface StaffDay {
   staffId: string;
   working: boolean;
@@ -30,6 +39,7 @@ export interface StaffDay {
   leaveOn: boolean;
   startMin: number;
   closeMin: number;
+  windows: StaffWindow[];
   remarks: string;
 }
 
@@ -67,7 +77,7 @@ function mapCompany(date: string, locCode: string, row: HoursRow | undefined): C
   if (!row) return closedCompanyDay(date, locCode);
   const startMin = clockToMinutes(`${row.StartTime}`);
   const closeMin = clockToMinutes(`${row.ClosingTime}`);
-  const open = asBool(row.OpemOrClose) && startMin >= 0 && closeMin > startMin;
+  const open = asBool(row.OpemOrClose) && spanEndMin(startMin, closeMin) > startMin;
   if (!open) {
     return {
       ...closedCompanyDay(date, locCode, String(row.ClosingRemarks ?? "").trim()),
@@ -138,26 +148,54 @@ export async function loadStaffDays(date: string, locCode: string): Promise<Map<
               Offday, LeveOn, Remarks
          FROM tbl_staffschedule
         WHERE DATE(TxnDate) = ?
-          AND RTRIM(LocCode) = ?`,
+          AND RTRIM(LocCode) = ?
+        ORDER BY StaffID, StartTime`,
       iso,
       loc,
     );
     for (const r of rows) {
       const staffId = String(r.StaffID ?? "").trim();
       if (!staffId) continue;
+      const key = staffId.toUpperCase();
       const offday = asBool(r.Offday);
       const leaveOn = asBool(r.LeveOn);
+      const away = offday || leaveOn;
       const startMin = clockToMinutes(`${r.StartTime}`);
       const closeMin = clockToMinutes(`${r.ClosingTime}`);
-      out.set(staffId.toUpperCase(), {
-        staffId,
-        working: !offday && !leaveOn && startMin >= 0 && closeMin > startMin,
-        offday,
-        leaveOn,
-        startMin,
-        closeMin,
-        remarks: String(r.Remarks ?? "").trim(),
-      });
+      const prev = out.get(key);
+      const win = !away && spanEndMin(startMin, closeMin) > startMin ? [{ startMin, closeMin }] : [];
+      if (!prev) {
+        out.set(key, {
+          staffId,
+          working: win.length > 0,
+          offday: away && win.length === 0 && offday,
+          leaveOn: away && win.length === 0 && leaveOn,
+          startMin: win[0]?.startMin ?? 0,
+          closeMin: win[0]?.closeMin ?? 0,
+          windows: win,
+          remarks: String(r.Remarks ?? "").trim(),
+        });
+        continue;
+      }
+      if (win.length) {
+        prev.windows = [...prev.windows, ...win].sort((a, b) => {
+          const key = (w: StaffWindow) =>
+            w.closeMin < w.startMin || w.startMin >= 12 * 60 ? w.startMin : w.startMin + 24 * 60;
+          return key(a) - key(b);
+        });
+        prev.working = true;
+        prev.offday = false;
+        prev.leaveOn = false;
+        prev.startMin = prev.windows[0].startMin;
+        prev.closeMin = prev.windows[prev.windows.length - 1].closeMin;
+        const rmk = String(r.Remarks ?? "").trim();
+        if (rmk) prev.remarks = rmk;
+        continue;
+      }
+      if (!prev.working) {
+        prev.offday = prev.offday || offday;
+        prev.leaveOn = prev.leaveOn || leaveOn;
+      }
     }
     return out;
   } catch (e) {
@@ -171,26 +209,41 @@ export function resolveStaffWindow(company: CompanyDay, staff: StaffDay | undefi
   working: boolean;
   startMin: number;
   closeMin: number;
+  windows: StaffWindow[];
   reason: "salon-closed" | "off" | "leave" | "shift" | "unscheduled";
 } {
+  const empty = { working: false as const, startMin: 0, closeMin: 0, windows: [] as StaffWindow[] };
   if (!company.open) {
-    return { working: false, startMin: 0, closeMin: 0, reason: "salon-closed" };
+    return { ...empty, reason: "salon-closed" };
   }
   if (!staff) {
-    return { working: false, startMin: 0, closeMin: 0, reason: "unscheduled" };
+    return { ...empty, reason: "unscheduled" };
   }
   if (staff.leaveOn) {
-    return { working: false, startMin: 0, closeMin: 0, reason: "leave" };
+    return { ...empty, reason: "leave" };
   }
   if (staff.offday || !staff.working) {
-    return { working: false, startMin: 0, closeMin: 0, reason: "off" };
+    return { ...empty, reason: "off" };
   }
-  const startMin = Math.max(company.startMin, staff.startMin);
-  const closeMin = Math.min(company.closeMin, staff.closeMin);
-  if (closeMin <= startMin) {
-    return { working: false, startMin: 0, closeMin: 0, reason: "shift" };
+  const src = staff.windows.length ? staff.windows : [{ startMin: staff.startMin, closeMin: staff.closeMin }];
+  const windows = src
+    .map((w) => clipClockWindow(w.startMin, w.closeMin, company.startMin, company.closeMin))
+    .filter((w): w is StaffWindow => Boolean(w))
+    .sort(
+      (a, b) =>
+        absStartOnSpan(a.startMin, company.startMin, company.closeMin) -
+        absStartOnSpan(b.startMin, company.startMin, company.closeMin),
+    );
+  if (!windows.length) {
+    return { ...empty, reason: "shift" };
   }
-  return { working: true, startMin, closeMin, reason: "shift" };
+  return {
+    working: true,
+    startMin: windows[0].startMin,
+    closeMin: windows[windows.length - 1].closeMin,
+    windows,
+    reason: "shift",
+  };
 }
 
 export function slotsOutsideWindow(
@@ -200,6 +253,17 @@ export function slotsOutsideWindow(
 ): string[] {
   return slots.filter((slot) => {
     const t = clockToMinutes(slot);
-    return t < startMin || t >= closeMin;
+    return !clockInSpan(t, startMin, closeMin);
+  });
+}
+
+export function slotsOutsideWindows(
+  slots: string[],
+  windows: StaffWindow[],
+): string[] {
+  if (!windows.length) return slots;
+  return slots.filter((slot) => {
+    const t = clockToMinutes(slot);
+    return !windows.some((w) => clockInSpan(t, w.startMin, w.closeMin));
   });
 }

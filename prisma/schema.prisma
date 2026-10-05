@@ -1376,12 +1376,13 @@ model Tbl_StaffSchedule {
   LocCode     String   @db.Char(10)
   TxnDate     DateTime @db.DateTime(0)
   StaffID     String   @db.Char(10)
+  SessionNo   Int      @default(1) @db.TinyInt
   StartTime   DateTime @db.DateTime(0)
   ClosingTime DateTime @db.DateTime(0)
   Offday      Boolean  @default(false)
   LeveOn      Boolean  @default(false)
   Remarks     String   @default(" ") @db.VarChar(200)
 
-  @@id([LocCode, TxnDate, StaffID])
+  @@id([LocCode, TxnDate, StaffID, SessionNo])
   @@map("tbl_staffschedule")
 }

@@ -19,6 +19,9 @@ import {
   bit,
   eachDate,
   isWeekday,
+  absIntervalOnSpan,
+  intervalFitsSpan,
+  isOvernightClock,
   minutesOf,
   missingHoursTable,
   mysqlDateTime,
@@ -28,6 +31,7 @@ import {
   parseIsoDate,
   parseLocCodes,
   trimStr,
+  missingSessionNo,
 } from "@/lib/operatingHours";
 
 export const runtime = "nodejs";
@@ -53,6 +57,7 @@ interface SchedRow {
   LocCode: string;
   TxnDate: string;
   StaffID: string;
+  SessionNo?: number;
   StartTime: string;
   ClosingTime: string;
   Offday: number | boolean;
@@ -75,6 +80,7 @@ function mapSched(r: SchedRow) {
     LocCode: String(r.LocCode ?? "").trim(),
     TxnDate: String(r.TxnDate).slice(0, 10),
     StaffID: String(r.StaffID ?? "").trim(),
+    SessionNo: Number(r.SessionNo ?? 1) || 1,
     StartTime: String(r.StartTime).slice(0, 5),
     ClosingTime: String(r.ClosingTime).slice(0, 5),
     Offday: asBool(r.Offday),
@@ -107,29 +113,40 @@ async function listHours(from: string, to: string, locCode: string) {
 }
 
 async function listSchedules(from: string, to: string, locCode: string, staffId?: string | null) {
-  const sql = staffId
+  const withSession = staffId
     ? `SELECT RTRIM(LocCode) AS LocCode,
               DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
               RTRIM(StaffID) AS StaffID,
+              SessionNo,
               DATE_FORMAT(StartTime, '%H:%i') AS StartTime,
               DATE_FORMAT(ClosingTime, '%H:%i') AS ClosingTime,
               Offday, LeveOn, Remarks
          FROM tbl_staffschedule
         WHERE DATE(TxnDate) BETWEEN ? AND ? AND RTRIM(LocCode) = ? AND RTRIM(StaffID) = ?
-        ORDER BY TxnDate, StaffID`
+        ORDER BY TxnDate, StaffID, SessionNo`
     : `SELECT RTRIM(LocCode) AS LocCode,
               DATE_FORMAT(TxnDate, '%Y-%m-%d') AS TxnDate,
               RTRIM(StaffID) AS StaffID,
+              SessionNo,
               DATE_FORMAT(StartTime, '%H:%i') AS StartTime,
               DATE_FORMAT(ClosingTime, '%H:%i') AS ClosingTime,
               Offday, LeveOn, Remarks
          FROM tbl_staffschedule
         WHERE DATE(TxnDate) BETWEEN ? AND ? AND RTRIM(LocCode) = ?
-        ORDER BY TxnDate, StaffID`;
-  const rows = staffId
-    ? await prisma.$queryRawUnsafe<SchedRow[]>(sql, from, to, locCode, staffId.trim())
-    : await prisma.$queryRawUnsafe<SchedRow[]>(sql, from, to, locCode);
-  return rows.map(mapSched);
+        ORDER BY TxnDate, StaffID, SessionNo`;
+  const withoutSession = withSession.replace(/SessionNo,\n/g, "1 AS SessionNo,\n").replace(/, SessionNo/g, "");
+  try {
+    const rows = staffId
+      ? await prisma.$queryRawUnsafe<SchedRow[]>(withSession, from, to, locCode, staffId.trim())
+      : await prisma.$queryRawUnsafe<SchedRow[]>(withSession, from, to, locCode);
+    return rows.map(mapSched);
+  } catch (e) {
+    if (!missingSessionNo(e)) throw e;
+    const rows = staffId
+      ? await prisma.$queryRawUnsafe<SchedRow[]>(withoutSession, from, to, locCode, staffId.trim())
+      : await prisma.$queryRawUnsafe<SchedRow[]>(withoutSession, from, to, locCode);
+    return rows.map(mapSched);
+  }
 }
 
 async function listStaff(locCode: string) {
@@ -181,14 +198,46 @@ function parseBody(body: Record<string, unknown>) {
   const leaveOn = bit(body.leaveOn ?? body.LeaveOn ?? body.LeveOn);
   const away = offday === 1 || leaveOn === 1;
 
-  const startTime = parseHhmm(body.startTime ?? body.StartTime) ?? (away ? "00:00" : null);
-  const closingTime = parseHhmm(body.closingTime ?? body.ClosingTime) ?? (away ? "00:00" : null);
-  if (!startTime) return { error: "Start time is required (HH:MM)." };
-  if (!closingTime) return { error: "Closing time is required (HH:MM)." };
-  if (!away && minutesOf(closingTime) <= minutesOf(startTime)) {
-    return { error: "Closing time must be after start time." };
-  }
   const remarks = trimStr(body.remarks ?? body.Remarks, " ").slice(0, 200);
+
+  const seasons: { startTime: string; closingTime: string }[] = [];
+  const rawSessions = Array.isArray(body.sessions) ? body.sessions : body.seasons;
+  if (!away && Array.isArray(rawSessions)) {
+    for (const raw of rawSessions) {
+      if (!raw || typeof raw !== "object") continue;
+      const rec = raw as Record<string, unknown>;
+      const st = parseHhmm(rec.startTime ?? rec.StartTime);
+      const ct = parseHhmm(rec.closingTime ?? rec.ClosingTime);
+      if (!st || !ct) return { error: "Each session needs a start and closing time (HH:MM)." };
+      if (minutesOf(ct) === minutesOf(st)) {
+        return { error: "Each session’s closing time must differ from its start." };
+      }
+      seasons.push({ startTime: st, closingTime: ct });
+    }
+  }
+  if (!away && seasons.length === 0) {
+    const startTime = parseHhmm(body.startTime ?? body.StartTime);
+    const closingTime = parseHhmm(body.closingTime ?? body.ClosingTime);
+    if (!startTime) return { error: "Start time is required (HH:MM)." };
+    if (!closingTime) return { error: "Closing time is required (HH:MM)." };
+    if (minutesOf(closingTime) === minutesOf(startTime)) {
+      return { error: "Closing time must differ from start time." };
+    }
+    seasons.push({ startTime, closingTime });
+  }
+  if (away) {
+    seasons.splice(0, seasons.length, { startTime: "00:00", closingTime: "00:00" });
+  }
+  if (seasons.length > 8) return { error: "At most 8 sessions per day." };
+  const sorted = [...seasons].sort((a, b) => minutesOf(a.startTime) - minutesOf(b.startTime));
+  const anyOvernight = sorted.some((s) => isOvernightClock(minutesOf(s.startTime), minutesOf(s.closingTime)));
+  if (!anyOvernight) {
+    for (let i = 1; i < sorted.length; i++) {
+      if (minutesOf(sorted[i].startTime) < minutesOf(sorted[i - 1].closingTime)) {
+        return { error: "Sessions cannot overlap." };
+      }
+    }
+  }
 
   const dates: string[] = [];
   const one = parseIsoDate(body.txnDate ?? body.TxnDate);
@@ -212,7 +261,7 @@ function parseBody(body: Record<string, unknown>) {
   if (unique.length > 100) return { error: "At most 100 dates can be saved in one request." };
   if (staffIds.length > 50) return { error: "At most 50 staff can be saved in one request." };
 
-  return { staffIds, locCode: locCodes[0], startTime, closingTime, offday, leaveOn, remarks, dates: unique };
+  return { staffIds, locCode: locCodes[0], seasons: sorted, offday, leaveOn, remarks, dates: unique };
 }
 
 export async function GET(req: NextRequest) {
@@ -266,11 +315,10 @@ async function save(req: NextRequest) {
   const parsed = parseBody(body);
   if ("error" in parsed && parsed.error) return err(parsed.error);
 
-  const { staffIds, locCode, startTime, closingTime, offday, leaveOn, remarks, dates } = parsed as {
+  const { staffIds, locCode, seasons, offday, leaveOn, remarks, dates } = parsed as {
     staffIds: string[];
     locCode: string;
-    startTime: string;
-    closingTime: string;
+    seasons: { startTime: string; closingTime: string }[];
     offday: number;
     leaveOn: number;
     remarks: string;
@@ -294,37 +342,126 @@ async function save(req: NextRequest) {
       );
     }
 
+    const away = offday === 1 || leaveOn === 1;
+    if (!away) {
+      const hoursByDate = new Map(hours.map((h) => [h.TxnDate, h]));
+      for (const d of dates) {
+        const h = hoursByDate.get(d);
+        if (!h || !h.Open) continue;
+        const cStart = minutesOf(h.StartTime);
+        const cClose = minutesOf(h.ClosingTime);
+        const salonNight = isOvernightClock(cStart, cClose);
+        const lifted: { a: number; b: number }[] = [];
+        for (const sn of seasons) {
+          const s = minutesOf(sn.startTime);
+          const c = minutesOf(sn.closingTime);
+          if (isOvernightClock(s, c) && !salonNight) {
+            return err("Overnight sessions are only allowed when the salon is open overnight that day.");
+          }
+          if (!intervalFitsSpan(s, c, cStart, cClose)) {
+            return err(`Each session must fall within salon hours (${h.StartTime}–${h.ClosingTime}).`);
+          }
+          const abs = absIntervalOnSpan(s, c, cStart, cClose);
+          if (abs) lifted.push(abs);
+        }
+        lifted.sort((x, y) => x.a - y.a);
+        for (let i = 1; i < lifted.length; i++) {
+          if (lifted[i].a < lifted[i - 1].b) {
+            return err("Sessions cannot overlap.");
+          }
+        }
+      }
+    }
+
+    if (seasons.length > 1) {
+      try {
+        await prisma.$queryRawUnsafe(`SELECT SessionNo FROM tbl_staffschedule LIMIT 1`);
+      } catch (e) {
+        if (missingSessionNo(e)) {
+          return err("Run scripts/alter-tbl_staffschedule-sessionno-mysql.sql in phpMyAdmin to save more than one session per day. Do not prisma db push.");
+        }
+        throw e;
+      }
+    }
+
     const paddedLoc = padLocCode(locCode);
+    const datePh = dates.map(() => "?").join(", ");
+    const staffPh = staffIds.map(() => "?").join(", ");
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM tbl_staffschedule
+        WHERE RTRIM(LocCode) = ?
+          AND RTRIM(StaffID) IN (${staffPh})
+          AND DATE(TxnDate) IN (${datePh})`,
+      locCode,
+      ...staffIds,
+      ...dates,
+    );
+
     const placeholders: string[] = [];
     const params: unknown[] = [];
+    const multi = seasons.length > 1;
     for (const staffId of staffIds) {
       const padded = padStaffId(staffId);
       for (const txnDate of dates) {
-        placeholders.push("(?, ?, ?, ?, ?, ?, ?, ?)");
-        params.push(
-          paddedLoc,
-          mysqlDateTime(txnDate, "00:00"),
-          padded,
-          mysqlDateTime(txnDate, startTime),
-          mysqlDateTime(txnDate, closingTime),
-          offday,
-          leaveOn,
-          remarks,
-        );
+        seasons.forEach((sn, idx) => {
+          placeholders.push("(?, ?, ?, ?, ?, ?, ?, ?, ?)");
+          params.push(
+            paddedLoc,
+            mysqlDateTime(txnDate, "00:00"),
+            padded,
+            idx + 1,
+            mysqlDateTime(txnDate, sn.startTime),
+            mysqlDateTime(txnDate, sn.closingTime),
+            offday,
+            leaveOn,
+            remarks,
+          );
+        });
       }
     }
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO tbl_staffschedule
-          (LocCode, TxnDate, StaffID, StartTime, ClosingTime, Offday, LeveOn, Remarks)
-       VALUES ${placeholders.join(", ")}
-       ON DUPLICATE KEY UPDATE
-          StartTime = VALUES(StartTime),
-          ClosingTime = VALUES(ClosingTime),
-          Offday = VALUES(Offday),
-          LeveOn = VALUES(LeveOn),
-          Remarks = VALUES(Remarks)`,
-      ...params,
-    );
+    try {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO tbl_staffschedule
+            (LocCode, TxnDate, StaffID, SessionNo, StartTime, ClosingTime, Offday, LeveOn, Remarks)
+         VALUES ${placeholders.join(", ")}`,
+        ...params,
+      );
+    } catch (e) {
+      if (!missingSessionNo(e)) throw e;
+      if (multi) {
+        return err("Run scripts/alter-tbl_staffschedule-sessionno-mysql.sql in phpMyAdmin to save more than one session per day. Do not prisma db push.");
+      }
+      const legacyPh: string[] = [];
+      const legacyParams: unknown[] = [];
+      for (const staffId of staffIds) {
+        const padded = padStaffId(staffId);
+        for (const txnDate of dates) {
+          legacyPh.push("(?, ?, ?, ?, ?, ?, ?, ?)");
+          legacyParams.push(
+            paddedLoc,
+            mysqlDateTime(txnDate, "00:00"),
+            padded,
+            mysqlDateTime(txnDate, seasons[0].startTime),
+            mysqlDateTime(txnDate, seasons[0].closingTime),
+            offday,
+            leaveOn,
+            remarks,
+          );
+        }
+      }
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO tbl_staffschedule
+            (LocCode, TxnDate, StaffID, StartTime, ClosingTime, Offday, LeveOn, Remarks)
+         VALUES ${legacyPh.join(", ")}
+         ON DUPLICATE KEY UPDATE
+            StartTime = VALUES(StartTime),
+            ClosingTime = VALUES(ClosingTime),
+            Offday = VALUES(Offday),
+            LeveOn = VALUES(LeveOn),
+            Remarks = VALUES(Remarks)`,
+        ...legacyParams,
+      );
+    }
     const lo = dates.reduce((a, b) => (a < b ? a : b));
     const hi = dates.reduce((a, b) => (a > b ? a : b));
     const saved = await listSchedules(lo, hi, locCode);

@@ -18,6 +18,15 @@ interface HoursRow {
 }
 interface LocOpt { LocCode: string; LocDes: string; }
 
+function locLabel(l: LocOpt): string {
+  const raw = (l.LocDes || l.LocCode || '').trim();
+  if (!raw) return l.LocCode;
+  if (!raw.includes('_')) return raw;
+  return raw.split('_').map((w) => (
+    w.length <= 3 ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+  )).join(' ');
+}
+
 const API = '/api/administration/hours';
 const MAX_RMK = 200;
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -139,6 +148,11 @@ const PAGE_CSS = `
   }
   .frm-input:focus { border-color:#1e3a40; box-shadow:0 0 0 3px rgba(30,58,64,0.08); }
   .frm-input:disabled { background:#f3f6f6; color:#6b7280; }
+  .frm-input[type=time] { cursor:pointer; position:relative; }
+  .frm-input[type=time]::-webkit-calendar-picker-indicator {
+    position:absolute; inset:0; width:auto; height:auto; margin:0; padding:0;
+    opacity:0; cursor:pointer;
+  }
   .frm-textarea {
     width:100%; border:1.5px solid #d1d9da; border-radius:8px;
     padding:9px 11px; min-height:72px; resize:vertical;
@@ -213,10 +227,16 @@ const PAGE_CSS = `
   .cal-hint { font-size:11.5px; color:#5b7377; margin-top:10px; }
   .cal-rmk { font-size:10px; font-weight:600; color:#b45309; line-height:1.2; max-height:2.4em; overflow:hidden; }
   .cal-day.selected .cal-rmk { color:#fde68a; }
-  .loc-bar { display:flex; flex-wrap:wrap; gap:6px; }
+  .loc-bar {
+    display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+    padding:10px 14px; flex-shrink:0;
+    background:#eef4f4; border-bottom:1px solid rgba(30,58,64,0.1);
+  }
   .loc-chip {
+    display:inline-flex; align-items:center; gap:6px;
     border:1.5px solid #c5d4d6; background:#fff; color:#1e3a40; border-radius:99px;
-    padding:4px 11px; font-size:11.5px; font-weight:700; cursor:pointer; font-family:'Inter',sans-serif;
+    padding:6px 12px; font-size:12px; font-weight:700; cursor:pointer; font-family:'Inter',sans-serif;
+    white-space:nowrap; line-height:1.2;
   }
   .loc-chip.on { background:#1e3a40; border-color:#1e3a40; color:#fff; }
   .date-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; max-height:92px; overflow:auto; }
@@ -318,6 +338,12 @@ function Checkbox({ checked, onChange, label }: { checked: boolean; onChange: (v
       <span className="chk-label">{label}</span>
     </div>
   );
+}
+
+function openTimePicker(e: React.MouseEvent<HTMLInputElement> | React.PointerEvent<HTMLInputElement>) {
+  const el = e.currentTarget;
+  if (el.disabled) return;
+  try { el.showPicker?.(); } catch { /* browser has no showPicker */ }
 }
 
 function HoursPageContent() {
@@ -467,8 +493,13 @@ function HoursPageContent() {
   }
 
   async function handleSave() {
+    if (fOpen && fStart && fClose && fStart === fClose) {
+      showToast('Closing time must differ from start time', 'error');
+      return;
+    }
     const n = picked.length;
-    const when = fOpen ? `${fStart}–${fClose}` : 'Closed';
+    const overnight = fOpen && fStart && fClose && fClose < fStart;
+    const when = fOpen ? `${fStart}–${fClose}${overnight ? ' (overnight)' : ''}` : 'Closed';
     await saveDates(picked, n === 1
       ? `Hours saved for ${longDate(picked[0])} ✓`
       : `${when} saved on ${n} days ✓`);
@@ -545,22 +576,22 @@ function HoursPageContent() {
               <div style={{ background: '#1e3a40', borderRadius: '12px 12px 0 0', padding: '14px 18px', flexShrink: 0 }}>
                 <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Salon calendar</p>
                 <p style={{ color: '#fff', fontSize: 18, fontWeight: 800, marginTop: 2 }}>OPERATIONAL HOURS</p>
-                {locations.length > 0 && (
-                  <div className="loc-bar" style={{ marginTop: 10 }}>
-                    <button type="button" className={`loc-chip ${allLocsOn ? 'on' : ''}`} onClick={toggleAllLocs}>All locations</button>
-                    {locations.map((l) => (
-                      <button
-                        key={l.LocCode}
-                        type="button"
-                        className={`loc-chip ${selLocs.includes(l.LocCode) ? 'on' : ''}`}
-                        onClick={() => toggleLoc(l.LocCode)}
-                      >
-                        {l.LocDes || l.LocCode}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
+              {locations.length > 0 && (
+                <div className="loc-bar">
+                  <button type="button" className={`loc-chip ${allLocsOn ? 'on' : ''}`} onClick={toggleAllLocs}>All locations</button>
+                  {locations.map((l) => (
+                    <button
+                      key={l.LocCode}
+                      type="button"
+                      className={`loc-chip ${selLocs.includes(l.LocCode) ? 'on' : ''}`}
+                      onClick={() => toggleLoc(l.LocCode)}
+                    >
+                      {locLabel(l)}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="cal-body" style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
                 {loading ? (
                   <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 60 }}><div className="spinner" /></div>
@@ -649,12 +680,15 @@ function HoursPageContent() {
                     <Checkbox checked={fOpen} onChange={setFOpen} label="Open this day" />
                     <div>
                       <label className="frm-label" htmlFor="oh-start">Start</label>
-                      <input id="oh-start" type="time" className="frm-input" value={fStart} onChange={(e) => setFStart(e.target.value)} disabled={!fOpen} />
+                      <input id="oh-start" type="time" className="frm-input" value={fStart} onChange={(e) => setFStart(e.target.value)} disabled={!fOpen} onClick={openTimePicker} onPointerDown={openTimePicker} />
                     </div>
                     <div>
                       <label className="frm-label" htmlFor="oh-close">Closing</label>
-                      <input id="oh-close" type="time" className="frm-input" value={fClose} onChange={(e) => setFClose(e.target.value)} disabled={!fOpen} />
+                      <input id="oh-close" type="time" className="frm-input" value={fClose} onChange={(e) => setFClose(e.target.value)} disabled={!fOpen} onClick={openTimePicker} onPointerDown={openTimePicker} />
                     </div>
+                    {fOpen && fStart && fClose && fClose < fStart && (
+                      <p style={{ fontSize: 12, color: '#1e3a40', fontWeight: 600 }}>Overnight — closes next morning at {fClose}</p>
+                    )}
                     <div>
                       <label className="frm-label" htmlFor="oh-rmk">Closing remarks</label>
                       <textarea id="oh-rmk" className="frm-textarea" maxLength={MAX_RMK} value={fRemarks} onChange={(e) => setFRemarks(e.target.value)} placeholder="Holiday, staff outing…" />

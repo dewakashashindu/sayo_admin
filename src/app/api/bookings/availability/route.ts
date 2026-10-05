@@ -9,6 +9,7 @@ import {
   loadStaffDays,
   resolveStaffWindow,
   slotsOutsideWindow,
+  slotsOutsideWindows,
 } from '@/lib/dayHours';
 
 
@@ -315,7 +316,9 @@ export async function GET(req: NextRequest) {
     for (const person of scheduledProviders) {
       const window = resolveStaffWindow(company, staffDays.get(person.userId.trim().toUpperCase()));
       const extra = window.working
-        ? slotsOutsideWindow(daySlots, window.startMin, window.closeMin)
+        ? (window.windows?.length
+            ? slotsOutsideWindows(daySlots, window.windows)
+            : slotsOutsideWindow(daySlots, window.startMin, window.closeMin))
         : daySlots;
       if (extra.length === 0) continue;
       const current = providerSlots[person.name] || [];
