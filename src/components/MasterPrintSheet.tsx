@@ -1,7 +1,7 @@
 // src/components/MasterPrintSheet.tsx
 // Master-list prints (Location / Category / Item / Unit / Supplier masters).
 // Same unified VB6 frame as the document prints, but masters have no copy
-// concept — the footer stays at "Page 1 of 1" only.
+// concept — the page counter is generated dynamically by the shared print core.
 
 import React from "react";
 import { poPrintClock } from "@/lib/poPrint";

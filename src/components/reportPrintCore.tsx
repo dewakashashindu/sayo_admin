@@ -4,7 +4,8 @@
 // context boxes, blue-bordered grid, totals band, remarks line. No signature rows —
 // only the data that belongs to the screen being printed.
 // Multi-page: the head + context boxes live in the table <thead> so the browser
-// repeats them on every page; the footer bars repeat per page via position:fixed.
+// repeats them on every page; copy labels repeat via position:fixed, while the
+// page counter uses the browser's actual page and total-page counters.
 
 import React from "react";
 
@@ -137,8 +138,6 @@ export default function ReportPrintCore(p: ReportPrintCoreProps) {
         )}
 
         <div className="rp-foot">
-          <span />
-          <span>Page 1 of 1</span>
           <span>{p.footerRight || ""}</span>
         </div>
       </div>
@@ -199,20 +198,30 @@ export const REPORT_PRINT_CSS = `
   .print-sheet .rp-sub-k { width:70px; font-weight:700; }
   .print-sheet .rp-sub-v { flex:1; }
   .print-sheet .rp-foot {
-    display:flex; justify-content:space-between; padding:8px 8px 5px;
+    display:flex; justify-content:flex-end; padding:8px 8px 5px;
     border-top:2px solid #000; font-size:10px; background:#fff;
   }
 
   @media print {
-    /* margin 0 suppresses the browser’s own printed header/footer
-       (the URL on the left and the date / page title on the right) */
-    @page { size:A4 portrait; margin:0; }
+    /* Keep a real footer margin for the page counter. Defining a margin box
+       replaces the browser's URL/date headers and footers in supporting browsers. */
+    @page {
+      size:A4 portrait;
+      margin:0 0 14mm;
+      @bottom-center {
+        content:"Page " counter(page) " of " counter(pages);
+        font-family:Arial, Helvetica, sans-serif;
+        font-size:10px;
+        color:#000;
+      }
+    }
     .print-sheet {
       display:block !important;
       box-decoration-break:clone; -webkit-box-decoration-break:clone;
       padding:10mm;
     }
-    /* the footer bar repeats at the bottom of every printed page */
-    .print-sheet .rp-foot { position:fixed; left:10mm; right:10mm; bottom:7mm; }
+    /* The copy label repeats in the content area; page numbering is supplied
+       by the browser's page-margin counter above, not a fixed literal. */
+    .print-sheet .rp-foot { position:fixed; left:10mm; right:10mm; bottom:0; }
   }
 `;

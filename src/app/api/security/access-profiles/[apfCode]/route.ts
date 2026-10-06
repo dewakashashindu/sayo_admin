@@ -1,9 +1,9 @@
 // src/app/api/security/access-profiles/[apfCode]/route.ts
 // PUT    /api/security/access-profiles/APF0000001  { apfDes } → rename
-// DELETE /api/security/access-profiles/APF0000001            → remove it
+// DELETE /api/security/access-profiles/APF0000001            → remove if unused
 //
-// Deleting also removes the rows it granted and every assignment that pointed
-// at it (the screen asks first, and tells you how many people were holding it).
+// A profile cannot be deleted while any user's authorization rows still point
+// to it; unassign it from every user first.
 import { NextRequest, NextResponse } from "next/server";
 import { deleteProfile, profileExists, renameProfile, usersUsingProfile } from "@/lib/accessProfiles";
 import { requireAdminAccess } from "@/lib/sessionGuard";
@@ -50,17 +50,19 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ apfCode:
     if (!(await profileExists(apfCode))) return err(`Profile ${apfCode} was not found.`, 404);
 
     const holders = await usersUsingProfile(apfCode);
-    const force = req.nextUrl.searchParams.get("force") === "1";
-    if (holders > 0 && !force) {
+    if (holders > 0) {
       return err(
-        `Profile ${apfCode} is assigned to ${holders} user(s). Removing it takes those rights away from them. ` +
-          "Send ?force=1 to confirm.",
+        `Profile ${apfCode} is assigned to ${holders} user(s) and cannot be deleted. Unassign it from all users first.`,
         409,
       );
     }
+
+    /* deleteProfile checks again inside its transaction, so a concurrent
+       assignment cannot turn this preflight check into an orphaned reference. */
     await deleteProfile(apfCode);
-    return ok({ apfCode, users: holders });
+    return ok({ apfCode, users: 0 });
   } catch (e) {
-    return err(e instanceof Error ? e.message : "Could not delete the profile", 500);
+    const message = e instanceof Error ? e.message : "Could not delete the profile";
+    return err(message, /assigned to .* user|cannot be deleted while assigned/i.test(message) ? 409 : 500);
   }
 }

@@ -337,49 +337,42 @@ export async function renameProfile(apfCode: string, apfDes: string): Promise<vo
   );
 }
 
-/** How many people hold this profile (asked before a delete). */
+/** How many people hold this profile (used by the UI and delete guard). */
 export async function usersUsingProfile(apfCode: string): Promise<number> {
+  await ensureAuthTables();
   const rows = await prisma.$queryRawUnsafe<{ n: number }[]>(
-    `SELECT COUNT(DISTINCT RTRIM(UserID)) AS n FROM ${T_USER} WHERE Module = ? AND RTRIM(FuncID) = ?`,
+    `SELECT COUNT(DISTINCT RTRIM(UserID)) AS n FROM ${T_USER} WHERE RTRIM(Module) = ? AND RTRIM(FuncID) = ?`,
     MOD_ASSIGN,
     apfCode,
-  ).catch(() => [] as { n: number }[]);
+  );
   return Number(rows[0]?.n || 0);
 }
 
-/** The people holding a profile — used to re-write their rows after a delete. */
-async function profileHolders(apfCode: string): Promise<string[]> {
-  const rows = await prisma.$queryRawUnsafe<{ UserID: string }[]>(
-    `SELECT DISTINCT RTRIM(UserID) AS UserID FROM ${T_USER} WHERE Module = ? AND RTRIM(FuncID) = ?`,
-    MOD_ASSIGN,
-    apfCode,
-  ).catch(() => [] as { UserID: string }[]);
-  return rows.map((r) => trim(r.UserID)).filter(Boolean);
-}
-
-/** Remove the profile, its rows, and the rights it gave to whoever held it. */
+/** Remove an unused profile. Assigned profiles must be unassigned first. */
 export async function deleteProfile(apfCode: string): Promise<void> {
   await ensureAuthTables();
-  const holders = await profileHolders(apfCode);
 
   await prisma.$transaction(
     async (tx) => {
-      const n = await tx.$executeRawUnsafe(`DELETE FROM ${T_PROFILE} WHERE RTRIM(UserID) = ?`, apfCode);
-      await tx.$executeRawUnsafe(
-        `DELETE FROM ${T_USER} WHERE Module = ? AND RTRIM(FuncID) = ?`,
+      /* Re-check under a locking read so the assignment cannot be removed
+         between the route's friendly preflight check and this transaction. */
+      const assignments = await tx.$queryRawUnsafe<{ UserID: string }[]>(
+        `SELECT RTRIM(UserID) AS UserID FROM ${T_USER} WHERE RTRIM(Module) = ? AND RTRIM(FuncID) = ? FOR UPDATE`,
         MOD_ASSIGN,
         apfCode,
       );
+      const assignedUsers = new Set(assignments.map((row) => trim(row.UserID)).filter(Boolean));
+      if (assignedUsers.size > 0) {
+        throw new Error(
+          `Profile ${apfCode} is assigned to ${assignedUsers.size} user(s) and cannot be deleted. Unassign it from all users first.`,
+        );
+      }
+
+      const n = await tx.$executeRawUnsafe(`DELETE FROM ${T_PROFILE} WHERE RTRIM(UserID) = ?`, apfCode);
       if (Number(n) === 0) throw new Error(`Profile ${apfCode} was not found.`);
     },
     { timeout: 30000, maxWait: 10000 },
   );
-
-  /* whoever was holding it keeps their other profiles — re-write their rows */
-  for (const userId of holders) {
-    const rest = await profileCodesOfUser(userId);
-    await saveUserAssignments(userId, rest);
-  }
 }
 
 /* ─────────────────────── one profile's contents ─────────────────────── */

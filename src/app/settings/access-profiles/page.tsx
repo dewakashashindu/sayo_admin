@@ -32,6 +32,83 @@ interface ProfileRow { apfCode: string; apfDes: string; users: number; keys: num
 interface LocRow { locCode: string; locDes: string }
 const key = (s: string, a: string) => `${s}.${a}`;
 
+interface ActionChipsProps {
+  node: AccessNode;
+  granted: ReadonlySet<string>;
+  disabled: boolean;
+  onToggle: (screen: string, action: string) => void;
+}
+
+/**
+ * Keep row components at module scope. Declaring them inside
+ * AccessProfilesInner gives them a new React component identity on every
+ * permission toggle, remounting the tree and resetting its scroll position.
+ */
+function ActionChips({ node, granted, disabled, onToggle }: ActionChipsProps) {
+  return (
+    <div className="row-actions">
+      {node.actions.map((a) => {
+        const on = granted.has(key(node.code, a.code));
+        return (
+          <button
+            type="button"
+            key={a.code}
+            className={`act ${on ? 'on' : ''}`}
+            disabled={disabled}
+            onClick={() => onToggle(node.code, a.code)}
+            title={on ? `${node.name} — ${a.label}: allowed (click to remove)` : `${node.name} — ${a.label}: not allowed`}
+          >
+            <span className="tick">{on ? '✓' : ''}</span>
+            {a.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+interface AccessNodeRowProps extends ActionChipsProps {
+  depth: number;
+  collapsed: ReadonlySet<string>;
+  onToggleCollapse: (code: string) => void;
+}
+
+function AccessNodeRow({ node, depth, granted, disabled, onToggle, collapsed, onToggleCollapse }: AccessNodeRowProps) {
+  const hasKids = !!node.children?.length;
+  const open = hasKids ? !collapsed.has(node.code) : false;
+  return (
+    <>
+      <div
+        className={`row ${hasKids ? 'grp' : 'leaf'}`}
+        style={{ paddingLeft: 10 + depth * 18 }}
+      >
+        <button
+          type="button"
+          className="row-name"
+          onClick={() => hasKids && onToggleCollapse(node.code)}
+          title={hasKids ? (open ? 'Collapse' : 'Expand') : node.code}
+        >
+          <span className={`chev ${hasKids ? (open ? 'open' : '') : 'none'}`}>▸</span>
+          <span className="row-label">{node.name}</span>
+        </button>
+        <ActionChips node={node} granted={granted} disabled={disabled} onToggle={onToggle} />
+      </div>
+      {hasKids && open && node.children!.map((child) => (
+        <AccessNodeRow
+          key={child.code}
+          node={child}
+          depth={depth + 1}
+          granted={granted}
+          disabled={disabled}
+          onToggle={onToggle}
+          collapsed={collapsed}
+          onToggleCollapse={onToggleCollapse}
+        />
+      ))}
+    </>
+  );
+}
+
 function AccessProfilesInner() {
   const access = useMyAccess();
   const canPrintP       = !access.enforce || access.has("ACCESSP", "PRINT");
@@ -256,18 +333,23 @@ function AccessProfilesInner() {
 
   async function handleDelete() {
     if (isNew || !current) { showToast('Choose a profile first', true); return; }
-    const holders = current.users;
-    const warn = holders > 0
-      ? `Profile "${current.apfDes}" (${current.apfCode}) is assigned to ${holders} user(s). Deleting it takes those rights away from them. Continue?`
-      : `Delete profile "${current.apfDes}" (${current.apfCode})?`;
-    if (!window.confirm(warn)) return;
+    if (current.users > 0) {
+      showToast(`Cannot delete this profile while it is assigned to ${current.users} user(s). Unassign it first.`, true);
+      return;
+    }
+    if (!window.confirm(`Delete profile "${current.apfDes}" (${current.apfCode})?`)) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/security/access-profiles/${encodeURIComponent(current.apfCode)}?force=1`, { method: 'DELETE' });
+      const res = await fetch(`/api/security/access-profiles/${encodeURIComponent(current.apfCode)}`, { method: 'DELETE' });
       const json = await res.json() as { success?: boolean; message?: string };
       if (!res.ok || !json?.success) throw new Error(json?.message || 'Could not delete the profile');
       showToast('Profile deleted ✓');
-      startNew();
+      setSelected('');
+      setApfDes('');
+      setGranted(new Set());
+      setLoaded(new Set());
+      setLocs(new Set());
+      setLoadedLocs(new Set());
       await loadProfiles();
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Delete failed', true);
@@ -291,54 +373,6 @@ function AccessProfilesInner() {
   const roleLine = isNew
     ? 'A new profile — every screen starts unticked. Name it and press Save.'
     : `Editing ${apfDes} (${selected}) · held by ${current?.users ?? 0} user(s) · ${current?.keys ?? 0} permission(s) saved`;
-
-  function ActionChips({ node }: { node: AccessNode }) {
-    return (
-      <div className="row-actions">
-        {node.actions.map((a) => {
-          const on = granted.has(key(node.code, a.code));
-          return (
-            <button
-              type="button"
-              key={a.code}
-              className={`act ${on ? 'on' : ''}`}
-              disabled={disabled || busy}
-              onClick={() => toggle(node.code, a.code)}
-              title={on ? `${node.name} — ${a.label}: allowed (click to remove)` : `${node.name} — ${a.label}: not allowed`}
-            >
-              <span className="tick">{on ? '✓' : ''}</span>
-              {a.label}
-            </button>
-          );
-        })}
-      </div>
-    );
-  }
-
-  function NodeRow({ node, depth }: { node: AccessNode; depth: number }) {
-    const hasKids = !!node.children?.length;
-    const open = hasKids ? !collapsed.has(node.code) : false;
-    return (
-      <>
-        <div
-          className={`row ${hasKids ? 'grp' : 'leaf'}`}
-          style={{ paddingLeft: 10 + depth * 18 }}
-        >
-          <button
-            type="button"
-            className="row-name"
-            onClick={() => hasKids && toggleCollapse(node.code)}
-            title={hasKids ? (open ? 'Collapse' : 'Expand') : node.code}
-          >
-            <span className={`chev ${hasKids ? (open ? 'open' : '') : 'none'}`}>▸</span>
-            <span className="row-label">{node.name}</span>
-          </button>
-          <ActionChips node={node} />
-        </div>
-        {hasKids && open && node.children!.map((c) => <NodeRow key={c.code} node={c} depth={depth + 1} />)}
-      </>
-    );
-  }
 
   return (
     <>
@@ -452,7 +486,14 @@ function AccessProfilesInner() {
                     <button className="btn danger" onClick={cancel} disabled={!dirty || busy}>Cancel</button>
                   )}
                   {canSaveP && !isNew && (
-                    <button className="btn danger" onClick={() => void handleDelete()} disabled={busy}>Delete</button>
+                    <button
+                      className="btn danger"
+                      onClick={() => void handleDelete()}
+                      disabled={busy || !current || current.users > 0}
+                      title={current?.users ? 'Unassign this profile from all users before deleting it.' : 'Delete this unused profile.'}
+                    >
+                      Delete
+                    </button>
                   )}
                   {canSaveP && (
                     <button className="btn primary" onClick={() => void handleSave()} disabled={!dirty || busy}>
@@ -466,7 +507,7 @@ function AccessProfilesInner() {
                 <span>{roleLine}</span>
                 <span className="profile-sub">
                   The <b>Assign Profiles</b> screen is where a profile is given to people — one person may hold several,
-                  and their rights add up.
+                  and their rights add up. A profile assigned to any user must be unassigned before it can be deleted.
                 </span>
               </div>
 
@@ -479,7 +520,18 @@ function AccessProfilesInner() {
                   </span>
                 </div>
                 <div className="tree">
-                  {ACCESS_TREE.map((n) => <NodeRow key={n.code} node={n} depth={0} />)}
+                  {ACCESS_TREE.map((node) => (
+                    <AccessNodeRow
+                      key={node.code}
+                      node={node}
+                      depth={0}
+                      granted={granted}
+                      disabled={disabled || busy}
+                      onToggle={toggle}
+                      collapsed={collapsed}
+                      onToggleCollapse={toggleCollapse}
+                    />
+                  ))}
                 </div>
               </section>
 
