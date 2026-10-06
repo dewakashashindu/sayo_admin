@@ -1621,7 +1621,7 @@ export default function TechnicianAppointmentDetailPage() {
                             </button>
                           </div>
                           <p style={{ color: "#9ca3af", fontSize: 11, marginTop: 6 }}>
-                            Saved to this booking straight away (Tbl_BookingServiceItemAddTech).
+                            Saved to this booking straight away.
                             Available once the client is checked in, locked again after billing.
                           </p>
                         </div>

@@ -48,6 +48,8 @@ interface Item {
   category2: string;
   category3: string;
   category4: string;
+  /** The technician speciality this service belongs to (SpecAreaID). */
+  specAreaID: string;
   supID: string;
   rol: number;
   roq: number;
@@ -87,6 +89,12 @@ interface MasterOpt {
 interface SubUnit {
   id: string;
   des: string;
+}
+
+/** A row of tbl_technicianspecilities, for the Speciality dropdown. */
+interface SpecOpt {
+  id: string;
+  name: string;
 }
 
 interface RawItem {
@@ -150,6 +158,7 @@ function emptyItem(): Item {
     category2: "",
     category3: "",
     category4: "",
+    specAreaID: "",
     supID: "",
     rol: 0,
     roq: 0,
@@ -1490,7 +1499,7 @@ function LocationGrid({
                       color: "#0369a1",
                       fontWeight: 700,
                     }}
-                    title="Sourced from tbl_itemdetail — read only"
+                    title="Sourced from stock records — read only"
                   />
                 </td>
                 <td>
@@ -2270,6 +2279,10 @@ function ItemMasterPageContent() {
   const [category2, setCategory2] = useState<MasterOpt[]>([]);
   const [category3, setCategory3] = useState<MasterOpt[]>([]);
   const [category4, setCategory4] = useState<MasterOpt[]>([]);
+  /** Technician specialities (tbl_technicianspecilities) for the dropdown. */
+  const [specialities, setSpecialities] = useState<SpecOpt[]>([]);
+  /** False when the database has not run the tbl_itemmaster ALTER yet. */
+  const [specColumnReady, setSpecColumnReady] = useState(true);
 
   const [current, setCurrent] = useState<Item>(emptyItem());
   const [isNew, setIsNew] = useState(true);
@@ -2359,6 +2372,15 @@ function ItemMasterPageContent() {
   const hasRecipeRights = canHaveRecipe(current) && canRecipe;
   const primaryLocCode = recipeLocCodes[0] ?? current.locCode;
 
+  /* A row can point at a speciality that was deleted on the master screen
+     afterwards. Say so here rather than letting the save be refused. */
+  const specAreaIDError =
+    specColumnReady &&
+    current.specAreaID &&
+    !specialities.some((s) => s.id === current.specAreaID)
+      ? `${current.specAreaID} is not in the speciality list any more — pick another one, or None.`
+      : "";
+
   const ingredientItems = useMemo(
     () => allowedIngredients(currentType, allRawItems),
     [currentType, allRawItems],
@@ -2379,6 +2401,7 @@ function ItemMasterPageContent() {
         category2: MasterOpt[];
         category3: MasterOpt[];
         category4: MasterOpt[];
+        specColumn?: string | null;
       };
 
       if (!json.success) throw new Error("Failed");
@@ -2399,6 +2422,27 @@ function ItemMasterPageContent() {
       setCategory2([...json.category2].sort(byName));
       setCategory3([...json.category3].sort(byName));
       setCategory4([...json.category4].sort(byName));
+      setSpecColumnReady(Boolean(json.specColumn));
+
+      /* The speciality list is a separate read so a database without the two
+         tables never stops the item list itself from loading. */
+      try {
+        const specRes = await fetch("/api/administration/specialities", {
+          cache: "no-store",
+        });
+        const specJson = (await specRes.json()) as {
+          success: boolean;
+          data?: { SpecAreaID: string; Specilities: string }[];
+        };
+        setSpecialities(
+          (specJson?.data ?? []).map((s) => ({
+            id: s.SpecAreaID,
+            name: s.Specilities || s.SpecAreaID,
+          })),
+        );
+      } catch {
+        setSpecialities([]);
+      }
     } catch {
       showToast("Failed to load items", true);
     } finally {
@@ -3818,55 +3862,105 @@ function ItemMasterPageContent() {
                           borderTop: "1px solid #edf1f1",
                         }}
                       >
-                        <FieldRow label="Applicable Gender (MOF)">
-                          <div
-                            role="radiogroup"
-                            aria-label="Applicable gender"
-                            style={{
-                              display: "flex",
-                              flexWrap: "wrap",
-                              gap: 10,
-                            }}
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 18,
+                            alignItems: "flex-start",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <FieldRow label="Applicable Gender (MOF)">
+                            <div
+                              role="radiogroup"
+                              aria-label="Applicable gender"
+                              style={{
+                                display: "flex",
+                                flexWrap: "wrap",
+                                gap: 10,
+                              }}
+                            >
+                              {MOF_OPTIONS.map((option) => (
+                                <label
+                                  key={option.value}
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 7,
+                                    minHeight: 36,
+                                    padding: "0 12px",
+                                    border: `1.5px solid ${
+                                      current.mof === option.value
+                                        ? "#1e3a40"
+                                        : "#d1d9da"
+                                    }`,
+                                    borderRadius: 8,
+                                    background:
+                                      current.mof === option.value
+                                        ? "#eef5f5"
+                                        : "#fff",
+                                    color: "#1f2937",
+                                    fontSize: 12.5,
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                  }}
+                                >
+                                  <input
+                                    type="radio"
+                                    name="item-mof"
+                                    value={option.value}
+                                    checked={current.mof === option.value}
+                                    onChange={() =>
+                                      updateItem("mof", option.value)
+                                    }
+                                  />
+                                  {option.label}
+                                </label>
+                              ))}
+                            </div>
+                          </FieldRow>
+
+                          <FieldRow
+                            label="Speciality"
+                            htmlFor="itm-spec"
+                            error={specAreaIDError || undefined}
                           >
-                            {MOF_OPTIONS.map((option) => (
-                              <label
-                                key={option.value}
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 7,
-                                  minHeight: 36,
-                                  padding: "0 12px",
-                                  border: `1.5px solid ${
-                                    current.mof === option.value
-                                      ? "#1e3a40"
-                                      : "#d1d9da"
-                                  }`,
-                                  borderRadius: 8,
-                                  background:
-                                    current.mof === option.value
-                                      ? "#eef5f5"
-                                      : "#fff",
-                                  color: "#1f2937",
-                                  fontSize: 12.5,
-                                  fontWeight: 600,
-                                  cursor: "pointer",
-                                }}
-                              >
-                                <input
-                                  type="radio"
-                                  name="item-mof"
-                                  value={option.value}
-                                  checked={current.mof === option.value}
-                                  onChange={() =>
-                                    updateItem("mof", option.value)
-                                  }
-                                />
-                                {option.label}
-                              </label>
-                            ))}
-                          </div>
-                        </FieldRow>
+                            <select
+                              id="itm-spec"
+                              className="frm-select"
+                              value={current.specAreaID}
+                              /* The dropdown is about the speciality LIST, which
+                                 lives in its own table. It is available as soon
+                                 as that list has rows — whether the item can
+                                 STORE one is a separate question, answered
+                                 below. */
+                              disabled={specialities.length === 0}
+                              onChange={(event) =>
+                                updateItem("specAreaID", event.target.value)
+                              }
+                              style={{ minWidth: 230, maxWidth: 290 }}
+                            >
+                              <option value="">-- None --</option>
+                              {specialities.map((spec) => (
+                                <option key={spec.id} value={spec.id}>
+                                  {spec.name}
+                                </option>
+                              ))}
+                            </select>
+                            <p
+                              style={{
+                                fontSize: 11,
+                                color: "#6b7280",
+                                marginTop: 4,
+                                maxWidth: 290,
+                              }}
+                            >
+                              {specialities.length === 0
+                                ? "No specialities yet — add them on Administration → Technician Specialities."
+                                : "Technicians who are assigned this speciality can be picked for this service."}
+                            </p>
+                          </FieldRow>
+                        </div>
                       </div>
                     </Card>
 
@@ -4178,7 +4272,7 @@ function ItemMasterPageContent() {
                             fontWeight: 500,
                           }}
                         >
-                          Stock is sourced from <strong>tbl_itemdetail</strong>{" "}
+                          Stock is sourced from <strong>stock records</strong>{" "}
                           per location — shown read-only in Location Details.
                         </span>
                       </div>

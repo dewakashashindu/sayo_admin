@@ -13,15 +13,26 @@ interface UserRow {
   userId: string; logName: string; userName: string; groupId: string; groupDes: string;
   nic: string; contNo: string; email: string; workingLocID: string; enable: boolean; rmks: string;
   profiles: string[];            // access profile codes assigned on "Assign Profiles"
+  specialities: string[];        // technician speciality codes (tbl_technicianspecilityassignment)
 }
 interface GroupOpt { groupId: string; groupDes: string }
 interface LocOpt { LocCode: string; LocDes: string }
+interface SpecOpt { id: string; name: string }
 
 const EMPTY = {
   logName: '', userName: '', psw: '', psw2: '', groupId: '', nic: '', address: '',
-  workingLocID: '', contNo: '', email: '', rmks: '', enable: true,
+  workingLocID: '', contNo: '', email: '', rmks: '', enable: true, specAreaIDs: [] as string[],
 };
 type FormState = typeof EMPTY;
+
+function ICheck() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="20 6 9 17 4 12" />
+    </svg>
+  );
+}
 
 function UsersPageContent() {
   const access = useMyAccess();
@@ -39,6 +50,7 @@ function UsersPageContent() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [groups, setGroups] = useState<GroupOpt[]>([]);
   const [locations, setLocations] = useState<LocOpt[]>([]);
+  const [specialities, setSpecialities] = useState<SpecOpt[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -61,6 +73,21 @@ function UsersPageContent() {
       if (gJson?.success) setGroups(gJson.data ?? []);
       const locRows = (lJson?.data ?? lJson?.locations ?? []) as LocOpt[];
       if (lJson?.success) setLocations(locRows);
+
+      /* Technician specialities. Read on its own so a database without the two
+         tables still lets the user list load. */
+      try {
+        const specRes = await fetch('/api/administration/specialities', { cache: 'no-store' });
+        const specJson = await specRes.json() as {
+          success?: boolean;
+          data?: { SpecAreaID: string; Specilities: string }[];
+        };
+        setSpecialities((specJson?.data ?? []).map((s) => ({
+          id: s.SpecAreaID, name: s.Specilities || s.SpecAreaID,
+        })));
+      } catch {
+        setSpecialities([]);
+      }
     } catch (e) {
       showToast(e instanceof Error ? e.message : 'Could not load the users', true);
     } finally {
@@ -88,7 +115,9 @@ function UsersPageContent() {
       form.groupId !== current.groupId || form.nic !== current.nic ||
       form.contNo !== current.contNo || form.email !== current.email ||
       form.workingLocID !== current.workingLocID || form.rmks !== current.rmks ||
-      form.enable !== current.enable || form.psw !== ''
+      form.enable !== current.enable || form.psw !== '' ||
+      JSON.stringify([...form.specAreaIDs].sort()) !==
+        JSON.stringify([...(current.specialities ?? [])].sort())
     );
   }, [form, current, isNew]);
 
@@ -100,9 +129,26 @@ function UsersPageContent() {
       logName: u.logName, userName: u.userName, psw: '', psw2: '', groupId: u.groupId,
       nic: u.nic, address: '', workingLocID: u.workingLocID, contNo: u.contNo,
       email: u.email, rmks: u.rmks, enable: u.enable,
+      specAreaIDs: [...(u.specialities ?? [])],
     });
   }
   const clear = () => { setSelected(''); setForm(EMPTY); };
+
+  /** Add or remove one speciality code from the form. */
+  function toggleSpec(id: string) {
+    setForm((f) => ({
+      ...f,
+      specAreaIDs: f.specAreaIDs.includes(id)
+        ? f.specAreaIDs.filter((c) => c !== id)
+        : [...f.specAreaIDs, id],
+    }));
+  }
+
+  /* Picked on this person earlier, then deleted from the master list. Saying so
+     here beats letting Save fail with a bare code. */
+  const deadSpecs = specialities.length
+    ? form.specAreaIDs.filter((c) => !specialities.some((s) => s.id === c))
+    : [];
 
   async function handleSave() {
     if (!form.logName.trim()) { showToast('Type the login name first', true); return; }
@@ -115,12 +161,31 @@ function UsersPageContent() {
         logName: form.logName.trim(), userName: form.userName.trim(), groupId: form.groupId,
         nic: form.nic.trim(), address: form.address.trim(), workingLocID: form.workingLocID,
         contNo: form.contNo.trim(), email: form.email.trim(), rmks: form.rmks.trim(), enable: form.enable,
+        /* Saved into tbl_technicianspecilityassignment — one row per pick. */
+        specAreaIDs: form.specAreaIDs,
         ...(form.psw.trim() ? { psw: form.psw } : {}),
       };
       const res = isNew
         ? await fetch('/api/security/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, psw: form.psw }) })
         : await fetch(`/api/security/users/${encodeURIComponent(selected)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const json = await res.json() as { success?: boolean; data?: { userId: string }; message?: string };
+      const json = await res.json() as { success?: boolean; data?: { userId: string }; message?: string; unknown?: string[] };
+
+      /* A speciality that has been deleted from the master list since this
+         screen loaded comes back as 409. Drop the dead chips, re-read both
+         lists so the chips match what is really there, and let the person
+         press Save again — no field they were editing is lost, and nothing
+         has to be re-typed by hand. */
+      if (res.status === 409 && Array.isArray(json.unknown) && json.unknown.length > 0) {
+        const dead = json.unknown;
+        setForm((f) => ({ ...f, specAreaIDs: f.specAreaIDs.filter((c) => !dead.includes(c)) }));
+        await load();
+        showToast(
+          `${dead.length} specialit${dead.length === 1 ? 'y' : 'ies'} no longer exist and ${dead.length === 1 ? 'was' : 'were'} removed from the list. Pick again and save.`,
+          true,
+        );
+        return;
+      }
+
       if (!res.ok || !json?.success) throw new Error(json?.message || 'Save failed');
       showToast(isNew ? `User ${json.data?.userId} saved ✓` : 'User updated ✓');
       const keep = json.data?.userId || selected;
@@ -292,6 +357,50 @@ function UsersPageContent() {
                   <label>Remarks</label>
                   <input value={form.rmks} onChange={(e) => set({ rmks: e.target.value })} />
                 </div>
+
+                {/* Technician specialities — written to
+                    tbl_technicianspecilityassignment, one row per pick. */}
+                <div className="fld wide">
+                  <label>Specialities</label>
+                  {specialities.length === 0 ? (
+                    <p className="spec-empty">
+                      No specialities yet — add them on <b>Administration → Technician Specialities</b>.
+                      Leave this alone for anyone who is not a technician.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="spec-chips">
+                        {specialities.map((s) => {
+                          const on = form.specAreaIDs.includes(s.id);
+                          return (
+                            <button
+                              type="button"
+                              key={s.id}
+                              className={`spec-chip${on ? ' on' : ''}`}
+                              onClick={() => toggleSpec(s.id)}
+                              aria-pressed={on}
+                              title={s.id}
+                            >
+                              {on ? <ICheck /> : null}
+                              {s.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+<p className="spec-hint">
+                          {deadSpecs.length > 0 ? (
+                            <b className="spec-dead">
+                              {deadSpecs.join(', ')} — no longer in the list. {deadSpecs.length === 1 ? 'It has' : 'They have'} been removed; pick again to clear {deadSpecs.length === 1 ? 'it' : 'them'}.
+                            </b>
+                          ) : form.specAreaIDs.length === 0 ? (
+                            'None selected — tap a speciality to add it.'
+                          ) : (
+                            `${form.specAreaIDs.length} selected. Tap again to remove.`
+                          )}
+                        </p>
+                    </>
+                  )}
+                </div>
                 <label className="check">
                   <input type="checkbox" checked={form.enable} onChange={(e) => set({ enable: e.target.checked })} />
                   <span>Enabled — the user can log in</span>
@@ -382,6 +491,21 @@ const CSS = `
   .prof-note b{color:#1e3a40}
   .prof-warn{color:#b91c1c}
   .prof-sub{color:#7d8f94}
+  /* Technician speciality picker — a row of toggle chips reads faster than a
+     native multi-select when there are only a handful of choices. */
+  .spec-chips{display:flex;flex-wrap:wrap;gap:8px}
+  .spec-chip{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;
+    border:1.5px solid rgba(30,58,64,.18);border-radius:999px;background:#fff;color:#1e3a40;
+    font-family:inherit;font-size:12.5px;font-weight:700;cursor:pointer;transition:all .15s}
+  .spec-chip:hover{border-color:#1e3a40;background:#f4f8f8}
+  .spec-chip.on{background:#1e3a40;border-color:#1e3a40;color:#fff}
+  .spec-chip svg{stroke:currentColor}
+  .spec-hint{font-size:11.5px;color:#6f8388;margin-top:7px;line-height:1.5}
+  /* a pick whose speciality has since been deleted from the master list */
+  .spec-dead{color:#b45309}
+  .spec-empty{font-size:12.5px;color:#6f8388;background:#fff;border:1px dashed rgba(30,58,64,.22);
+    border-radius:10px;padding:10px 12px;line-height:1.6}
+  .spec-empty b{color:#1e3a40}
   .actions{display:flex;gap:10px;align-items:center;border-top:1px solid rgba(30,58,64,0.12);padding-top:16px}
   .actions .flex{flex:1}
   .btn{height:38px;padding:0 18px;border:1px solid rgba(30,58,64,0.2);border-radius:9px;background:#fff;color:#1e3a40;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit}

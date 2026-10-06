@@ -4,6 +4,16 @@ import { PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { ITEM_CODE_LENGTH } from "@/lib/itemCode";
 import { readJsonWithLimit, isPayloadTooLarge } from "@/lib/bodyLimit";
+import {
+  ITEM_SPEC_COLUMN_HINT,
+  ensureItemSpecColumn,
+  itemSpecKey,
+  itemSpecMap,
+  writeItemSpec,
+  logItemSpecColumnProblem,
+  normalizeSpecCodes,
+  unknownSpecCodes,
+} from "@/lib/technicianSpecialities";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,7 +76,23 @@ function normalizeServiceDuration(value: unknown, isService: boolean): number {
 
 export async function GET() {
   try {
-    const [items, locations, units, suppliers, cat1, cat2, cat3, cat4] =
+    /* The column is created here if this database has not got it yet, so the
+       Speciality picker is working by the time anybody opens the screen —
+       there is no setup step to remember and nothing to warn about. If the
+       database genuinely cannot be changed, specColumn stays null and the
+       SELECT below simply does not name the column. */
+    const specColumn = await ensureItemSpecColumn();
+    if (!specColumn) {
+      /* Server log only. */
+      console.warn(
+        "[GET /api/services] tbl_itemmaster.SpecAreaID is not on this database and " +
+          "could not be added. Run scripts/add-itemmaster-specaareaid.sql as an " +
+          "administrator. The Speciality dropdown will still list, but a pick " +
+          "cannot be saved until then.",
+      );
+    }
+
+    const [items, locations, units, suppliers, cat1, cat2, cat3, cat4, itemSpecs] =
       await Promise.all([
         // ItemPic (image blob) is not selected — the picture of the selected
         // item loads on demand through /image. Skiping the blobs keeps this
@@ -110,6 +136,11 @@ export async function GET() {
             UpdDate: true,
             UpdBy: true,
             Enable: true,
+            // SpecAreaID is deliberately absent from this select. It is not a
+            // Prisma field on every database, and naming it here makes the
+            // whole screen fail with "Unknown field" whenever the generated
+            // client is older than the schema. It is read separately, in raw
+            // SQL, just below.
           },
         }),
         prisma.tbl_LocationMaster.findMany({
@@ -133,6 +164,8 @@ export async function GET() {
         prisma.tbl_ItemCategory4.findMany({
           where: { Enable: true },
         }),
+        /* The specialities, read outside Prisma — see the note in the select. */
+        itemSpecMap(prisma),
       ]);
 
     let itemDetails: ItemDetailRow[] = [];
@@ -217,6 +250,9 @@ export async function GET() {
         itemCode,
         serviceItem: item.ServiceItem,
         mof: normalizeMof(item.MOF),
+        /* Which speciality this service belongs to. "" on a database that has
+           not got the column yet, and on rows that never picked one. */
+        specAreaID: itemSpecs.get(itemSpecKey(String(item.LocCode), String(item.ItemCode))) ?? "",
         itemDes: item.ItemDes,
         itemPrintDes: item.ItemPrintDes.trim(),
         masterUnitID: item.MasterUnitID.trim(),
@@ -264,6 +300,10 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       items: formattedItems,
+      /* Which column the pick will be written to, or null if the database
+         could not be changed — the screen uses it to grey out the picker
+         rather than to scold the user about it. */
+      specColumn: specColumn ?? null,
       locations: locations.map((location) => ({
         code: location.LocCode.trim(),
         name: location.LocDes,
@@ -338,6 +378,35 @@ export async function POST(req: NextRequest) {
     )
       ? body.locationDetails
       : [];
+
+    /* The speciality this service belongs to. One per item, so a single code
+       comes back from normalizeSpecCodes even if the screen sent an array. */
+    const specColumn = await ensureItemSpecColumn();
+    if (body.specAreaID !== undefined && body.specAreaID !== null && !specColumn) {
+      logItemSpecColumnProblem("POST /api/services");
+      return NextResponse.json(
+        { success: false, message: ITEM_SPEC_COLUMN_HINT },
+        { status: 503 },
+      );
+    }
+    let specAreaID = "";
+    if (specColumn) {
+      const [requested] = normalizeSpecCodes(body.specAreaID);
+      if (requested) {
+        const unknown = await unknownSpecCodes(prisma, [requested]);
+        if (unknown.length > 0) {
+          return NextResponse.json(
+            {
+              success: false,
+              message:
+                `Unknown speciality "${requested}". Add it on Administration → Technician Specialities first.`,
+            },
+            { status: 400 },
+          );
+        }
+        specAreaID = requested;
+      }
+    }
 
     const locations = await prisma.tbl_LocationMaster.findMany({
       where: { Enable: true },
@@ -444,6 +513,8 @@ export async function POST(req: NextRequest) {
                 body.serDuration ?? body.durationMin,
                 serviceItem,
               ),
+              // The speciality is written separately once the rows exist —
+              // see writeItemSpec below.
               ItemPic: picBuffer,
               CreateBy: text(body.createBy, "ADMIN"),
               UpdBy: text(body.updBy, "ADMIN"),
@@ -454,6 +525,14 @@ export async function POST(req: NextRequest) {
           });
 
           if (!firstCreated) firstCreated = createdRow;
+        }
+
+        /* Every location row of a brand new item gets the same speciality —
+           it is a property of the service, not of the shelf it sits on. Done
+           in the same transaction, so a failed write never leaves an item
+           without the speciality the user just chose. */
+        if (specColumn && specAreaID) {
+          await writeItemSpec(tx, "", itemCode, specAreaID);
         }
 
         return firstCreated;

@@ -4,6 +4,14 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 import { itemCode, legacyItemCode } from "@/lib/itemCode";
 import { readJsonWithLimit, isPayloadTooLarge } from "@/lib/bodyLimit";
+import {
+  ITEM_SPEC_COLUMN_HINT,
+  ensureItemSpecColumn,
+  writeItemSpec,
+  logItemSpecColumnProblem,
+  normalizeSpecCodes,
+  unknownSpecCodes,
+} from "@/lib/technicianSpecialities";
 
 export const runtime = "nodejs";
 
@@ -139,6 +147,40 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
       ? body.locationDetails
       : [];
 
+    /* The speciality this service belongs to. ensureItemSpecColumn adds the
+       column if this database has not got it yet, so a shop that never ran
+       the SQL by hand still saves. Resolved before the transaction starts so
+       a database that genuinely cannot be changed fails with a clear sentence
+       rather than an "Unknown column" halfway through the writes. */
+    const specColumn = await ensureItemSpecColumn();
+    const hasSpec =
+      body.specAreaID !== undefined && body.specAreaID !== null;
+    if (hasSpec && !specColumn) {
+      logItemSpecColumnProblem("PUT /api/services/[locCode]/[itemCode]");
+      return NextResponse.json(
+        { success: false, message: ITEM_SPEC_COLUMN_HINT },
+        { status: 503 },
+      );
+    }
+    let specAreaID = "";
+    if (specColumn && hasSpec) {
+      const [requested] = normalizeSpecCodes(body.specAreaID);
+      if (requested) {
+        const unknown = await unknownSpecCodes(prisma, [requested]);
+        if (unknown.length > 0) {
+          return NextResponse.json(
+            {
+              success: false,
+              message:
+                `Unknown speciality "${requested}". Add it on Administration → Technician Specialities first.`,
+            },
+            { status: 400 },
+          );
+        }
+        specAreaID = requested;
+      }
+    }
+
     const locations = await prisma.tbl_LocationMaster.findMany({
       where: { Enable: true },
       select: { LocCode: true, LocDes: true },
@@ -232,6 +274,8 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
               : Math.max(0, Number(baseRow.SerDuration) || 0)
             : 0,
           UpdBy: text(body.updBy, "ADMIN"),
+          // The speciality is written separately, after the rows exist — see
+          // writeItemSpec below.
           ...(picBuffer !== undefined ? { ItemPic: picBuffer } : {}),
         };
 
@@ -306,6 +350,14 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
               updatedBase = row;
             }
           }
+        }
+
+        /* A request that does not mention the speciality leaves the stored one
+           alone, exactly like MOF above — so this only runs when the screen
+           actually sent a value. Every location row of the item is updated
+           together, in the same transaction as everything else. */
+        if (specColumn && hasSpec) {
+          await writeItemSpec(tx, "", itemCode, specAreaID);
         }
 
         return updatedBase ?? baseRow;

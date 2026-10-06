@@ -75,7 +75,7 @@ export default function ComingSoonScreen({
               </p>
               <h1 style={{ color: '#1e3a40', fontSize: 28, fontWeight: 800, marginBottom: 8 }}>Coming soon</h1>
               <p style={{ color: '#6b7280', fontSize: 14, lineHeight: 1.6 }}>
-                This screen is not ready yet. Check back shortly.
+                 Check back shortly.
               </p>
             </div>
           </div>

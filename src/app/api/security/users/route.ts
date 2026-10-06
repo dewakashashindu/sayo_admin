@@ -11,6 +11,13 @@ import { superAdminUserId, superAdminGroupId } from "@/lib/superAdmin";
 import { requireAdminAccess } from "@/lib/sessionGuard";
 import { assignmentsByUser } from "@/lib/accessProfiles";
 import { passwordProblem } from "@/lib/passwordPolicy";
+import {
+  UnknownSpecialityError,
+  normalizeSpecCodes,
+  setUserSpecialities,
+  specialtiesByUser,
+  unknownSpecCodes,
+} from "@/lib/technicianSpecialities";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,12 +57,15 @@ export async function GET(req: NextRequest) {
     /* which access profiles each person holds — the list screen shows a count,
        and a warning when it is zero (nobody can do anything without one) */
     const assignments = await assignmentsByUser();
+    /* the technician specialities each person does (tbl_technicianspecilityassignment) */
+    const specs = await specialtiesByUser();
     return ok(rows.map((r) => ({
       userId: trim(r.UserId), logName: trim(r.LogName), userName: trim(r.UserName),
       groupId: trim(r.GroupId), groupDes: trim(r.GroupDes ?? ""),
       nic: trim(r.NIC), contNo: trim(r.ContNo), email: trim(r.Email),
       workingLocID: trim(r.WorkingLocID), enable: Boolean(Number(r.Enable)), rmks: trim(r.Rmks),
       profiles: assignments.get(trim(r.UserId)) ?? [],
+      specialities: specs.get(trim(r.UserId)) ?? [],
     })));
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not load the users", 500);
@@ -108,12 +118,40 @@ export async function POST(req: NextRequest) {
 
     // DOB/DOJ/DOL/Picture/CreateUser: DB defaults ('CURRENT_TIMESTAMP'/'0'/NULL)
     const pswHash = await bcrypt.hash(psw, 10);
-    await prisma.$executeRaw`
-      INSERT INTO tbl_userdetails
-        (UserId, NIC, LogName, PSW, GroupId, UserName, Address, WorkingLocID, ContNo, Email, Rmks, Enable)
-      VALUES
-        (${userId}, ${nic}, ${logName}, ${pswHash}, ${groupId}, ${userName}, ${address}, ${workingLocID}, ${contNo}, ${email}, ${rmks}, ${enable})
-    `;
+
+    /* Technician specialities this person does. The field is optional — a user
+       who is not a technician simply leaves it alone. An unknown code is
+       checked BEFORE the row is written, so a bad pick never leaves half a
+       user behind and the screen gets a 409 it can recover from. */
+    let specCodes: string[] = [];
+    if (body.specAreaIDs !== undefined) {
+      try {
+        specCodes = normalizeSpecCodes(body.specAreaIDs);
+      } catch (e) {
+        return err(e instanceof Error ? e.message : "Invalid speciality code.");
+      }
+      const unknown = await unknownSpecCodes(prisma, specCodes);
+      if (unknown.length > 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: new UnknownSpecialityError(unknown).message,
+            unknown,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        INSERT INTO tbl_userdetails
+          (UserId, NIC, LogName, PSW, GroupId, UserName, Address, WorkingLocID, ContNo, Email, Rmks, Enable)
+        VALUES
+          (${userId}, ${nic}, ${logName}, ${pswHash}, ${groupId}, ${userName}, ${address}, ${workingLocID}, ${contNo}, ${email}, ${rmks}, ${enable})
+      `;
+      if (specCodes.length > 0) await setUserSpecialities(tx, userId, specCodes);
+    });
     return ok({ userId, logName, userName, groupId, enable: Boolean(enable) }, 201);
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not save the user", 500);

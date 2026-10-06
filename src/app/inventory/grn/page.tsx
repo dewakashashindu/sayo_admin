@@ -1145,7 +1145,7 @@ function GrnPageContent() {
             ) : notifyContacts.length === 0 ? (
               <div className="po-note">
                 No staff record has a mobile number yet — type the number below instead.
-                (Staff numbers come from <b>tbl_userdetails.ContNo</b>.)
+                (Staff numbers come from the contact number saved on each user.)
               </div>
             ) : (
               <div className="notify-list">

@@ -12,6 +12,10 @@ import {
   type StoredBookingScheduleEntry,
 } from "@/lib/bookingSchedule";
 import { nextSerialTx, SERIAL_CODES } from "@/lib/serials";
+import {
+  itemSpecKey,
+  listSpecialities,
+} from "@/lib/technicianSpecialities";
 import { loadCompanyDay, loadStaffDays, resolveStaffWindow } from "@/lib/dayHours";
 import { clockInSpan, clockToMinutes, slotInList } from "@/lib/operatingHours";
 
@@ -846,79 +850,78 @@ export async function GET(req: NextRequest) {
           ItemPrintDes: true,
           Retailprice: true,
           SerDuration: true,
-          Category1: true,
-          Category2: true,
-          Category3: true,
-          Category4: true,
-          MasterUnitID: true,
         },
         orderBy: { ItemDes: "asc" },
       });
 
-      const [cat1Rows, cat2Rows, cat3Rows, cat4Rows] = await Promise.all([
-        prisma.tbl_ItemCategory1
-          .findMany({
-            where: { Enable: true },
-            select: { CatCode: true, CatDes: true },
-          })
-          .catch(() => []),
-        prisma.tbl_ItemCategory2
-          .findMany({
-            where: { Enable: true },
-            select: { CatCode: true, CatDes: true },
-          })
-          .catch(() => []),
-        prisma.tbl_ItemCategory3
-          .findMany({
-            where: { Enable: true },
-            select: { CatCode: true, CatDes: true },
-          })
-          .catch(() => []),
-        prisma.tbl_ItemCategory4
-          .findMany({
-            where: { Enable: true },
-            select: { CatCode: true, CatDes: true },
-          })
-          .catch(() => []),
+      /* The "Service Category" tabs on this screen are the technician
+         specialities, not the item category tree — so each service is filed
+         under the speciality Item Master put it in, and a service with no
+         speciality is left out entirely (it has not been filed anywhere yet). */
+      const [specialityRows, itemSpecRows] = await Promise.all([
+        listSpecialities(prisma),
+        prisma.$queryRawUnsafe<{ LocCode: string; ItemCode: string; SpecAreaID: string }[]>(
+          "SELECT RTRIM(LocCode) AS LocCode, RTRIM(ItemCode) AS ItemCode," +
+            " RTRIM(`SpecAreaID`) AS SpecAreaID" +
+            " FROM `tbl_itemmaster`" +
+            " WHERE RTRIM(LocCode) = ?" +
+            "   AND `SpecAreaID` IS NOT NULL AND RTRIM(`SpecAreaID`) <> ''",
+          locCode.trim(),
+        ),
       ]);
+      const specNameByCode = new Map<string, string>();
+      for (const spec of specialityRows) {
+        const code = String(spec.SpecAreaID ?? "").trim().toUpperCase();
+        if (code) specNameByCode.set(code, String(spec.Specilities ?? "").trim() || code);
+      }
+      const specCodeByItem = new Map<string, string>();
+      for (const row of itemSpecRows) {
+        const code = String(row.SpecAreaID ?? "").trim().toUpperCase();
+        if (!code) continue;
+        specCodeByItem.set(
+          itemSpecKey(row.LocCode, row.ItemCode),
+          code,
+        );
+      }
 
-      const c1Map = Object.fromEntries(
-        (cat1Rows as any[]).map((c) => [c.CatCode?.trim(), c.CatDes?.trim()]),
-      );
-      const c2Map = Object.fromEntries(
-        (cat2Rows as any[]).map((c) => [c.CatCode?.trim(), c.CatDes?.trim()]),
-      );
-      const c3Map = Object.fromEntries(
-        (cat3Rows as any[]).map((c) => [c.CatCode?.trim(), c.CatDes?.trim()]),
-      );
-      const c4Map = Object.fromEntries(
-        (cat4Rows as any[]).map((c) => [c.CatCode?.trim(), c.CatDes?.trim()]),
-      );
+      const enriched = services
+        .map((s) => {
+          const itemCode = s.ItemCode.trim();
+          const itemDes = s.ItemDes.trim();
+          const specCode =
+            /* The query above is already narrowed to this branch, so every row here
+             belongs to it. */
+            specCodeByItem.get(itemSpecKey(locCode, itemCode)) ?? "";
+          // Not filed under a speciality → not offered on this screen.
+          if (!specCode || !specNameByCode.has(specCode)) return null;
 
-      const enriched = services.map((s) => {
-        const itemCode = s.ItemCode.trim();
-        const itemDes = s.ItemDes.trim();
-        const category1 = s.Category1?.trim() || "";
-        const category2 = s.Category2?.trim() || "";
-        const category3 = s.Category3?.trim() || "";
-        const category4 = s.Category4?.trim() || "";
-
-        return {
-          itemCode,
-          itemDes,
-          itemPrintDes: s.ItemPrintDes?.trim() || itemDes,
-          price: Number(s.Retailprice ?? 0),
-          durationMin: Number(s.SerDuration) > 0 ? Number(s.SerDuration) : 30,
-          category1,
-          category1Label: c1Map[category1] || category1,
-          category2,
-          category2Label: c2Map[category2] || category2,
-          category3,
-          category3Label: c3Map[category3] || category3,
-          category4,
-          category4Label: c4Map[category4] || category4,
-        };
-      });
+          return {
+            itemCode,
+            itemDes,
+            itemPrintDes: s.ItemPrintDes?.trim() || itemDes,
+            price: Number(s.Retailprice ?? 0),
+            durationMin: Number(s.SerDuration) > 0 ? Number(s.SerDuration) : 30,
+            /* category1 IS the speciality now: the panel below already keys
+               its tabs and its filter off this one field, so reusing it keeps
+               the change small and the rest of the screen working. */
+            category1: specCode,
+            category1Label: specNameByCode.get(specCode) || specCode,
+            category2: "",
+            category2Label: "",
+            category3: "",
+            category3Label: "",
+            category4: "",
+            category4Label: "",
+          };
+        })
+        .filter((s): s is NonNullable<typeof s> => s !== null)
+        /* Tabs follow the order the specialities were entered on
+           Administration, so the list is stable between reloads. */
+        .sort((a, b) => {
+          const order = [...specNameByCode.keys()];
+          const diff = order.indexOf(a.category1) - order.indexOf(b.category1);
+          return diff !== 0 ? diff : a.itemDes.localeCompare(b.itemDes);
+        });
 
       return NextResponse.json({ success: true, data: enriched });
     }

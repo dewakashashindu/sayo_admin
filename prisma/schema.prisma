@@ -136,6 +136,11 @@ model Tbl_ItemMaster {
   SemiFinishedProd Boolean  @default(false)
   ItemPic          Bytes?
   SerDuration      Int      @default(0) @db.Int
+  /// The technician speciality this service belongs to — points at
+  /// tbl_technicianspecilities.SpecAreaID. One speciality per service.
+  /// Added by scripts/add-itemmaster-specaareaid.sql; empty on rows that
+  /// have not picked one.
+  SpecAreaID       String   @default("") @db.Char(10)
   CreateDate       DateTime @default(now()) @db.DateTime(0)
   CreateBy         String   @default("0") @db.Char(10)
   UpdDate          DateTime @default(now()) @updatedAt @db.DateTime(0)

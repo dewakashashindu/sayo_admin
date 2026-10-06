@@ -18,9 +18,9 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   'mode.confirmedBadge':     { en: 'Confirmed',                                       si: 'තහවුරු කර ඇත',                                ta: 'உறுதிப்படுத்தப்பட்டது' },
 
     'tabs.single':             { en: 'Single Booking',                                  si: 'තනි වෙන්කිරීම',                              ta: 'ஒற்றை முன்பதிவு' },
-  'tabs.multi':              { en: 'Multi Booking',                                   si: 'බහු වෙන්කිරීම',                               ta: 'பல முன்பதிவு' },
+  'tabs.multi':              { en: 'Group Booking',                                   si: 'කුණු වෙන්කිරීම',                             ta: 'குழு முன்பதிவு' },
 
-    'multi.title':             { en: 'Multi Booking',                                   si: 'බහු වෙන්කිරීම',                               ta: 'பல முன்பதிவு' },
+    'multi.title':             { en: 'Group Booking',                                   si: 'කුණු වෙන්කිරීම',                             ta: 'குழு முன்பதிவு' },
   'multi.intro':             { en: 'Book for several people at once. Each person gets their own services, provider and time slot.',
                                 si: 'එකවර පුද්ගලයින් කිහිප දෙනෙකු සඳහා වෙන්කරන්න. සෑම පුද්ගලයෙකුටම තමන්ගේම සේවා, සේවා සැපයුම්කරු සහ වේලාව ලැබේ.',
                                 ta: 'ஒரே நேரத்தில் பலருக்கு முன்பதிவு செய்யுங்கள். ஒவ்வொருவருக்கும் அவரவர் சேவைகள், வழங்குநர் மற்றும் நேரம் கிடைக்கும்.' },
@@ -103,6 +103,9 @@ export const translations: Record<string, { en: string; si: string; ta: string }
   's1.preferredDate':        { en: 'Preferred Date',                                  si: 'කාමති දිනය',                                   ta: 'விரும்பிய தேதி' },
   's1.missingBranch':        { en: 'Select a branch',                                 si: 'ශාඛාවක් තෝරන්න',                               ta: 'கிளையைத் தேர்ந்தெடுக்கவும்' },
   's1.missingGender':        { en: 'Select your gender',                              si: 'ඔබේ ස්ත්‍රී පුරුෂ භාවය තෝරන්න',                  ta: 'உங்கள் பாலினத்தைத் தேர்ந்தெடுக்கவும்' },
+  /* Shown under a contact number that came from the booking link. */
+  'gp.phoneFromLink':         { en: 'Taken from your booking link',                 si: 'ඔබගේ බුකිං ලින්කින් ගත්තා',                 ta: 'உங்கள் புகிவிற்கு இணைப்பிலிருந்து' },
+  'gp.editAnytime':           { en: 'you can change it',                          si: 'ඔබට ඕනම විට වෙනස් කළ හැක',                    ta: 'நீங்கள் எப்போது வேண்டுமானாலும் மாற்றலாம்' },
   's1.missingPhone':         { en: 'Enter your phone number',                         si: 'ඔබේ දුරකථන අංකය ඇතුළත් කරන්න',                  ta: 'உங்கள் தொலைபேசி எண்ணை உள்ளிடவும்' },
   's1.missingServices':      { en: 'Choose at least one service',                     si: 'අවම වශයෙන් එක් සේවයක්වත් තෝරන්න',                ta: 'குறைந்தது ஒரு சேவையையாவது தேர்ந்தெடுக்கவும்' },
   's1.missingProvider':      { en: 'Choose a provider',                               si: 'සේවා සැපයුම්කරුවෙකු තෝරන්න',                   ta: 'ஒரு வழங்குநரைத் தேர்ந்தெடுக்கவும்' },

@@ -10,6 +10,14 @@ import { isSuperAdminUserId } from "@/lib/superAdmin";
 import { forgetAccountState, requireAdminAccess } from "@/lib/sessionGuard";
 import { clearUserAssignments } from "@/lib/accessProfiles";
 import { passwordProblem } from "@/lib/passwordPolicy";
+import {
+  UnknownSpecialityError,
+  clearUserSpecialities,
+  normalizeSpecCodes,
+  setUserSpecialities,
+  specialtiesByUser,
+  unknownSpecCodes,
+} from "@/lib/technicianSpecialities";
 
 /* The hidden super administrator is invisible through this API: every verb
    answers exactly as it would for an id that does not exist. */
@@ -46,10 +54,12 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ userId: st
     `;
     if (!rows.length) return err(`User ${userId} was not found.`, 404);
     const r = rows[0];
+    const specs = await specialtiesByUser();
     return ok({
       userId: trim(r.UserId), nic: trim(r.NIC), logName: trim(r.LogName), groupId: trim(r.GroupId),
       userName: trim(r.UserName), address: trim(r.Address), workingLocID: trim(r.WorkingLocID),
       contNo: trim(r.ContNo), email: trim(r.Email), rmks: trim(r.Rmks), enable: Boolean(Number(r.Enable)),
+      specialities: specs.get(userId) ?? [],
     });
   } catch (e) {
     return err(e instanceof Error ? e.message : "Could not load the user", 500);
@@ -86,6 +96,35 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
       if (problem) return err(problem);
     }
 
+    /* Technician specialities. Left alone when the field is not in the request
+       at all, so an older client that does not send it cannot wipe a user's
+       list by accident. An empty array, on the other hand, really does mean
+       "this person does none". */
+    const touchesSpecs = body.specAreaIDs !== undefined && body.specAreaIDs !== null;
+    let specCodes: string[] = [];
+    if (touchesSpecs) {
+      try {
+        specCodes = normalizeSpecCodes(body.specAreaIDs);
+      } catch (e) {
+        return err(e instanceof Error ? e.message : "Invalid speciality code.");
+      }
+      /* Checked BEFORE the transaction opens. A code that has been deleted from
+         the master list must not roll back the name, phone and password the
+         user was editing — the screen needs the 409 to tell them which chip to
+         drop, and the row must stay untouched until they retry. */
+      const unknown = await unknownSpecCodes(prisma, specCodes);
+      if (unknown.length > 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: new UnknownSpecialityError(unknown).message,
+            unknown,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     if (groupId) {
       const g = await prisma.$queryRaw<{ n: number }[]>`
         SELECT COUNT(*) AS n FROM tbl_usergroups WHERE GroupId = ${groupId}
@@ -99,19 +138,30 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ userId: str
     if (Number(dup[0]?.n || 0) > 0) return err(`Login name '${logName}' is already taken.`, 409);
 
     // blank password field = keep the existing one
-    const n = newPsw
-      ? await prisma.$executeRaw`
-          UPDATE tbl_userdetails
-          SET NIC=${nic}, LogName=${logName}, PSW=${await bcrypt.hash(newPsw, 10)}, GroupId=${groupId}, UserName=${userName},
-              Address=${address}, WorkingLocID=${workingLocID}, ContNo=${contNo}, Email=${email}, Rmks=${rmks}, Enable=${enable}
-          WHERE UserId=${userId}
-        `
-      : await prisma.$executeRaw`
-          UPDATE tbl_userdetails
-          SET NIC=${nic}, LogName=${logName}, GroupId=${groupId}, UserName=${userName},
-              Address=${address}, WorkingLocID=${workingLocID}, ContNo=${contNo}, Email=${email}, Rmks=${rmks}, Enable=${enable}
-          WHERE UserId=${userId}
-        `;
+    const pswHash = newPsw ? await bcrypt.hash(newPsw, 10) : "";
+
+    const n = await prisma.$transaction(async (tx) => {
+      const written = newPsw
+        ? await tx.$executeRaw`
+            UPDATE tbl_userdetails
+            SET NIC=${nic}, LogName=${logName}, PSW=${pswHash}, GroupId=${groupId}, UserName=${userName},
+                Address=${address}, WorkingLocID=${workingLocID}, ContNo=${contNo}, Email=${email}, Rmks=${rmks}, Enable=${enable}
+            WHERE UserId=${userId}
+          `
+        : await tx.$executeRaw`
+            UPDATE tbl_userdetails
+            SET NIC=${nic}, LogName=${logName}, GroupId=${groupId}, UserName=${userName},
+                Address=${address}, WorkingLocID=${workingLocID}, ContNo=${contNo}, Email=${email}, Rmks=${rmks}, Enable=${enable}
+            WHERE UserId=${userId}
+          `;
+
+      // Same transaction, so the specialities and the user row are never out
+      // of step with each other.
+      if (touchesSpecs && Number(written) > 0) {
+        await setUserSpecialities(tx, userId, specCodes);
+      }
+      return written;
+    });
     if (Number(n) === 0) return err(`User ${userId} was not found.`, 404);
 
     /* 2026-09-29: switching the group does NOT touch permissions any more.
@@ -144,6 +194,9 @@ export async function DELETE(_req: NextRequest, ctx: { params: Promise<{ userId:
     if (Number(n) === 0) return err(`User ${userId} was not found.`, 404);
     // drop the deleted user's profile assignments too
     await clearUserAssignments(userId);
+    /* …and the speciality links, so a new account that later reuses the same
+       UserId does not inherit them. */
+    await clearUserSpecialities(prisma, userId).catch(() => undefined);
     forgetAccountState(userId);
     return ok({ userId });
   } catch (e) {

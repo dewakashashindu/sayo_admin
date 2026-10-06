@@ -1,51 +1,39 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { genderFromMof, type GenderValue } from '@/lib/genderOptions';
+import {
+  itemSpecKey,
+  itemSpecMap,
+  listSpecialities,
+  specialtiesByUser,
+} from '@/lib/technicianSpecialities';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-// The booking page exposes a fixed set of salon categories. We normalise the
-// free-text POS category names and staff specialities into these so that the
-// page's category tabs, provider filtering and i18n all keep working no matter
-// what codes/descriptions the live database uses.
-const KNOWN_CATEGORIES = ['BRIDAL', 'WAX', 'HAIR', 'SKIN', 'NAIL', 'BODY'];
-
-const CATEGORY_KEYWORDS: Record<string, string[]> = {
-  BRIDAL: ['bridal', 'wedding', 'makeup', 'groom', 'bride'],
-  WAX:    ['wax', 'waxing'],
-  HAIR:   ['hair', 'hairstyl', 'cut', 'color', 'bleach', 'keratin', 'styl'],
-  SKIN:   ['skin', 'facial', 'acne', 'cleanup', 'cleanse', 'glow', 'treatment'],
-  NAIL:   ['nail', 'manicure', 'pedicure', 'gel'],
-  BODY:   ['body', 'massage', 'scrub', 'wrap', 'aroma', 'spa'],
-};
+// ── what drives the booking page ───────────────────────────────────────────
+// The tabs, the service list and the staff list are all built from ONE thing:
+// the technician specialities on Administration → Technician Specialities.
+//
+//   a tab          = one speciality
+//   the services   = the items Item Master filed under that speciality
+//   the staff      = the users Users filed under that speciality
+//
+// So a speciality that is added there shows up as a tab, and an item or a
+// person that nobody has filed under one never appears anywhere. Nothing on
+// this page guesses from a category name any more — the tabs used to be six
+// hard-coded words matched against item descriptions, which put "Protein
+// Treatment" under SKIN and "Aroma Massage" under HAIR when the branch itself
+// said otherwise.
+//
+// A service item with no speciality is left out on purpose: it has not been
+// filed anywhere yet, and showing it under a made-up tab would hide the fact
+// that Item Master still has work to do.
 
 function clean(value: unknown): string {
   return String(value ?? '')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-function normalizeCode(value: unknown): string {
-  const code = clean(value).toUpperCase().replace(/[^A-Z0-9]+/g, '');
-  return code || 'OTHER';
-}
-
-/** Map an arbitrary POS category / speciality label to a known slot (or a
- *  derived code) so the booking page's category tabs stay meaningful. */
-function normalizeCategory(label: unknown): string {
-  const input = clean(label).toLowerCase();
-  if (!input) return 'OTHER';
-
-  for (const category of KNOWN_CATEGORIES) {
-    const keywords = CATEGORY_KEYWORDS[category];
-    if (keywords.some((keyword) => input.includes(keyword))) {
-      return category;
-    }
-  }
-
-  // No keyword match — keep the raw code (or its description) so nothing is lost.
-  return normalizeCode(label);
 }
 
 function formatPrice(value: unknown): string {
@@ -69,6 +57,7 @@ interface CatalogService {
   price: string;
   duration: string;
   durationMin: number;
+  /** The speciality code this item is filed under. */
   category: string;
   itemCode: string;
   locCode: string;
@@ -80,18 +69,21 @@ interface CatalogProvider {
   name: string;
   role: string;
   avatar: string;
+  /** Speciality codes this person does. */
   expertise: string[];
   techID: string;
 }
 
 export async function GET() {
   try {
-    const [locations, items, category1, category2, category3, category4, users, specialities, assignments] =
+    const [locations, items, users, specialities, assignments, itemSpecs] =
       await Promise.all([
         prisma.tbl_LocationMaster.findMany({
           where: { Enable: true },
           orderBy: { LocCode: 'asc' },
         }),
+        // ServiceItem = 1 only: this is the booking page, so physical stock
+        // never reaches it.
         prisma.tbl_ItemMaster.findMany({
           where: { Enable: true, ServiceItem: true },
           select: {
@@ -101,21 +93,14 @@ export async function GET() {
             ItemPrintDes: true,
             Retailprice: true,
             SerDuration: true,
-            Category1: true,
-            Category2: true,
-            Category3: true,
-            Category4: true,
             MOF: true,
             ServiceItem: true,
           },
         }),
-        prisma.tbl_ItemCategory1.findMany({ where: { Enable: true } }),
-        prisma.tbl_ItemCategory2.findMany({ where: { Enable: true } }),
-        prisma.tbl_ItemCategory3.findMany({ where: { Enable: true } }),
-        prisma.tbl_ItemCategory4.findMany({ where: { Enable: true } }),
         prisma.tbl_userdetails.findMany({ where: { Enable: true } }),
-        prisma.tbl_technicianspecilities.findMany(),
-        prisma.tbl_technicianspecilityassignment.findMany(),
+        listSpecialities(prisma),
+        specialtiesByUser(),
+        itemSpecMap(prisma),
       ]);
 
     const locMap = new Map<string, string>();
@@ -125,51 +110,43 @@ export async function GET() {
       locMap.set(code, name || code);
     }
 
-    /* One lookup for all four category levels. An item may be filed under
-       Category1..Category4, and the deepest level that actually holds a code
-       is the one the customer should see ("Hair > Treatment > Protein"). */
-    const catDesMap = new Map<string, string>();
-    for (const level of [category1, category2, category3, category4]) {
-      for (const row of level) {
-        catDesMap.set(clean(row.CatCode).toUpperCase(), clean(row.CatDes));
-      }
+    // code → name, for the tab labels and the little badges on each provider.
+    const categoryNames: Record<string, string> = {};
+    const specialitiesByCode = new Map<string, string>();
+    for (const spec of specialities) {
+      const code = clean(spec.SpecAreaID).toUpperCase();
+      if (!code) continue;
+      const name = clean(spec.Specilities) || code;
+      specialitiesByCode.set(code, name);
+      categoryNames[code] = name;
     }
 
     // Dedupe per BRANCH, not per code: the same service carries its own price,
     // duration and availability in every location, and the booking page shows
-    // only the chosen branch. Collapsing across branches (as this route used
-    // to) kept the first row seen and showed another branch's price.
+    // only the chosen branch.
     const seenKeys = new Set<string>();
     const seenServiceKeys = new Set<string>();
     const services: CatalogService[] = [];
 
     for (const item of items) {
       const locCode = clean(item.LocCode).toUpperCase();
-      if (!locMap.has(locCode)) continue;   // item filed under a disabled branch
+      if (!locMap.has(locCode)) continue; // item filed under a disabled branch
 
       const itemCode = clean(item.ItemCode);
       if (!itemCode) continue;
+
+      // Which speciality this service belongs to. Read outside Prisma because
+      // the column is worked out from the live database, not from a model.
+      const specialtyCode =
+        itemSpecs.get(itemSpecKey(clean(item.LocCode), itemCode)) ?? '';
+      // A service nobody has filed under a speciality is not on this page.
+      if (!specialtyCode) continue;
+      if (!specialitiesByCode.has(specialtyCode)) continue;
 
       const key = `${locCode}|${itemCode.toUpperCase()}`;
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);
 
-      /* Category1 is the top-level group the page's tabs follow; Category2-4
-         are refinements of it. Using the DEEPEST populated level instead put
-         "Protein Treatment" under SKIN (the word "treatment" is a SKIN
-         keyword) and "Aroma Massage" under BODY while its parent said HAIR —
-         the branch's own grouping is the one the customer recognises. */
-      const chain = [item.Category1, item.Category2, item.Category3, item.Category4];
-      let catLabel = '';
-      for (const raw of chain) {
-        const code = clean(raw);
-        if (!code) continue;
-        catLabel = catDesMap.get(code.toUpperCase()) || code;
-        break;
-      }
-      if (!catLabel) catLabel = clean(item.ItemDes) || itemCode;
-
-      const category = normalizeCategory(catLabel);
       const durationMin = Math.max(0, Math.floor(Number(item.SerDuration) || 0));
       const name = clean(item.ItemPrintDes) || clean(item.ItemDes) || itemCode;
       const price = formatPrice(item.Retailprice);
@@ -184,47 +161,32 @@ export async function GET() {
         price,
         duration: formatDuration(durationMin),
         durationMin,
-        category,
+        category: specialtyCode,
         itemCode,
         locCode,
         gender: genderFromMof(item.MOF),
       });
     }
 
-    /* Providers grouped by the branch they work at (display name), keyed by
-       the same name the user sees on the location cards. Only staff with an
-       area-of-speciality assignment are treated as bookable providers. */
-    const specByID = new Map<string, string>();
-    for (const spec of specialities) {
-      specByID.set(clean(spec.SpecAreaID).toUpperCase(), clean(spec.Specilities));
-    }
-
-    const assignmentsByUser = new Map<string, string[]>();
-    for (const assignment of assignments) {
-      const userID = clean(assignment.UserID).toUpperCase();
-      const specID = clean(assignment.SpecAreaID).toUpperCase();
-      const list = assignmentsByUser.get(userID) ?? [];
-      const label = specByID.get(specID);
-      if (label) list.push(label);
-      assignmentsByUser.set(userID, list);
-    }
-
+    /* Staff grouped by the branch they work at (display name). Only people who
+       hold at least one speciality are bookable — that is the same rule the
+       page has always used, now with a real source for the list. */
     const providersByLocation: Record<string, CatalogProvider[]> = {};
     for (const user of users) {
       const userID = clean(user.UserId);
-      const expertiseRaw = assignmentsByUser.get(userID.toUpperCase()) ?? [];
-      if (expertiseRaw.length === 0) continue; // not a bookable service provider
+      const held = assignments.get(userID) ?? [];
+      const expertise = Array.from(
+        new Set(held.map((c) => c.toUpperCase()).filter((c) => specialitiesByCode.has(c))),
+      );
+      if (expertise.length === 0) continue; // not a bookable service provider
 
       const locCode = clean(user.WorkingLocID).toUpperCase();
       const branchName = locMap.get(locCode);
       if (!branchName) continue; // staff not assigned to an enabled branch
 
-      const expertise = Array.from(new Set(expertiseRaw.map(normalizeCategory)));
-      const role = clean(user.Rmks) || 'Specialist';
-
       const provider: CatalogProvider = {
         name: clean(user.UserName) || userID,
-        role,
+        role: clean(user.Rmks) || 'Specialist',
         avatar: avatarLetter(clean(user.UserName) || userID),
         expertise,
         techID: userID,
@@ -235,23 +197,24 @@ export async function GET() {
       providersByLocation[branchName] = branchProviders;
     }
 
-    // Category tabs: known categories first, then any derived/extra codes. The
-    // union is taken over every branch on purpose — the page narrows the list
-    // again for the chosen branch and gender, and a tab that vanished when a
-    // branch was picked read as a bug.
-    const serviceCategories = Array.from(
-      new Set(services.map((service) => service.category)),
-    );
-    const orderedCategories = [
-      ...KNOWN_CATEGORIES.filter((category) => serviceCategories.includes(category)),
-      ...serviceCategories.filter(
-        (category) => !KNOWN_CATEGORIES.includes(category),
-      ),
-    ];
+    /* Tabs follow the order the specialities were entered on Administration,
+       and only the ones that actually have something behind them — a tab that
+       can never show a service reads as a broken page. */
+    const inUse = new Set(services.map((service) => service.category));
+    const orderedCategories = [...specialitiesByCode.keys()].filter((code) => inUse.has(code));
 
-    // No usable service data → tell the client to keep its curated default.
+    // No usable service data → tell the client there is nothing, so it can say
+    // so rather than falling back to a made-up list of services.
     if (services.length === 0) {
-      return NextResponse.json({ success: true, empty: true });
+      return NextResponse.json({
+        success: true,
+        empty: true,
+        locations: locations.map((location) => ({
+          code: clean(location.LocCode),
+          name: locMap.get(clean(location.LocCode).toUpperCase()) || clean(location.LocCode),
+        })),
+        categoryNames,
+      });
     }
 
     return NextResponse.json({
@@ -262,6 +225,7 @@ export async function GET() {
         name: locMap.get(clean(location.LocCode).toUpperCase()) || clean(location.LocCode),
       })),
       categories: orderedCategories,
+      categoryNames,
       services,
       providers: providersByLocation,
     });

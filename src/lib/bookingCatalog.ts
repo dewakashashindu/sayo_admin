@@ -30,6 +30,8 @@ export interface CatalogLocation {
 export interface Catalog {
   locations: CatalogLocation[];
   categories: string[];
+  /** Speciality code → the name the shop gave it, for the tab labels. */
+  categoryNames: Record<string, string>;
   servicesByCategory: Record<string, CatalogService[]>;
   /** Flat list, so the page can narrow it by branch and gender. */
   services: CatalogService[];
@@ -42,6 +44,7 @@ export interface CatalogApiResponse {
   empty?: boolean;
   locations?: CatalogLocation[];
   categories?: string[];
+  categoryNames?: Record<string, string>;
   services?: CatalogService[];
   providers?: Record<string, CatalogProvider[]>;
 }
@@ -67,8 +70,8 @@ export function buildCatalogFromApi(
     servicesByCategory[service.category] = bucket;
   }
 
-  // Keep a stable category order (known first, then the rest) with only the
-  // categories that actually have services.
+  // Keep the order the specialities were entered on the master screen, and drop
+  // the ones that have nothing behind them.
   const presentCategories = categories.filter(
     (category) => (servicesByCategory[category]?.length ?? 0) > 0,
   );
@@ -80,10 +83,20 @@ export function buildCatalogFromApi(
   return {
     locations,
     categories: orderedCategories,
+    categoryNames: data.categoryNames ?? {},
     servicesByCategory,
     services,
     providersByLocation: providers,
   };
+}
+
+/** What a tab should read: the shop's own name for the speciality, falling
+ *  back to the code if the name ever goes missing. */
+export function categoryLabel(
+  categoryNames: Record<string, string>,
+  code: string,
+): string {
+  return categoryNames[code] ?? code;
 }
 
 /**

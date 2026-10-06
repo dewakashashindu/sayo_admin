@@ -106,6 +106,7 @@ export const ACCESS_TREE: AccessNode[] = [
     children: [
       { code: "ADSCH", name: "Staff Schedules",   actions: [ACCESS, A("SAVE"), A("DELETE")] },
       { code: "ADHRS", name: "Operational Hours", actions: [ACCESS, A("SAVE")] },
+      { code: "ADSPEC", name: "Technician Specialities", actions: [ACCESS, A("SAVE"), A("DELETE")] },
       {
         code: "USERGEN", name: "User Creation", actions: [ACCESS],
         children: [

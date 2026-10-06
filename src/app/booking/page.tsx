@@ -5,6 +5,7 @@ import { useState, useEffect, useRef, useMemo, createContext, useContext, type D
 import { useRouter } from 'next/navigation';
 import {
   buildCatalogFromApi,
+  categoryLabel,
   filterServicesFor,
   locCodeForName,
   type Catalog,
@@ -177,6 +178,7 @@ function useDayHours() {
 const DEFAULT_CATALOG: Catalog = {
   locations: LOCATIONS.map((name) => ({ code: name, name })),
   categories: CATEGORIES,
+  categoryNames: {},
   // The curated service/provider entries carry exactly the fields the UI reads.
   servicesByCategory: ALL_SERVICES as unknown as Record<string, CatalogService[]>,
   // The curated entries carry no branch/gender of their own, so they are
@@ -385,6 +387,11 @@ const globalCss = `
   .phone-plain-input{background:transparent;border:none;border-bottom:1.5px solid rgba(255,255,255,0.18);padding:0.3rem 0.1rem;font-family:var(--app-font);font-size:0.95rem;font-weight:600;color:#fff;outline:none;width:100%;text-align:right;transition:border-color 0.22s;color-scheme:dark;}
   .phone-plain-input:focus{border-color:#B8860B;}
   .phone-plain-input::placeholder{color:rgba(255,255,255,0.28);}
+  /* The same field in the body of step 1, where it sits beside the gender
+     picker: left-aligned and the same height, so the two read as one row. */
+  .phone-field-input{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.14);border-radius:0.625rem;padding:0.7rem 0.8rem;font-family:var(--app-font);font-size:0.88rem;font-weight:600;color:#fff;outline:none;width:100%;text-align:left;transition:border-color 0.22s;color-scheme:dark;}
+  .phone-field-input:focus{border-color:rgba(184,134,11,0.45);}
+  .phone-field-input::placeholder{color:rgba(255,255,255,0.28);font-weight:400;}
 
   .btn-gold {cursor:pointer;outline:none;border:none;font-family:var(--app-font);font-weight:600;letter-spacing:0.06em;border-radius:0.75rem;background:#B8860B;color:#fff;display:inline-flex;align-items:center;justify-content:center;gap:0.45rem;transition:transform 0.2s,box-shadow 0.2s,opacity 0.2s;}
   .btn-gold:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 24px rgba(184,134,11,0.38);}
@@ -413,9 +420,6 @@ const globalCss = `
   .loc-card-active{border-color:#B8860B !important;background:rgba(184,134,11,0.14) !important;}
   .spinner-sm{width:1rem;height:1rem;border:2px solid rgba(34,197,94,0.3);border-top-color:#22c55e;border-radius:50%;display:inline-block;animation:spin 0.7s linear infinite;}
 
-  .appt-header-row{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:1.5rem;}
-  .appt-header-left{flex:1 1 180px;min-width:160px;}
-  .appt-header-right{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:1.1rem;text-align:right;}
 
   .time-section-card{border-radius:1rem;border:1.5px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.025);overflow:hidden;margin-top:0.25rem;}
   .time-section-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;padding:0.85rem 1rem 0.75rem;border-bottom:1px solid rgba(255,255,255,0.07);}
@@ -423,14 +427,12 @@ const globalCss = `
 
   @media(max-width:600px){
     .time-grid{grid-template-columns:repeat(3,1fr) !important;}
-    .appt-header-right{align-items:flex-start !important;text-align:left !important;}
     .phone-plain-input{text-align:left !important;}
     .loc-cards-wrap{grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));}
     .time-section-header{flex-direction:column;align-items:flex-start;}   
   }
   @media(max-width:767px){
     .time-grid{grid-template-columns:repeat(3,1fr) !important;}
-    .appt-header-right{align-items:flex-start !important;text-align:left !important;}
     .phone-plain-input{text-align:left !important;}
     .loc-cards-wrap{grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));}
     .time-section-header{flex-direction:column;align-items:flex-start;}
@@ -803,12 +805,59 @@ function GenderInline({ value, onChange, lang }: { value: GenderValue | ''; onCh
   );
 }
 
-function PhoneInline({ phone, autoFilled, onChange, lang }: { phone: string; autoFilled: boolean; onChange: (v: string) => void; lang: Lang }) {
-  if (autoFilled) return <p style={{ color: tokens.color.white, fontFamily: tokens.font.family, fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>{phone}</p>;
+/* The contact number is read-only once the customer's account has one, and an
+   input only while it is still missing.
+
+   The number is the account's own, filled in from the signed-in customer, so
+   letting it be retyped here just invited a typo into a number the shop then
+   called and SMS'd — and the booking was saved under the account number
+   anyway. So: shown, never edited. Someone booking for a different number is a
+   different account, and the field below it is where that is solved. */
+function PhoneInline({ phone, onChange, lang, field = false }: { phone: string; onChange: (v: string) => void; lang: Lang; field?: boolean }) {
+  if (phone.trim()) {
+    return (
+      <p
+        style={{
+          color: tokens.color.white,
+          fontFamily: tokens.font.family,
+          fontSize: field ? '0.88rem' : '0.95rem',
+          fontWeight: 600,
+          margin: 0,
+          padding: field ? '0.7rem 0.8rem' : '0.3rem 0.1rem',
+          background: field ? 'rgba(255,255,255,0.05)' : 'transparent',
+          border: field ? '1px solid rgba(184,134,11,0.45)' : 'none',
+          borderRadius: field ? '0.625rem' : 0,
+          userSelect: 'text',
+        }}
+      >
+        {phone}
+      </p>
+    );
+  }
   return (
     <div style={{ width: '100%' }}>
-      <input type="tel" className="phone-plain-input" placeholder="07X XXX XXXX" value={phone} onChange={e => onChange(e.target.value)} />
-      {!phone.trim() && <p style={{ color: 'rgba(239,68,68,0.75)', fontSize: '0.68rem', fontFamily: tokens.font.family, marginTop: '0.25rem', textAlign: 'right' }}>⚠ {t(lang, 'gp.required')}</p>}
+      <input type="tel" className={field ? 'phone-field-input' : 'phone-plain-input'} placeholder="07X XXX XXXX" value={phone} onChange={e => onChange(e.target.value)} />
+      <p style={{ color: 'rgba(239,68,68,0.75)', fontSize: '0.68rem', fontFamily: tokens.font.family, marginTop: '0.25rem', textAlign: field ? 'left' : 'right' }}>⚠ {t(lang, 'gp.required')}</p>
+    </div>
+  );
+}
+
+/** The same field, with a phone glyph in front of it, for the body of step 1. */
+function ContactPhoneField({ phone, onChange, lang }: { phone: string; onChange: (v: string) => void; lang: Lang }) {
+  return (
+    <div style={{ position: 'relative' }}>
+      <span
+        style={{
+          position: 'absolute', left: '0.85rem', top: '50%', transform: 'translateY(-50%)',
+          display: 'flex', pointerEvents: 'none',
+          color: phone.trim() ? tokens.color.gold : tokens.color.whiteFaint,
+        }}
+      >
+        <Ico.Phone s={14} />
+      </span>
+      <div style={{ paddingLeft: '2.4rem' }}>
+        <PhoneInline phone={phone} onChange={onChange} lang={lang} field />
+      </div>
     </div>
   );
 }
@@ -880,18 +929,11 @@ function BookingGenderSelect({ value, onChange, options, placeholder }: {
   );
 }
 
-function GenderPhoneCorner({ phone, onPhoneChange, phoneAutoFilled, lang }: {
-  phone: string; onPhoneChange: (v: string) => void; phoneAutoFilled: boolean; lang: Lang;
-}) {
-  return (
-    <div className="appt-header-right">
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem', width: '100%' }}>
-        <Label text={t(lang, 'gp.contact')} />
-        <PhoneInline phone={phone} autoFilled={phoneAutoFilled} onChange={onPhoneChange} lang={lang} />
-      </div>
-    </div>
-  );
-}
+/* The header corner used to carry the contact number, and before that the
+   gender. Both now live together in the body of step 1, under the branch
+   cards, as ordinary form fields — an answer the customer gives first belongs
+   where the other answers are, not floating in the corner of a heading. The
+   heading is left alone. */
 
 interface TimeSectionCardProps {
   date:                 string;
@@ -1211,7 +1253,11 @@ function MultiGuestEditor({
 
   const isMe          = index === 0;
   const label         = guestLabel(index, lang);
-  const { services, providersByLocation, categories, locations } = useCatalog();
+  const { services, providersByLocation, categories, locations, categoryNames } = useCatalog();
+
+  /* A tab reads as the name the shop gave the speciality. `catName` only knows
+     the six old hard-coded words, so it is the fallback, not the first choice. */
+  const catLabel = (code: string) => categoryNames[code] || catName(lang, code);
 
   /* The multi tab used to read the raw per-category list, which holds EVERY
      branch's rows — so the same service showed up once per branch (and, in a
@@ -1418,7 +1464,7 @@ function MultiGuestEditor({
                 const has = guestCats.includes(catSel);
                 return (
                   <button key={catSel} type="button" className={`cat-tab ${activeCat === catSel ? 'cat-tab-active' : 'cat-tab-inactive'}`} onClick={() => onPatch({ activeCat: catSel })}>
-                    {catName(lang, catSel)}{has && <span className="cat-tab-dot" />}
+                    {catLabel(catSel)}{has && <span className="cat-tab-dot" />}
                   </button>
                 );
               })}
@@ -1462,7 +1508,7 @@ function MultiGuestEditor({
               <div className="info-box" style={{ marginBottom: '0.8rem', display: 'flex', gap: '0.5rem' }}><Ico.Info s={13} /><span>{t(lang, 's1.selectBranchFirst')}</span></div>
             ) : filteredProvs.length === 0 ? (
               <p style={{ color: tokens.color.whiteFaint, fontSize: '0.8rem', marginBottom: '0.8rem', fontFamily: tokens.font.family }}>
-                {t(lang, 's1.noProvidersFor', { cats: catFilter.map(c => catName(lang, c)).join(', '), loc: locName(lang, location) })}
+                {t(lang, 's1.noProvidersFor', { cats: catFilter.map(c => catLabel(c)).join(', '), loc: locName(lang, location) })}
               </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', marginBottom: '0.6rem' }}>
@@ -1477,7 +1523,7 @@ function MultiGuestEditor({
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.28rem', marginTop: '0.32rem' }}>
                           {p.expertise.map(e => {
                             const m = catFilter.includes(e);
-                            return <span key={e} style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.07em', borderRadius: '999px', padding: '0.12rem 0.45rem', fontFamily: tokens.font.family, background: m ? 'rgba(184,134,11,0.25)' : 'rgba(255,255,255,0.06)', color: m ? tokens.color.gold : tokens.color.whiteFaint, border: `1px solid ${m ? 'rgba(184,134,11,0.5)' : 'rgba(255,255,255,0.12)'}` }}>{catName(lang, e)}</span>;
+                            return <span key={e} style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.07em', borderRadius: '999px', padding: '0.12rem 0.45rem', fontFamily: tokens.font.family, background: m ? 'rgba(184,134,11,0.25)' : 'rgba(255,255,255,0.06)', color: m ? tokens.color.gold : tokens.color.whiteFaint, border: `1px solid ${m ? 'rgba(184,134,11,0.5)' : 'rgba(255,255,255,0.12)'}` }}>{catLabel(e)}</span>;
                           })}
                         </div>
                       </div>
@@ -1962,7 +2008,6 @@ export default function BookingPage() {
   const [loading,   setLoading]   = useState(false);
   const [apiError,  setApiError]  = useState('');
   const [bookingId, setBookingId] = useState<number | null>(null);
-  const [phoneAutoFilled, setPhoneAutoFilled] = useState(false);
 
   const [bookedSlots,   setBookedSlots]   = useState<Set<string>>(new Set());
   const [providerSlots, setProviderSlots] = useState<Record<string, string[]>>({});
@@ -2032,7 +2077,7 @@ export default function BookingPage() {
         if (!u) { router.replace('/login?redirect=/booking'); return; }
         if (u.name)  setName(u.name);
         if (u.email && u.email.includes('@')) setEmail(u.email);
-        if (u.phoneNumber?.trim()) { setPhone(u.phoneNumber.trim()); setPhoneAutoFilled(true); }
+        if (u.phoneNumber?.trim()) { setPhone(u.phoneNumber.trim()); }
         if (u.gender?.trim()) {
           const rg = u.gender.trim().toLowerCase();
           const m  = GENDER_OPTIONS.find(g => g.value === rg || g.label.toLowerCase() === rg || rg.startsWith(g.value.split('_')[0]));
@@ -2054,6 +2099,9 @@ export default function BookingPage() {
   const { list: visibleServices, fallback: genderFallback } =
     filterServicesFor(catalog.services, selectedLocCode, gender);
   const branchCategories   = Array.from(new Set(visibleServices.map((s) => s.category)));
+  /* A tab reads as the name the shop gave the speciality. `catName` only knows
+     the six old hard-coded words, so it is the fallback, not the first choice. */
+  const catLabel = (code: string) => catalog.categoryNames[code] || catName(lang, code);
   const tabCategories      = branchCategories.length > 0
     ? catalog.categories.filter((c) => branchCategories.includes(c))
     : catalog.categories;
@@ -2488,13 +2536,45 @@ export default function BookingPage() {
               <div className="reveal-up">
                 <Card mode={mode}>
 
-                  {/* header row */}
-                  <div className="appt-header-row">
-                    <div className="appt-header-left">
+                  {/* header */}
+                  <div
+                    style={{
+                      marginBottom: '1.5rem',
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(0, 1fr) minmax(220px, 0.9fr)',
+                      gap: '1rem',
+                      alignItems: 'end',
+                    }}
+                  >
+                    <div>
                       <h2 style={{ color: tokens.color.white, fontSize: '1.25rem', fontWeight: 600, fontFamily: tokens.font.family, marginBottom: '0.25rem' }}>{t(lang, 's1.buildYourAppointment')}</h2>
                       <p style={{ color: tokens.color.whiteFaint, fontSize: '0.78rem', fontFamily: tokens.font.family, lineHeight: 1.55 }}>{t(lang, 's1.intro')}</p>
                     </div>
-                    <GenderPhoneCorner phone={phone} onPhoneChange={setPhone} phoneAutoFilled={phoneAutoFilled} lang={lang} />
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(0, 0.85fr) minmax(0, 1.15fr)',
+                        gap: '0.65rem',
+                      }}
+                    >
+                      <div>
+                        <Label text={t(lang, 'gp.gender')} />
+                        <BookingGenderSelect
+                          value={gender}
+                          onChange={handleGenderChange}
+                          options={GENDER_OPTIONS.map((g) => ({ value: g.value, label: t(lang, `gender.${g.value}`) }))}
+                          placeholder={t(lang, 'gp.selectGender')}
+                        />
+                      </div>
+                      <div>
+                        <Label text={t(lang, 'gp.contact')} />
+                        <ContactPhoneField
+                          phone={phone}
+                          onChange={setPhone}
+                          lang={lang}
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   <div className="divider" style={{ margin: '0 0 1.4rem' }} />
@@ -2529,17 +2609,6 @@ export default function BookingPage() {
 
                   {location && (
                   <>
-                  {/* GENDER — decides which services are offered */}
-                  <div style={{ marginBottom: '1.4rem', maxWidth: '280px' }}>
-                    <Label text={t(lang, 'gp.gender')} />
-                    <BookingGenderSelect
-                      value={gender}
-                      onChange={handleGenderChange}
-                      options={GENDER_OPTIONS.map((g) => ({ value: g.value, label: t(lang, `gender.${g.value}`) }))}
-                      placeholder={t(lang, 'gp.selectGender')}
-                    />
-                  </div>
-
                   {/* SERVICES */}
                   <Label text={t(lang, 's1.category')} />
                   <div className="cat-tabs-wrap" style={{ marginBottom: '1rem' }}>
@@ -2547,7 +2616,7 @@ export default function BookingPage() {
                       const has = selectedCats.includes(catSel);
                       return (
                         <button key={catSel} type="button" className={`cat-tab ${category === catSel ? 'cat-tab-active' : 'cat-tab-inactive'}`} onClick={() => setCategory(catSel)}>
-                          {catName(lang, catSel)}{has && <span className="cat-tab-dot" />}
+                          {catLabel(catSel)}{has && <span className="cat-tab-dot" />}
                         </button>
                       );
                     })}
@@ -2611,14 +2680,14 @@ export default function BookingPage() {
                     <div className="info-box" style={{ marginBottom: '1.2rem', display: 'flex', gap: '0.5rem' }}><Ico.Info s={13} /><span>{t(lang, 's1.selectBranchFirst')}</span></div>
                   ) : filteredProvs.length === 0 ? (
                     <p style={{ color: tokens.color.whiteFaint, fontSize: '0.8rem', marginBottom: '1.25rem', fontFamily: tokens.font.family }}>
-                      {t(lang, 's1.noProvidersFor', { cats: catFilter.map(c => catName(lang, c)).join(', '), loc: locName(lang, location) })}
+                      {t(lang, 's1.noProvidersFor', { cats: catFilter.map(c => catLabel(c)).join(', '), loc: locName(lang, location) })}
                     </p>
                   ) : (
                     <>
                       <p style={{ color: tokens.color.whiteFaint, fontSize: '0.72rem', marginBottom: '0.65rem', fontFamily: tokens.font.family }}>
                         {isMultiCat
-                          ? `Select one specialist per category (${selectedCats.map(c => catName(lang, c)).join(', ')}) — ${maxProviders} total`
-                          : t(lang, 's1.showingSpecialistsFor', { cats: catFilter.map(c => catName(lang, c)).join(', '), loc: locName(lang, location) })
+                          ? `Select one specialist per category (${selectedCats.map(c => catLabel(c)).join(', ')}) — ${maxProviders} total`
+                          : t(lang, 's1.showingSpecialistsFor', { cats: catFilter.map(c => catLabel(c)).join(', '), loc: locName(lang, location) })
                         }
                       </p>
                       {providers.length > 1 && <div className="info-box" style={{ marginBottom: '0.8rem', display: 'flex', gap: '0.5rem' }}><Ico.Info s={13} /><span>{t(lang, 's1.multiProviderInfo', { n: providers.length })}</span></div>}
@@ -2634,7 +2703,7 @@ export default function BookingPage() {
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.28rem', marginTop: '0.32rem' }}>
                                   {p.expertise.map(e => {
                                     const m = catFilter.includes(e);
-                                    return <span key={e} style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.07em', borderRadius: '999px', padding: '0.12rem 0.45rem', fontFamily: tokens.font.family, background: m ? 'rgba(184,134,11,0.25)' : 'rgba(255,255,255,0.06)', color: m ? tokens.color.gold : tokens.color.whiteFaint, border: `1px solid ${m ? 'rgba(184,134,11,0.5)' : 'rgba(255,255,255,0.12)'}` }}>{catName(lang, e)}</span>;
+                                    return <span key={e} style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.07em', borderRadius: '999px', padding: '0.12rem 0.45rem', fontFamily: tokens.font.family, background: m ? 'rgba(184,134,11,0.25)' : 'rgba(255,255,255,0.06)', color: m ? tokens.color.gold : tokens.color.whiteFaint, border: `1px solid ${m ? 'rgba(184,134,11,0.5)' : 'rgba(255,255,255,0.12)'}` }}>{catLabel(e)}</span>;
                                   })}
                                 </div>
                               </div>
