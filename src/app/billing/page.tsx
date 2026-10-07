@@ -609,6 +609,7 @@ function BillingContent() {
     }
   }, [searchParams]);
   const hasSelection = selectedSel.length > 0;
+  const remainingAfter = Number(searchParams.get("remainingAfter")) || 0;
 
     const [booking,         setBooking]         = useState<BookingPayload | null>(null);
   const [services,        setServices]        = useState<ServiceLine[]>([]);
@@ -638,10 +639,30 @@ function BillingContent() {
             guestCount: Number(svc.guestCount) || 1,
             guessIDs: Array.isArray(svc.guessIDs) ? svc.guessIDs : [],
           }));
+        /* For a PARTIAL bill the dashboard's selection is per GUEST, but the API
+           collapses "same service for several guests" into one line (qty = guest
+           count). Expand those collapsed lines back into one line per guest so a
+           selection of a single guest bills only that guest's qty 1. For a whole
+           booking (no selection) keep the collapsed display as before. */
+        const expanded = hasSelection
+          ? all.flatMap(svc => {
+              const ids = svc.guessIDs && svc.guessIDs.length > 0 ? svc.guessIDs : [svc.guessID];
+              if (ids.length <= 1) return [svc];
+              const per = Math.max(1, Math.round(svc.qty / ids.length));
+              return ids.map(g => ({
+                ...svc,
+                key: `${svc.key}|${g}`,
+                guessID: g,
+                qty: per,
+                guestCount: 1,
+                guessIDs: [g],
+              }));
+            })
+          : all;
         /* When the dashboard passed a selection, bill ONLY those rows. */
         setServices(
           hasSelection
-            ? all.filter(svc =>
+            ? expanded.filter(svc =>
                 selectedSel.some(sel =>
                   (sel.guessID || 'MAIN').toUpperCase() === (svc.guessID || 'MAIN').toUpperCase() &&
                   (sel.itemCode || '') === svc.itemCode),
@@ -1164,6 +1185,7 @@ function BillingContent() {
             lines: billLines(),
             // Partial billing: the exact service rows to stamp as billed.
             services: hasSelection ? selectedSel : undefined,
+            remainingAfter: hasSelection ? remainingAfter : undefined,
             // Headline numbers → tbl_billheader.
             gross,
             discountPercent: Number(discountPct) || 0,

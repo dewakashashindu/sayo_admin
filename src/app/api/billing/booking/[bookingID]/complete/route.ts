@@ -284,7 +284,25 @@ export async function POST(req: NextRequest, { params }: Ctx) {
           `;
         }
       } catch {
-        /* Pre-migration: billed columns absent — keep whole-booking behaviour. */
+        /* Pre-migration: billed columns absent. Fall back to the count the
+           dashboard sent so a partial bill still keeps the booking open for
+           its remaining done services instead of vanishing from To-bill. */
+        const left = num(body.remainingAfter, 0);
+        try {
+          if (left > 0) {
+            await prisma.$executeRaw`
+              UPDATE tbl_bookingheder SET BillingTime = NULL
+              WHERE RTRIM(BookingID) = ${bookingID} AND RTRIM(LocCode) = ${locCode}
+            `;
+          } else {
+            await prisma.$executeRaw`
+              UPDATE tbl_bookingheder SET Status = 'DONE', BillingTime = NOW()
+              WHERE RTRIM(BookingID) = ${bookingID} AND RTRIM(LocCode) = ${locCode}
+            `;
+          }
+        } catch {
+          /* leave header as written by the bill transaction */
+        }
       }
     }
 

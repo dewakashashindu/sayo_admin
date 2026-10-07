@@ -317,6 +317,10 @@ export default function BillingDashboardPage() {
           itemCode: s.itemCode,
         })),
       ),
+      /* How many done-but-unbilled services stay behind after this bill, so the
+         complete API can keep the booking open even before the billed-columns
+         migration exists. */
+      remainingAfter: String(doneServicesOf(b).length - chosen.length),
     });
     router.push(`/billing?${params.toString()}`);
   }
@@ -391,8 +395,11 @@ export default function BillingDashboardPage() {
                       const selectedTotal = chosen.reduce((t, s) => t + s.lineTotal, 0);
                       const allDone = doneServicesOf(b);
                       const activeCount = activeCountOf(b);
-                      const billBlocked = activeCount > 0;
-                      const billDisabled = billBlocked || chosen.length === 0;
+                      /* Flexible partial billing: on-going services simply are not
+                         billable (no checkbox) and stay on the floor — they no longer
+                         block billing the services that ARE done. Only an empty
+                         selection disables Create Bill. */
+                      const billDisabled = chosen.length === 0;
                       return (
                         <div key={id} className="acc fade-up">
                           <button type="button" className="acc-hdr" onClick={() => toggle(id)} aria-expanded={open}>
@@ -461,10 +468,10 @@ export default function BillingDashboardPage() {
                                 </div>
                               ))}
 
-                              {billBlocked && (
-                                <div style={{ padding: "8px 12px", borderRadius: 8, background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", fontSize: 12, fontWeight: 600 }}>
-                                  {activeCount} service{activeCount > 1 ? "s" : ""} still on-going — the technician must mark them
-                                  Done (or Cancel them) before a bill can be created.
+                              {activeCount > 0 && (
+                                <div style={{ padding: "8px 12px", borderRadius: 8, background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e40af", fontSize: 12, fontWeight: 600 }}>
+                                  {activeCount} service{activeCount > 1 ? "s are" : " is"} still on-going — it stays on the floor.
+                                  The ticked done services can be billed now; the rest can be billed later.
                                 </div>
                               )}
 
@@ -493,11 +500,9 @@ export default function BillingDashboardPage() {
                                     disabled={billDisabled}
                                     onClick={() => createBill(b, chosen)}
                                     title={
-                                      billBlocked
-                                        ? "On-going services must be done or cancelled first"
-                                        : chosen.length === 0
-                                          ? "Tick the services to bill"
-                                          : `Bill the ${chosen.length} selected service(s)`
+                                      chosen.length === 0
+                                        ? "Tick the services to bill"
+                                        : `Bill the ${chosen.length} selected service(s)`
                                     }
                                   >
                                     <Ico.Receipt /> Create Bill
