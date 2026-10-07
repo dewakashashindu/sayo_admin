@@ -44,6 +44,15 @@ interface BookingService {
   /** Optional legacy identifiers for clients that already use the master catalog. */
   itemCode?:     string;
   serviceItemID?: string;
+  /**
+   * Which selected provider performs this exact service, by display name.
+   * The public page knows this (it matched the service's category to one of
+   * the selected providers' expertise) — trust it here instead of guessing
+   * from array position, which breaks as soon as one category has more than
+   * one selected service. Optional only so older cached frontend bundles
+   * that have not redeployed yet still fall back to the legacy heuristic.
+   */
+  providerName?: string;
 }
 
 interface BookingProvider {
@@ -310,6 +319,8 @@ interface PreparedService {
   serviceItemID: string;
   itemPrice: number;
   durationMin: number;
+  /** The provider name the client asked for this specific service, if any. */
+  providerName: string;
 }
 
 interface PreparedProvider extends BookingProvider {
@@ -776,6 +787,7 @@ async function resolveLegacyServices(
       serviceItemID,
       itemPrice,
       durationMin: parseDuration(item.SerDuration),
+      providerName: String(service.providerName || '').trim(),
     };
   });
 }
@@ -1756,18 +1768,44 @@ export async function POST(req: NextRequest) {
       branch.LocCode.trim(),
     );
 
-    // The public flow sends one provider per selected category. The legacy
-    // detail table stores one TechID per service row, so a single selected
-    // provider owns all service rows; otherwise service rows follow the
-    // provider order and use the last provider for any remaining rows.
-    const detailRows = resolvedServices.map((service, index) => ({
-      ...service,
-      techID: resolvedProviders.length === 0
-        ? '0'
-        : resolvedProviders.length === 1
-          ? resolvedProviders[0].techID
-          : resolvedProviders[Math.min(index, resolvedProviders.length - 1)].techID,
-    }));
+    // The legacy detail table stores one TechID per service row. The public
+    // page now tells us, per service, which selected provider performs it
+    // (matched by category/expertise on the client). Trust that name first —
+    // matching strictly by array position breaks as soon as one category has
+    // more than one selected service, silently handing that service's row to
+    // the wrong technician. The old "follow provider order, clamp to the
+    // last one" heuristic only runs as a fallback for a stale client that
+    // has not been redeployed with the `providerName` field yet.
+    const providerByName = new Map(
+      resolvedProviders.map((provider) => [
+        normalizeLookup(provider.name),
+        provider,
+      ]),
+    );
+    const detailRows = resolvedServices.map((service, index) => {
+      if (resolvedProviders.length === 0) {
+        return { ...service, techID: '0' };
+      }
+      if (resolvedProviders.length === 1) {
+        return { ...service, techID: resolvedProviders[0].techID };
+      }
+
+      const wantedName = normalizeLookup(service.providerName);
+      const matched = wantedName ? providerByName.get(wantedName) : undefined;
+      const techID = matched
+        ? matched.techID
+        : resolvedProviders[Math.min(index, resolvedProviders.length - 1)].techID;
+
+      if (!matched) {
+        console.warn(
+          `[TECH_FALLBACK] Service "${service.serviceItemID}" did not name a ` +
+            `provider (or named one that was not selected) — falling back to ` +
+            `the positional heuristic, which can assign the wrong technician.`,
+        );
+      }
+
+      return { ...service, techID };
+    });
     const providerNames = new Map(
       resolvedProviders.map((provider) => [provider.techID, provider.name]),
     );

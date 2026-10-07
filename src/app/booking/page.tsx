@@ -210,6 +210,27 @@ function timeToMinutes(tStr: string): number {
   return h * 60 + mn;
 }
 
+/**
+ * Which selected provider actually performs one given service. Selection
+ * state keeps at most one provider per category (see `toggleProvider`), so
+ * matching on the service's own category is the real pairing — NOT the
+ * service's position in the array. A plain array index breaks the moment a
+ * category has more than one selected service (e.g. two HAIR services plus
+ * one NAILS service only has two providers, and position 1 would wrongly
+ * land on the NAILS provider). Single-provider bookings always resolve to
+ * that one provider regardless of category.
+ */
+function matchProviderForService(
+  svc: ServiceItem,
+  provs: Provider[],
+): Provider | undefined {
+  if (provs.length <= 1) return provs[0];
+  return (
+    provs.find((p) => p.expertise.includes(svc.category)) ??
+    provs[provs.length - 1]
+  );
+}
+
 const SLOT_AVAILABLE_EMPTY: SlotResult = {
   status: 'available',
   isSequenceSwapped: false,
@@ -2045,10 +2066,20 @@ export default function BookingPage() {
     return () => { active = false; };
   }, []);
 
+  /* One provider per services[i], matched by category instead of by raw
+     array position — mirrors the techID the server will actually assign
+     (see matchProviderForService / the booking POST route), so the
+     conflict/availability preview the customer sees matches what gets
+     persisted, including when one category has more than one service. */
+  const alignedProviders = useMemo<Provider[]>(
+    () => services.map((s) => matchProviderForService(s, providers) ?? providers[0]),
+    [services, providers],
+  );
+
     const slotResults = useMemo<Record<string, SlotResult>>(() => {
     if (providers.length === 0 || services.length === 0) return {};
-    return buildSlotResults(providers, services, providerSlots, bookedSlots, daySlots);
-  }, [providers, services, providerSlots, bookedSlots, daySlots]);
+    return buildSlotResults(alignedProviders, services, providerSlots, bookedSlots, daySlots);
+  }, [alignedProviders, providers, services, providerSlots, bookedSlots, daySlots]);
 
     const highlightedSlots = useMemo<Set<string>>(() => {
     const hovered = getHighlightedSlots(hoveredSlot, slotResults);
@@ -2169,7 +2200,7 @@ export default function BookingPage() {
 
     function classifySlot(slot: string): SlotResult {
     if (providers.length === 0) return SLOT_AVAILABLE_EMPTY;
-    return evaluateSlot(slot, providers, services, providerSlots, bookedSlots, daySlots);
+    return evaluateSlot(slot, alignedProviders, services, providerSlots, bookedSlots, daySlots);
   }
 
     function handleSlotClick(slot: string) {
@@ -2177,7 +2208,7 @@ export default function BookingPage() {
     if (result.status === 'booked')    return;
     if (result.status === 'available') {
       setServiceSchedule(
-        result.serviceSchedule ?? buildSequentialServiceSchedule(slot, providers, services),
+        result.serviceSchedule ?? buildSequentialServiceSchedule(slot, alignedProviders, services),
       );
       setTimeSlot(slot);
       return;
@@ -2258,14 +2289,14 @@ export default function BookingPage() {
   }
 
   function handleBookBackToBack(slot: string) {
-    const result = evaluateSlot(slot, providers, services, providerSlots, bookedSlots, daySlots);
+    const result = evaluateSlot(slot, alignedProviders, services, providerSlots, bookedSlots, daySlots);
     if (result.status !== 'available') {
       setSlotsError(t(lang, 'err.slotTaken', { slot }));
       setConflictModal(null);
       return;
     }
     setServiceSchedule(
-      result.serviceSchedule ?? buildSequentialServiceSchedule(slot, providers, services),
+      result.serviceSchedule ?? buildSequentialServiceSchedule(slot, alignedProviders, services),
     );
     setTimeSlot(slot);
     setConflictModal(null);
@@ -2273,7 +2304,7 @@ export default function BookingPage() {
 
   function handleBookSplit(sel: string, next: string) {
     setServiceSchedule(
-      buildSplitServiceSchedule(sel, next, providers, services, providerSlots),
+      buildSplitServiceSchedule(sel, next, alignedProviders, services, providerSlots),
     );
     setTimeSlot(sel);
     const freeAt  = providers.filter(p => !(providerSlots[p.name] ?? []).includes(sel)).map(p => p.name).join(', ');
@@ -2289,7 +2320,7 @@ export default function BookingPage() {
     const selectedSchedule =
       sd?.schedule ??
       gd?.schedule ??
-      buildSequentialServiceSchedule(slot, providers, services);
+      buildSequentialServiceSchedule(slot, alignedProviders, services);
     setServiceSchedule(selectedSchedule);
 
     const swapNote = sd?.orderedServices?.length
@@ -2416,12 +2447,18 @@ export default function BookingPage() {
       const payload = {
         name: name.trim(), email: email.trim().toLowerCase(), phone: phone.trim(),
         gender: genderLabelEn(gender as GenderValue), location, mode,
-        services: services.map(s => ({ name: s.name, price: s.price, duration: s.duration, category: s.category, itemCode: (s as CatalogService).itemCode || undefined })),
+        services: services.map(s => ({
+          name: s.name, price: s.price, duration: s.duration, category: s.category,
+          itemCode: (s as CatalogService).itemCode || undefined,
+          /* Tell the server exactly which selected provider performs this
+             service — it must not have to guess from array position. */
+          providerName: matchProviderForService(s, providers)?.name || undefined,
+        })),
         categories: selectedCats, totalDuration: totalMins, totalPrice,
         providers: providers.map(p => ({ name: p.name, role: p.role })),
         serviceSchedule: serviceSchedule.length > 0
           ? serviceSchedule
-          : buildSequentialServiceSchedule(timeSlot, providers, services),
+          : buildSequentialServiceSchedule(timeSlot, alignedProviders, services),
         date, timeSlot, notes: notes.trim() || null,
       };
       const res = await fetch('/api/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
