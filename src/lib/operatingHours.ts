@@ -242,15 +242,15 @@ export function minutesToClockSlot(minutes: number, padHour = true): string {
 }
 
 /**
- * 30-minute clock grid from open → close (inclusive of a closing time that
- * lands on :00/:30, matching the old 9:00 AM … 6:00 PM list).
- * Open 10:15 → first slot 10:30. Close 19:00 → last start 07:00 PM.
+ * 30-minute start-time grid from opening up to, but not including, closing.
+ * A slot at the exact closing time cannot fit any positive-duration service.
+ * Open 10:15 → first slot 10:30. Close 19:00 → last start 06:30 PM.
  */
 export function generateDaySlots(startMin: number, closeMin: number, padHour = true): string[] {
   const end = spanEndMin(startMin, closeMin);
   if (end < 0) return [];
   const first = Math.ceil(startMin / SLOT_MINUTES) * SLOT_MINUTES;
-  const last = Math.floor(end / SLOT_MINUTES) * SLOT_MINUTES;
+  const last = Math.floor((end - 1) / SLOT_MINUTES) * SLOT_MINUTES;
   const out: string[] = [];
   for (let t = first; t <= last; t += SLOT_MINUTES) {
     out.push(minutesToClockSlot(t, padHour));

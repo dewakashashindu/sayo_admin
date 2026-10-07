@@ -9,7 +9,7 @@ import AccessLoading from "@/components/AccessLoading";
 import NoAccess from "@/components/NoAccess";
 import { useRouter, useSearchParams } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
-import { generateDaySlots } from "@/lib/operatingHours";
+import { clockInSpan, generateDaySlots, intervalInsideSpan } from "@/lib/operatingHours";
 
 interface Branch {
   LocCode: string;
@@ -147,28 +147,25 @@ interface FieldErrors {
   timeSlot?: string;
 }
 
-const MAIN_TIME_SLOTS = [
-  "8:00 AM",
-  "8:30 AM",
-  "9:00 AM",
-  "9:30 AM",
-  "10:00 AM",
-  "10:30 AM",
-  "11:00 AM",
-  "11:30 AM",
-  "12:00 PM",
-  "12:30 PM",
-  "1:00 PM",
-  "1:30 PM",
-  "2:00 PM",
-  "2:30 PM",
-  "3:00 PM",
-  "3:30 PM",
-  "4:00 PM",
-  "4:30 PM",
-  "5:00 PM",
-  "5:30 PM",
-];
+type BranchHoursStatus = "idle" | "loading" | "ready" | "error";
+type StaffShiftWindow = { startMin: number; closeMin: number };
+type BranchHoursState = {
+  status: BranchHoursStatus;
+  open: boolean;
+  startMin: number;
+  closeMin: number;
+  staffWindowsByTech: Record<string, StaffShiftWindow[]>;
+};
+
+function emptyBranchHours(status: BranchHoursStatus): BranchHoursState {
+  return {
+    status,
+    open: false,
+    startMin: 0,
+    closeMin: 0,
+    staffWindowsByTech: {},
+  };
+}
 
 const TIME_OFFSETS = [5, 10, 15, 20, 25];
 const MAX_CHARS = 250;
@@ -228,31 +225,44 @@ function nowSlot(): string {
   return minsToSlot(n.getHours() * 60 + n.getMinutes());
 }
 
-function getBaseSlot(selected: string): string | null {
+function getBaseSlot(selected: string, baseSlots: readonly string[]): string | null {
   if (!selected) return null;
-  if (MAIN_TIME_SLOTS.includes(selected)) return selected;
-  const selMins = slotToMins(selected);
-  if (selMins < 0) return null;
+  const selectedMinutes = slotToMins(selected);
+  if (selectedMinutes < 0) return null;
+  if (baseSlots.some((slot) => slotToMins(slot) === selectedMinutes)) {
+    return baseSlots.find((slot) => slotToMins(slot) === selectedMinutes) ?? null;
+  }
+
   let best: string | null = null;
   let bestDiff = Infinity;
-  for (const ms of MAIN_TIME_SLOTS) {
-    const diff = selMins - slotToMins(ms);
-    if (diff >= 0 && diff < 30 && diff < bestDiff) {
-      best = ms;
+  for (const base of baseSlots) {
+    const baseMinutes = slotToMins(base);
+    if (baseMinutes < 0) continue;
+    const diff = (selectedMinutes - baseMinutes + 24 * 60) % (24 * 60);
+    if (diff < 30 && diff < bestDiff) {
+      best = base;
       bestDiff = diff;
     }
   }
   return best;
 }
 
-const ALL_TIME_SLOTS = Array.from(
-  new Set(
-    MAIN_TIME_SLOTS.flatMap((base) => [
-      base,
-      ...TIME_OFFSETS.map((offset) => minsToSlot(slotToMins(base) + offset)),
-    ]),
-  ),
-);
+function buildAvailabilitySlots(
+  baseSlots: readonly string[],
+  startMin: number,
+  closeMin: number,
+): string[] {
+  const candidates = baseSlots.flatMap((base) => {
+    const baseMinutes = slotToMins(base);
+    if (baseMinutes < 0) return [];
+    return [base, ...TIME_OFFSETS.map((offset) => minsToSlot(baseMinutes + offset))];
+  });
+
+  return [...new Set(candidates)].filter((slot) => {
+    const minutes = slotToMins(slot);
+    return minutes >= 0 && clockInSpan(minutes, startMin, closeMin);
+  });
+}
 
 function fmtDateLong(iso: string): string {
   if (!iso) return "";
@@ -342,6 +352,20 @@ function getBranchTechnicianIds(
   ];
 }
 
+const NON_BLOCKING_AVAILABILITY_STATUSES = new Set([
+  "CANCELLED",
+  "CANCEL",
+  "PENDING",
+]);
+
+function isBlockingAvailabilityAppointment(
+  appointment: ExistingAppointment,
+): boolean {
+  return !NON_BLOCKING_AVAILABILITY_STATUSES.has(
+    normalizedCode(appointment.status),
+  );
+}
+
 function busyTechIdsAt(
   appointment: ExistingAppointment,
   slotMinutes: number,
@@ -354,7 +378,7 @@ function busyTechIdsAt(
     return [];
   }
 
-  if (normalizedCode(appointment.status) === "CANCELLED") return [];
+  if (!isBlockingAvailabilityAppointment(appointment)) return [];
 
   const startMinutes = slotToMins(appointment.timeSlot || "");
   if (startMinutes < 0) return [];
@@ -429,7 +453,7 @@ function isTechnicianFreeForDuration(
     ) {
       return false;
     }
-    if (normalizedCode(appointment.status) === "CANCELLED") return false;
+    if (!isBlockingAvailabilityAppointment(appointment)) return false;
 
     const windows = Array.isArray(appointment.techWindows)
       ? appointment.techWindows
@@ -460,6 +484,33 @@ function isTechnicianFreeForDuration(
   });
 }
 
+function fitsDurationInWindow(
+  startMin: number,
+  durationMin: number,
+  windowStartMin: number,
+  windowCloseMin: number,
+): boolean {
+  const duration = Number(durationMin) > 0 ? Number(durationMin) : 30;
+  return intervalInsideSpan(
+    startMin,
+    startMin + duration,
+    windowStartMin,
+    windowCloseMin,
+  );
+}
+
+function technicianHasShiftForDuration(
+  technicianID: string,
+  startMin: number,
+  durationMin: number,
+  staffWindowsByTech: Record<string, StaffShiftWindow[]>,
+): boolean {
+  const windows = staffWindowsByTech[normalizedCode(technicianID)] ?? [];
+  return windows.some((window) =>
+    fitsDurationInWindow(startMin, durationMin, window.startMin, window.closeMin),
+  );
+}
+
 function calculateSlotAvailability({
   slot,
   categories,
@@ -471,6 +522,9 @@ function calculateSlotAvailability({
   services,
   appointments,
   currentBookingID,
+  branchStartMin,
+  branchCloseMin,
+  staffWindowsByTech,
   additionalRequirements = [],
 }: {
   slot: string;
@@ -483,6 +537,9 @@ function calculateSlotAvailability({
   services: ServiceItem[];
   appointments: ExistingAppointment[];
   currentBookingID: string;
+  branchStartMin: number;
+  branchCloseMin: number;
+  staffWindowsByTech: Record<string, StaffShiftWindow[]>;
   additionalRequirements?: AvailabilityRequirement[];
 }): boolean {
   const slotMinutes = slotToMins(slot);
@@ -543,7 +600,7 @@ function calculateSlotAvailability({
     ) {
       return;
     }
-    if (normalizedCode(appointment.status) === "CANCELLED") return;
+    if (!isBlockingAvailabilityAppointment(appointment)) return;
 
     const start = slotToMins(appointment.timeSlot || "");
     if (start < 0) return;
@@ -650,7 +707,25 @@ function calculateSlotAvailability({
             technicianQualifiesForCategory(technician, category, services),
           ),
       );
+      const isRealServiceRequirement = requirement.categories.every(
+        (category) => !category.startsWith("__"),
+      );
+      const scheduleFits =
+        !isRealServiceRequirement ||
+        (fitsDurationInWindow(
+          slotMinutes,
+          requirement.durationMin,
+          branchStartMin,
+          branchCloseMin,
+        ) &&
+          technicianHasShiftForDuration(
+            requirement.assignedTechID,
+            slotMinutes,
+            requirement.durationMin,
+            staffWindowsByTech,
+          ));
       return eligible &&
+        scheduleFits &&
         isTechnicianFreeForDuration(
           requirement.assignedTechID,
           slotMinutes,
@@ -691,6 +766,18 @@ function calculateSlotAvailability({
                     technician,
                     requirement.category,
                     services,
+                  ) &&
+                  fitsDurationInWindow(
+                    slotMinutes,
+                    requirement.durationMin,
+                    branchStartMin,
+                    branchCloseMin,
+                  ) &&
+                  technicianHasShiftForDuration(
+                    techID,
+                    slotMinutes,
+                    requirement.durationMin,
+                    staffWindowsByTech,
                   ),
               );
             })
@@ -2161,8 +2248,9 @@ function TimeSlotPicker({
   clientLabel,
   availability,
   availabilityStatus = "idle",
-  date,
-  locCode,
+  branchHours,
+  baseSlots,
+  candidateSlots,
 }: {
   selectedSlot: string;
   onSelect: (slot: string) => void;
@@ -2170,15 +2258,13 @@ function TimeSlotPicker({
   clientLabel?: string;
   availability?: Record<string, boolean>;
   availabilityStatus?: "idle" | "loading" | "ready" | "error";
-  date?: string;
-  locCode?: string;
+  branchHours: BranchHoursState;
+  baseSlots: string[];
+  candidateSlots: string[];
 }) {
   const [liveTime, setLiveTime] = useState(nowSlot());
-  const [openBase, setOpenBase] = useState<string | null>(() =>
-    getBaseSlot(selectedSlot),
-  );
-  const [hoursSlots, setHoursSlots] = useState<string[] | null>(null);
-  const [hoursClosed, setHoursClosed] = useState(false);
+  const [openBase, setOpenBase] = useState<string | null>(null);
+  const candidateSlotSet = useMemo(() => new Set(candidateSlots), [candidateSlots]);
 
   useEffect(() => {
     const id = setInterval(() => setLiveTime(nowSlot()), 30000);
@@ -2186,56 +2272,34 @@ function TimeSlotPicker({
   }, []);
 
   useEffect(() => {
-    if (!date) {
-      setHoursSlots(null);
-      setHoursClosed(false);
+    if (!selectedSlot) {
+      setOpenBase(null);
       return;
     }
-    let live = true;
-    const q = locCode
-      ? `/api/bookings/hours?from=${date}&to=${date}&locCode=${encodeURIComponent(locCode)}`
-      : `/api/bookings/hours?from=${date}&to=${date}`;
-    fetch(q)
-      .then((r) => r.json())
-      .then((d) => {
-        if (!live) return;
-        const row = Array.isArray(d.days) ? d.days[0] : null;
-        if (!row?.open) {
-          setHoursSlots([]);
-          setHoursClosed(true);
-          return;
-        }
-        const [sh, sm] = String(row.startTime || "09:00").split(":").map(Number);
-        const [ch, cm] = String(row.closingTime || "18:00").split(":").map(Number);
-        setHoursSlots(generateDaySlots(sh * 60 + sm, ch * 60 + cm, false));
-        setHoursClosed(false);
-      })
-      .catch(() => {
-        if (live) {
-          setHoursSlots([]);
-          setHoursClosed(true);
-        }
-      });
-    return () => { live = false; };
-  }, [date, locCode]);
-
-  useEffect(() => {
-    if (!selectedSlot) setOpenBase(null);
-  }, [selectedSlot]);
+    const base = getBaseSlot(selectedSlot, baseSlots);
+    if (base) setOpenBase(base);
+  }, [selectedSlot, baseSlots]);
 
   useEffect(() => {
     if (
       selectedSlot &&
+      branchHours.status === "ready" &&
       availabilityStatus === "ready" &&
       availability?.[selectedSlot] !== true
     ) {
       onSelect("");
     }
-  }, [availability, availabilityStatus, onSelect, selectedSlot]);
+  }, [availability, availabilityStatus, branchHours.status, onSelect, selectedSlot]);
 
-  const selectedBase = getBaseSlot(selectedSlot);
+  const selectedBase = getBaseSlot(selectedSlot, baseSlots);
   const isSlotSelectable = (slot: string): boolean => {
-    if (availabilityStatus === "loading" || availabilityStatus === "error") {
+    if (
+      branchHours.status !== "ready" ||
+      !branchHours.open ||
+      !candidateSlotSet.has(slot) ||
+      availabilityStatus === "loading" ||
+      availabilityStatus === "error"
+    ) {
       return false;
     }
     if (availabilityStatus === "ready") {
@@ -2244,16 +2308,24 @@ function TimeSlotPicker({
     return true;
   };
   const availabilityClass = (slot: string): string => {
+    if (
+      branchHours.status === "ready" &&
+      branchHours.open &&
+      !candidateSlotSet.has(slot)
+    ) {
+      return " unavailable";
+    }
     if (availabilityStatus !== "ready" || !availability) return "";
     return availability[slot] === true ? " available" : " unavailable";
   };
   const isJustNow =
     !!selectedSlot &&
     Math.abs(slotToMins(selectedSlot) - slotToMins(liveTime)) <= 1;
+  const hoursClosed = branchHours.status === "ready" && !branchHours.open;
 
   function handleMainSlot(slot: string) {
-    // A red 30-minute anchor can still be opened so the user can inspect
-    // available +5/+10/... offsets inside that window.
+    // An unavailable 30-minute anchor can still be opened so the user can
+    // inspect fine-tune times in that window.
     if (!isSlotSelectable(slot)) {
       setOpenBase(slot);
       return;
@@ -2281,11 +2353,11 @@ function TimeSlotPicker({
   function handleJustNow() {
     const now = nowSlot();
     if (!isSlotSelectable(now)) {
-      setOpenBase(getBaseSlot(now));
+      setOpenBase(getBaseSlot(now, baseSlots));
       return;
     }
     onSelect(now);
-    setOpenBase(getBaseSlot(now));
+    setOpenBase(getBaseSlot(now, baseSlots));
   }
 
   return (
@@ -2323,6 +2395,7 @@ function TimeSlotPicker({
           type="button"
           className={`just-now-btn${isJustNow ? " selected" : ""}`}
           onClick={handleJustNow}
+          disabled={branchHours.status !== "ready" || !branchHours.open}
           title="Use current time"
         >
           <Ico.Clock />
@@ -2347,8 +2420,8 @@ function TimeSlotPicker({
           <span>
             <i className="slot-legend-dot available-dot" /> Available
           </span>
-          <span>
-            <i className="slot-legend-dot unavailable-dot" /> Fully booked
+          <span title="Outside branch or technician hours, service duration does not fit, or a booking conflict">
+            <i className="slot-legend-dot unavailable-dot" /> Unavailable
           </span>
         </div>
       )}
@@ -2397,38 +2470,54 @@ function TimeSlotPicker({
         >
           Main Slots (30 min intervals)
         </p>
-        {hoursClosed ? (
+        {branchHours.status === "loading" ? (
+          <p style={{ fontSize: 13, color: "#6b7280" }}>
+            Loading branch hours...
+          </p>
+        ) : branchHours.status === "error" ? (
+          <p style={{ fontSize: 13, color: "#b91c1c", fontWeight: 600 }}>
+            Could not load branch hours. Please choose the date again.
+          </p>
+        ) : branchHours.status === "idle" ? (
+          <p style={{ fontSize: 13, color: "#6b7280" }}>
+            Select a branch to load appointment times.
+          </p>
+        ) : hoursClosed ? (
           <p style={{ fontSize: 13, color: "#b91c1c", fontWeight: 600 }}>
             The salon is closed on this date. Set operational hours first.
           </p>
+        ) : baseSlots.length === 0 ? (
+          <p style={{ fontSize: 13, color: "#6b7280" }}>
+            No appointment start times are available for this date.
+          </p>
         ) : (
-        <div className={`ts-main-grid${hasError ? " err-t" : ""}`}>
-          {(hoursSlots ?? MAIN_TIME_SLOTS).map((slot) => {
-            const isExact = selectedSlot === slot;
-            const isParent = !isExact && selectedBase === slot;
-            const unavailable =
-              availabilityStatus === "ready" && availability?.[slot] === false;
-            return (
-              <button
-                type="button"
-                key={slot}
-                className={`ts-btn${availabilityClass(slot)}${isExact ? " sel-t" : isParent ? " base-active" : ""}`}
-                onClick={() => handleMainSlot(slot)}
-                title={
-                  unavailable
-                    ? "All suitable technicians are booked at this time"
-                    : undefined
-                }
-              >
-                {slot}
-              </button>
-            );
-          })}
-        </div>
+          <div className={`ts-main-grid${hasError ? " err-t" : ""}`}>
+            {baseSlots.map((slot) => {
+              const isExact = selectedSlot === slot;
+              const isParent = !isExact && selectedBase === slot;
+              const unavailable =
+                availabilityStatus === "ready" && !isSlotSelectable(slot);
+              return (
+                <button
+                  type="button"
+                  key={slot}
+                  className={`ts-btn${availabilityClass(slot)}${isExact ? " sel-t" : isParent ? " base-active" : ""}`}
+                  onClick={() => handleMainSlot(slot)}
+                  title={
+                    unavailable
+                      ? "No suitable technician is available at this time"
+                      : undefined
+                  }
+                >
+                  {slot}
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
 
-      {openBase && !hoursClosed && (
+      {openBase && branchHours.status === "ready" && branchHours.open && (
         <div className="ts-offset-wrap">
           <div className="ts-offset-label">
             <Ico.Clock /> Fine-tune from{" "}
@@ -2448,13 +2537,11 @@ function TimeSlotPicker({
           <div className="ts-offset-grid">
             {TIME_OFFSETS.map((off) => {
               const computed = minsToSlot(slotToMins(openBase) + off);
+              const isCandidateSlot = candidateSlotSet.has(computed);
               const unavailable =
-                availabilityStatus === "ready" &&
-                availability?.[computed] === false;
-              const unavailableOrChecking =
-                availabilityStatus === "loading" ||
-                availabilityStatus === "error" ||
-                unavailable;
+                !isCandidateSlot ||
+                (availabilityStatus === "ready" && !isSlotSelectable(computed));
+              const unavailableOrChecking = !isSlotSelectable(computed);
               return (
                 <button
                   type="button"
@@ -2464,7 +2551,9 @@ function TimeSlotPicker({
                   disabled={unavailableOrChecking}
                   title={
                     unavailable
-                      ? "All suitable technicians are booked at this time"
+                      ? isCandidateSlot
+                        ? "No suitable technician is available at this time"
+                        : "This time is outside branch hours"
                       : computed
                   }
                 >
@@ -3917,6 +4006,9 @@ function WalkInPage() {
   const [technicians, setTechnicians] = useState<Technician[]>([]);
   const [techniciansLoading, setTechniciansLoading] = useState(false);
   const [scheduledStaffIds, setScheduledStaffIds] = useState<Set<string> | null>(null);
+  const [branchHours, setBranchHours] = useState<BranchHoursState>(
+    () => emptyBranchHours("idle"),
+  );
   const [existingAppointments, setExistingAppointments] = useState<
     ExistingAppointment[]
   >([]);
@@ -4092,18 +4184,101 @@ function WalkInPage() {
   useEffect(() => {
     if (!form.branch || !form.date) {
       setScheduledStaffIds(null);
+      setBranchHours(emptyBranchHours("idle"));
       return;
     }
+
     let live = true;
-    fetch(`/api/bookings/hours?from=${form.date}&to=${form.date}&locCode=${encodeURIComponent(form.branch)}`)
-      .then((r) => r.json())
-      .then((d) => {
+    setBranchHours(emptyBranchHours("loading"));
+    setScheduledStaffIds(new Set());
+    const hoursUrl = `/api/bookings/hours?from=${form.date}&to=${form.date}&locCode=${encodeURIComponent(form.branch)}`;
+    const staffHoursUrl = `/api/appointments?meta=staff-hours&date=${encodeURIComponent(form.date)}&locCode=${encodeURIComponent(form.branch)}`;
+
+    Promise.all([
+      fetch(hoursUrl).then((response) => response.json()),
+      fetch(staffHoursUrl).then(async (response) => {
+        const json = await response.json();
+        if (!response.ok || !json.success) {
+          throw new Error(json.error || "Could not load technician shifts");
+        }
+        return json;
+      }),
+    ])
+      .then(([hoursData, staffHoursData]) => {
         if (!live) return;
-        const row = Array.isArray(d.days) ? d.days[0] : null;
-        const staff = Array.isArray(row?.staff) ? row.staff as { staffId: string; working: boolean }[] : [];
-        setScheduledStaffIds(new Set(staff.filter((s) => s.working).map((s) => String(s.staffId).trim().toUpperCase())));
+        const row = Array.isArray(hoursData.days) ? hoursData.days[0] : null;
+        if (!row) {
+          setScheduledStaffIds(new Set());
+          setBranchHours(emptyBranchHours("error"));
+          return;
+        }
+
+        // Branch opening status comes from the operating-hours response.
+        // A missing/closed staff-hours response means no roster windows, not
+        // that the salon itself is closed.
+        if (!row.open) {
+          setScheduledStaffIds(new Set());
+          setBranchHours(emptyBranchHours("ready"));
+          return;
+        }
+
+        const [startHour, startMinute] = String(row.startTime || "09:00").split(":").map(Number);
+        const [closeHour, closeMinute] = String(row.closingTime || "18:00").split(":").map(Number);
+        const startMin = startHour * 60 + startMinute;
+        const closeMin = closeHour * 60 + closeMinute;
+        const validTimes =
+          Number.isInteger(startHour) && startHour >= 0 && startHour <= 23 &&
+          Number.isInteger(startMinute) && startMinute >= 0 && startMinute <= 59 &&
+          Number.isInteger(closeHour) && closeHour >= 0 && closeHour <= 23 &&
+          Number.isInteger(closeMinute) && closeMinute >= 0 && closeMinute <= 59 &&
+          startMin !== closeMin;
+
+        if (!validTimes) {
+          setBranchHours(emptyBranchHours("error"));
+          return;
+        }
+
+        const rawWindows = staffHoursData.windowsByTech;
+        const staffWindowsByTech: Record<string, StaffShiftWindow[]> = {};
+        if (rawWindows && typeof rawWindows === "object") {
+          Object.entries(rawWindows as Record<string, unknown>).forEach(([staffID, value]) => {
+            if (!Array.isArray(value)) return;
+            staffWindowsByTech[staffID.trim().toUpperCase()] = value
+              .map((window) => {
+                const candidate = window as Partial<StaffShiftWindow>;
+                return {
+                  startMin: Number(candidate.startMin),
+                  closeMin: Number(candidate.closeMin),
+                };
+              })
+              .filter((window) =>
+                Number.isFinite(window.startMin) && Number.isFinite(window.closeMin),
+              );
+          });
+        }
+
+        setScheduledStaffIds(
+          new Set(
+            Object.entries(staffWindowsByTech)
+              .filter(([, windows]) => windows.length > 0)
+              .map(([staffID]) => staffID),
+          ),
+        );
+        setBranchHours({
+          status: "ready",
+          open: true,
+          startMin,
+          closeMin,
+          staffWindowsByTech,
+        });
       })
-      .catch(() => { if (live) setScheduledStaffIds(new Set()); });
+      .catch(() => {
+        if (live) {
+          setScheduledStaffIds(new Set());
+          setBranchHours(emptyBranchHours("error"));
+        }
+      });
+
     return () => { live = false; };
   }, [form.branch, form.date]);
 
@@ -4320,8 +4495,21 @@ function WalkInPage() {
       : availabilityStatus === "ready" && techniciansLoading
         ? "loading"
         : availabilityStatus;
+  const branchBaseSlots = useMemo(() => {
+    if (branchHours.status !== "ready" || !branchHours.open) return [];
+    return generateDaySlots(branchHours.startMin, branchHours.closeMin, false);
+  }, [branchHours]);
+  const candidateTimeSlots = useMemo(() => {
+    if (branchHours.status !== "ready" || !branchHours.open) return [];
+    return buildAvailabilitySlots(
+      branchBaseSlots,
+      branchHours.startMin,
+      branchHours.closeMin,
+    );
+  }, [branchBaseSlots, branchHours]);
   const tabAvailability = useMemo(() => {
     if (
+      candidateTimeSlots.length === 0 ||
       tabAvailabilityCategories.length === 0 ||
       tabAvailabilityStatus !== "ready"
     ) {
@@ -4329,7 +4517,7 @@ function WalkInPage() {
     }
 
     return Object.fromEntries(
-      ALL_TIME_SLOTS.map((slot) => [
+      candidateTimeSlots.map((slot) => [
         slot,
         calculateSlotAvailability({
           slot,
@@ -4342,11 +4530,16 @@ function WalkInPage() {
           services,
           appointments: existingAppointments,
           currentBookingID: form.isReschedule ? form.bookingID : "",
+          branchStartMin: branchHours.startMin,
+          branchCloseMin: branchHours.closeMin,
+          staffWindowsByTech: branchHours.staffWindowsByTech,
           additionalRequirements: additionalAvailabilityRequirements,
         }),
       ]),
     ) as Record<string, boolean>;
   }, [
+    candidateTimeSlots,
+    branchHours,
     tabAvailabilityCategories,
     tabAvailabilityWorkloads,
     tabAvailabilityStatus,
@@ -5702,8 +5895,9 @@ function WalkInPage() {
                       <div className="tab-in" key={`${activeTab}-ts`}>
                         <TimeSlotPicker
                           key={activeTab}
-                          date={form.date}
-                          locCode={form.branch}
+                          branchHours={branchHours}
+                          baseSlots={branchBaseSlots}
+                          candidateSlots={candidateTimeSlots}
                           selectedSlot={tabTimeSlot}
                           onSelect={handleTabTimeSlot}
                           hasError={

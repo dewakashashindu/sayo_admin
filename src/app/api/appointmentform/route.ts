@@ -17,7 +17,13 @@ import {
   listSpecialities,
 } from "@/lib/technicianSpecialities";
 import { loadCompanyDay, loadStaffDays, resolveStaffWindow } from "@/lib/dayHours";
-import { clockInSpan, clockToMinutes, slotInList } from "@/lib/operatingHours";
+import { clockInSpan } from "@/lib/operatingHours";
+import {
+  planBookingServiceWindows,
+  providerWindowsOverlap,
+  validateBookingTimeRules,
+  type PlannedServiceWindow,
+} from "@/lib/bookingTimeRules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -285,127 +291,49 @@ function minutesToTimeLabel(totalMinutes: number): string {
 }
 
 interface ProviderWindow {
-  techID: string; // technician id (trimmed, "0" = unassigned → never conflicts)
+  techID: string; // normalized technician id; "0" is unassigned and never conflicts
   startMin: number; // minutes since midnight (inclusive)
   endMin: number; // minutes since midnight (exclusive)
 }
 
-/** Time windows the incoming payload would occupy, per provider. */
-function providerWindowsFromPayload(
-  guests: Guest[],
-  durationOf: (itemCode: string) => number,
+function providerWindowsFromPlannedServices(
+  serviceWindows: readonly PlannedServiceWindow[],
 ): ProviderWindow[] {
-  const records: {
-    techID: string;
-    startHint: number;
-    durationMin: number;
-    inputOrder: number;
-  }[] = [];
-  let inputOrder = 0;
-
-  for (const guest of guests) {
-    const startMin = slotToMinutes(guest.timeSlot || "");
-    if (startMin < 0) continue;
-    for (const service of guest.services || []) {
+  return serviceWindows
+    .filter((service) => {
       const techID = trimValue(service.techID);
-      const catalogDuration = Number(durationOf(service.serviceItemID.trim()));
-      const duration = catalogDuration > 0 ? catalogDuration : 30;
-      const quantity = Number(service.qty) > 0 ? Number(service.qty) : 1;
-      if (techID && techID !== "0") {
-        records.push({
-          techID,
-          startHint: startMin,
-          durationMin: duration * quantity,
-          inputOrder,
-        });
-      }
-      inputOrder += 1;
-    }
-  }
-
-  records.sort((a, b) => a.startHint - b.startHint || a.inputOrder - b.inputOrder);
-  const cursors = new Map<string, number>();
-  const windows: ProviderWindow[] = [];
-  for (const record of records) {
-    const startMin = Math.max(
-      record.startHint,
-      cursors.get(record.techID) ?? record.startHint,
-    );
-    const endMin = startMin + record.durationMin;
-    cursors.set(record.techID, endMin);
-    windows.push({ techID: record.techID, startMin, endMin });
-  }
-
-  return windows;
+      return techID !== "" && techID !== "0";
+    })
+    .map((service) => ({
+      techID: trimValue(service.techID).toUpperCase(),
+      startMin: service.startMin,
+      endMin: service.endMin,
+    }));
 }
 
-/**
- * Persist the admin booking's actual execution placement. Each provider has
- * an independent cursor, so different technicians run in parallel while two
- * services assigned to the same technician are sequential.
- */
 function buildAdminSchedule(
-  guests: Guest[],
-  durationOf: (itemCode: string) => number,
-  fallbackStartMin: number,
+  serviceWindows: readonly PlannedServiceWindow[],
 ): StoredBookingScheduleEntry[] {
-  const records: {
-    serviceIndex: number;
-    service: GuestService;
-    startHint: number;
-    inputOrder: number;
-  }[] = [];
-  let serviceIndex = 0;
-  let inputOrder = 0;
-
-  for (const guest of guests) {
-    const guestStart = slotToMinutes(guest.timeSlot || "");
-    const startHint = guestStart >= 0 ? guestStart : fallbackStartMin;
-    for (const service of guest.services || []) {
-      records.push({ serviceIndex, service, startHint, inputOrder });
-      serviceIndex += 1;
-      inputOrder += 1;
-    }
-  }
-
-  // Chronological ordering prevents a later guest in the payload from being
-  // scheduled before an earlier guest when both use the same technician.
-  records.sort((a, b) => a.startHint - b.startHint || a.inputOrder - b.inputOrder);
-  const cursors = new Map<string, number>();
-  const result: StoredBookingScheduleEntry[] = [];
-
-  for (const record of records) {
-    const techID = trimValue(record.service.techID) || "0";
-    const providerKey = techID === "0" ? "__UNASSIGNED__" : techID;
-    const catalogDuration = Number(durationOf(record.service.serviceItemID.trim()));
-    const duration = catalogDuration > 0 ? catalogDuration : 30;
-    const quantity = Number(record.service.qty) > 0 ? Number(record.service.qty) : 1;
-    const startMin = Math.max(
-      record.startHint,
-      cursors.get(providerKey) ?? record.startHint,
-    );
-    const endMin = startMin + duration * quantity;
-    cursors.set(providerKey, endMin);
-    result.push({
-      serviceIndex: record.serviceIndex,
-      itemCode: "",
-      startMin,
-      endMin,
-    });
-  }
-
-  return result.sort((a, b) => a.serviceIndex - b.serviceIndex);
+  return serviceWindows.map((service) => ({
+    serviceIndex: service.serviceIndex,
+    itemCode: "",
+    startMin: service.startMin,
+    endMin: service.endMin,
+  }));
 }
 
 interface RawConflictRow {
   BookingID: string;
   StartMin: number;
   TechID: string;
-  TotalMin: number;
+  ScheduleStartMin: number | null;
+  ScheduleEndMin: number | null;
+  DurationMin: number;
+  Qty: number | string | null;
 }
 
 function hasOverlap(a: ProviderWindow, b: ProviderWindow): boolean {
-  return a.techID === b.techID && a.startMin < b.endMin && b.startMin < a.endMin;
+  return providerWindowsOverlap(a, b);
 }
 
 interface GuestService {
@@ -1093,41 +1021,18 @@ export async function POST(req: NextRequest) {
         { status: 422 },
       );
     }
-    if (appointmentTime && !slotInList(appointmentTime, companyDay.slots)) {
+    if (
+      appointmentTime &&
+      !clockInSpan(
+        slotToMinutes(appointmentTime),
+        companyDay.startMin,
+        companyDay.closeMin,
+      )
+    ) {
       return NextResponse.json(
         { success: false, error: "That time is outside salon hours for the selected date." },
         { status: 422 },
       );
-    }
-    const staffDays = await loadStaffDays(body.appointmentDate, locCode);
-    for (const g of body.guests) {
-      const ids = Array.isArray((g as { providerIds?: string[] }).providerIds)
-        ? (g as { providerIds?: string[] }).providerIds!
-        : [];
-      const techs = Array.isArray((g as { technicians?: { UserId?: string }[] }).technicians)
-        ? (g as { technicians?: { UserId?: string }[] }).technicians!.map((t) => String(t.UserId || "").trim())
-        : [];
-      for (const raw of [...ids, ...techs]) {
-        const techID = String(raw || "").trim();
-        if (!techID || techID === "0") continue;
-        const hours = resolveStaffWindow(companyDay, staffDays.get(techID.toUpperCase()));
-        if (!hours.working) {
-          return NextResponse.json(
-            { success: false, error: "A selected technician is not scheduled at this location on that date." },
-            { status: 422 },
-          );
-        }
-        if (appointmentTime) {
-          const t = clockToMinutes(appointmentTime);
-          const wins = hours.windows.length ? hours.windows : [{ startMin: hours.startMin, closeMin: hours.closeMin }];
-          if (!wins.some((w) => clockInSpan(t, w.startMin, w.closeMin))) {
-            return NextResponse.json(
-              { success: false, error: "A selected technician is not scheduled at the selected time." },
-              { status: 422 },
-            );
-          }
-        }
-      }
     }
     const phone = normalizePhoneForStorage(body.regTel.trim());
     const cusName = body.cusName.trim();
@@ -1189,10 +1094,7 @@ export async function POST(req: NextRequest) {
         SerDuration: number;
         ServiceItem: boolean | number | string;
         Enable: boolean | number | string;
-        Category1: string | null;
-        Category2: string | null;
-        Category3: string | null;
-        Category4: string | null;
+        SpecAreaID: string | null;
       }[]
     >`
       SELECT
@@ -1203,10 +1105,7 @@ export async function POST(req: NextRequest) {
         COALESCE(NULLIF(SerDuration, 0), 30) AS SerDuration,
         ServiceItem AS ServiceItem,
         Enable AS Enable,
-        RTRIM(Category1) AS Category1,
-        RTRIM(Category2) AS Category2,
-        RTRIM(Category3) AS Category3,
-        RTRIM(Category4) AS Category4
+        RTRIM(SpecAreaID) AS SpecAreaID
       FROM tbl_itemmaster
       WHERE RTRIM(LocCode) = ${locCode}
         AND RTRIM(ItemCode) IN (${Prisma.join(allItemCodes)})
@@ -1244,28 +1143,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const categoryCodes = [
-      ...new Set(
-        itemRows
-          .map((item) => trimValue(item.Category1))
-          .filter(Boolean),
-      ),
-    ];
-    const categoryRows =
-      categoryCodes.length > 0
-        ? await prisma.$queryRaw<
-            { CatCode: string; CatDes: string | null }[]
-          >`
-            SELECT RTRIM(CatCode) AS CatCode, RTRIM(CatDes) AS CatDes
-            FROM tbl_ItemCategory1
-            WHERE RTRIM(CatCode) IN (${Prisma.join(categoryCodes)})
-          `
-        : [];
-    const categoryLabelMap = new Map(
-      categoryRows.map((category) => [
-        normalizedQualification(category.CatCode),
-        trimValue(category.CatDes),
+    // Service durations come from the server catalog, never from the client.
+    // Reuse this map for schedule validation, conflict detection and storage.
+    const itemDurationMap = Object.fromEntries(
+      itemRows.map((item) => [
+        normalizedQualification(item.ItemCode),
+        Number(item.SerDuration) > 0 ? Number(item.SerDuration) : 30,
       ]),
+    );
+
+    /* Match the same speciality source used by the service picker and the
+       technician qualification assignments. Category1 belongs to the separate
+       item-category tree and may not match a service's SpecAreaID. */
+    const specialityRows = await listSpecialities(prisma);
+    const specialityLabelMap = new Map(
+      specialityRows.map((speciality) => {
+        const code = trimValue(speciality.SpecAreaID);
+        return [
+          normalizedQualification(code),
+          trimValue(speciality.Specilities) || code,
+        ];
+      }),
     );
 
     const requestedTechIDs = [
@@ -1376,25 +1274,66 @@ export async function POST(req: NextRequest) {
         const item = itemByCode.get(
           normalizedQualification(service.serviceItemID),
         );
-        const category = trimValue(item?.Category1);
-        const categoryKey = normalizedQualification(category);
-        if (
-          category &&
-          !technicianQualifiesForCategory(
-            technician,
-            category,
-            categoryLabelMap.get(categoryKey) || category,
-          )
-        ) {
+        const specialtyCode = trimValue(item?.SpecAreaID);
+        const specialtyKey = normalizedQualification(specialtyCode);
+        const specialtyLabel = specialityLabelMap.get(specialtyKey);
+        if (!specialtyCode || !specialtyLabel) {
           return NextResponse.json(
             {
               success: false,
-              error: `Technician "${techID}" is not qualified for service category "${categoryLabelMap.get(categoryKey) || category}"`,
+              error: `Service "${trimValue(service.serviceItemID)}" is not assigned to a valid technician speciality`,
+            },
+            { status: 422 },
+          );
+        }
+        if (!technicianQualifiesForCategory(technician, specialtyCode, specialtyLabel)) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: `Technician "${techID}" is not qualified for service category "${specialtyLabel}"`,
             },
             { status: 422 },
           );
         }
       }
+    }
+
+    // Validate the exact techID values sent under guests[].services[].techID.
+    // Do this before touching the customer master so rejected time/shift
+    // requests cannot leave partial customer records behind.
+    const staffDays = await loadStaffDays(body.appointmentDate, locCode);
+    const resolvedStaffByID = new Map<string, ReturnType<typeof resolveStaffWindow>>();
+    for (const guest of body.guests) {
+      for (const service of guest.services) {
+        const techID = trimValue(service.techID);
+        if (!techID || techID === "0") continue;
+        const key = normalizedQualification(techID);
+        if (!resolvedStaffByID.has(key)) {
+          resolvedStaffByID.set(
+            key,
+            resolveStaffWindow(companyDay, staffDays.get(key)),
+          );
+        }
+      }
+    }
+
+    const plannedServiceWindows = planBookingServiceWindows(
+      body.guests,
+      (itemCode) => itemDurationMap[normalizedQualification(itemCode)] ?? 30,
+      slotToMinutes(appointmentTime),
+    );
+    const timeRuleError = validateBookingTimeRules({
+      guests: body.guests,
+      appointmentTime,
+      company: companyDay,
+      staffByID: resolvedStaffByID,
+      serviceWindows: plannedServiceWindows,
+    });
+    if (timeRuleError) {
+      return NextResponse.json(
+        { success: false, error: timeRuleError },
+        { status: 422 },
+      );
     }
 
     const existingRows = await prisma.$queryRaw<
@@ -1500,7 +1439,6 @@ export async function POST(req: NextRequest) {
     }
 
     let itemNameMap: Record<string, string> = {};
-    let itemDurationMap: Record<string, number> = {};
 
     if (allItemCodes.length > 0) {
       itemNameMap = Object.fromEntries(
@@ -1521,15 +1459,6 @@ export async function POST(req: NextRequest) {
           Number(i.Retailprice) || 0,
         ]),
       );
-      // Real per-service durations for the server-side conflict guard —
-      // the same source the availability UI now uses.
-      itemDurationMap = Object.fromEntries(
-        itemRows.map((i) => [
-          normalizedQualification(i.ItemCode),
-          Number(i.SerDuration) > 0 ? Number(i.SerDuration) : 30,
-        ]),
-      );
-
       let priceAdjusted = 0;
       for (const guest of body.guests) {
         for (const svc of guest.services) {
@@ -1566,11 +1495,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const persistedSchedule = buildAdminSchedule(
-      body.guests,
-      (itemCode) => itemDurationMap[normalizedQualification(itemCode)] || 30,
-      slotToMinutes(appointmentTime),
-    );
+    const persistedSchedule = buildAdminSchedule(plannedServiceWindows);
     const persistedScheduleByIndex = new Map(
       persistedSchedule.map((entry) => [entry.serviceIndex, entry]),
     );
@@ -1618,10 +1543,13 @@ export async function POST(req: NextRequest) {
             // check below and create a double booking for the same technician.
             const conflictRows = await tx.$queryRaw<RawConflictRow[]>`
               SELECT
-                h.BookingID,
+                RTRIM(h.BookingID) AS BookingID,
                 (HOUR(h.BookingDate) * 60 + MINUTE(h.BookingDate)) AS StartMin,
                 RTRIM(d.TechID) AS TechID,
-                COALESCE(SUM(COALESCE(NULLIF(i.SerDuration, 0), 30)), 30) AS TotalMin
+                d.ScheduleStartMin AS ScheduleStartMin,
+                d.ScheduleEndMin AS ScheduleEndMin,
+                COALESCE(NULLIF(i.SerDuration, 0), 30) AS DurationMin,
+                d.Qty AS Qty
               FROM tbl_bookingheder h
               JOIN tbl_bookingservicedetail d
                 ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
@@ -1630,38 +1558,74 @@ export async function POST(req: NextRequest) {
                AND RTRIM(i.ItemCode) = RTRIM(d.ServiceItemID)
               WHERE RTRIM(h.LocCode) = ${locCode.trim()}
                 AND DATE(h.BookingDate) = ${body.appointmentDate}
-                AND RTRIM(h.Status) <> 'CANCELLED'
-              GROUP BY h.BookingID, RTRIM(d.TechID), StartMin
+                AND UPPER(RTRIM(h.Status)) NOT IN ('CANCELLED', 'CANCEL', 'PENDING')
               FOR UPDATE
             `;
 
-            // Existing occupancy: per (booking, technician) → real duration
-            // (Σ tbl_itemmaster.SerDuration for that technician's rows).
-            const byKey = new Map<string, { start: number; total: number }>();
+            // Prefer the exact persisted interval for each service. Older rows
+            // without schedule columns fall back to one provider-wide window
+            // from the booking start and its server catalog durations.
+            const existingWindows: ProviderWindow[] = [];
+            const legacyByKey = new Map<
+              string,
+              { techID: string; startMin: number; durationMin: number }
+            >();
+
             for (const row of conflictRows) {
-              const tech = trimValue(row.TechID);
-              if (!tech || tech === "0") continue;
-              const key = `${trimValue(row.BookingID)}|${tech}`;
-              const entry = byKey.get(key);
-              if (entry) entry.total += Number(row.TotalMin) || 30;
-              else
-                byKey.set(key, {
-                  start: Number(row.StartMin) || 0,
-                  total: Number(row.TotalMin) || 30,
+              const techID = trimValue(row.TechID).toUpperCase();
+              if (!techID || techID === "0") continue;
+
+              const scheduledStart = row.ScheduleStartMin == null
+                ? Number.NaN
+                : Number(row.ScheduleStartMin);
+              const scheduledEnd = row.ScheduleEndMin == null
+                ? Number.NaN
+                : Number(row.ScheduleEndMin);
+              if (
+                Number.isFinite(scheduledStart) &&
+                Number.isFinite(scheduledEnd) &&
+                scheduledEnd > scheduledStart
+              ) {
+                existingWindows.push({
+                  techID,
+                  startMin: scheduledStart,
+                  endMin: scheduledEnd,
                 });
+                continue;
+              }
+
+              const bookingID = trimValue(row.BookingID);
+              const key = `${bookingID}|${techID}`;
+              const rawQuantity = Number(row.Qty);
+              const quantity = Number.isFinite(rawQuantity) && rawQuantity > 0
+                ? rawQuantity
+                : 1;
+              const rawDuration = Number(row.DurationMin);
+              const duration = Number.isFinite(rawDuration) && rawDuration > 0
+                ? rawDuration
+                : 30;
+              const current = legacyByKey.get(key);
+              if (current) {
+                current.durationMin += duration * quantity;
+              } else {
+                legacyByKey.set(key, {
+                  techID,
+                  startMin: Number(row.StartMin) || 0,
+                  durationMin: duration * quantity,
+                });
+              }
             }
 
-            const existingWindows: ProviderWindow[] = [...byKey.entries()].map(
-              ([key, e]) => ({
-                techID: key.slice(key.indexOf("|") + 1),
-                startMin: e.start,
-                endMin: e.start + (Number(e.total) > 0 ? Number(e.total) : 30),
-              }),
-            );
+            for (const legacy of legacyByKey.values()) {
+              existingWindows.push({
+                techID: legacy.techID,
+                startMin: legacy.startMin,
+                endMin: legacy.startMin + legacy.durationMin,
+              });
+            }
 
-            const candidateWindows = providerWindowsFromPayload(
-              body.guests,
-              (itemCode) => itemDurationMap[normalizedQualification(itemCode)] || 30,
+            const candidateWindows = providerWindowsFromPlannedServices(
+              plannedServiceWindows,
             );
 
             for (const cw of candidateWindows) {
