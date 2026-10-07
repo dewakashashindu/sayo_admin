@@ -332,6 +332,26 @@ export default function TechnicianAppointmentDetailPage() {
   /** The service rows this screen may show right now. */
   const checkedInSchedule = guestState.visibleRows;
 
+  /* If the technician tapped ONE service card on the list, ?svc=<index>&g=<guest>
+     is carried here so the screen shows just that single row instead of the
+     whole booking's service list. */
+  const focusSvcRaw = (searchParams.get("svc") || "").trim();
+  const focusSvcIdx = focusSvcRaw === "" ? -1 : Number(focusSvcRaw);
+  const displaySchedule = (() => {
+    if (focusSvcIdx < 0 || !appt) return checkedInSchedule;
+    const target = (appt.serviceSchedule ?? [])[focusSvcIdx];
+    if (!target) return checkedInSchedule;
+    const gk = (target.guessID || "MAIN").trim().toUpperCase();
+    const matched = checkedInSchedule.filter(
+      (s) =>
+        ((s.guessID || "MAIN").trim().toUpperCase()) === gk &&
+        (s.itemCode || s.serviceName).trim() ===
+          (target.itemCode || target.serviceName).trim() &&
+        (s.startTime || "") === (target.startTime || ""),
+    );
+    return matched.length > 0 ? matched : checkedInSchedule;
+  })();
+
   const guestProgress = {
     total: guestState.guestTotal,
     checkedIn: guestState.checkedInGuests,
@@ -957,6 +977,46 @@ export default function TechnicianAppointmentDetailPage() {
     }
   }
 
+  /* Per-SERVICE completion: one service of a multi-service booking can be
+     finished on its own and sent to billing, while the rest stays on the
+     floor. `doneKeys` mirrors the server for this session so the button flips
+     to "Done" without a full reload. */
+  const [doneKeys, setDoneKeys] = useState<Set<string>>(new Set());
+  const [busyService, setBusyService] = useState<string | null>(null);
+
+  async function markServiceDone(
+    service: { guessID?: string; itemCode?: string; serviceName: string },
+    key: string,
+  ) {
+    if (!appt || doneKeys.has(key) || busyService) return;
+    setBusyService(key);
+    try {
+      const res = await fetch(
+        `/api/appointments/${encodeURIComponent(appt.bookingID)}/service`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "done",
+            guessID: service.guessID || "MAIN",
+            itemCode: service.itemCode || "",
+          }),
+        },
+      );
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success) {
+        setDoneKeys((prev) => new Set(prev).add(key));
+        showToast(`${service.serviceName} marked done — it is now in Billing`, "success");
+      } else {
+        showToast(json?.message || "Could not mark the service done", "error");
+      }
+    } catch {
+      showToast("Could not reach the server", "error");
+    } finally {
+      setBusyService(null);
+    }
+  }
+
   async function handleDone() {
     if (!appt) return;
     if (appt.status === "done") return;
@@ -1229,36 +1289,82 @@ export default function TechnicianAppointmentDetailPage() {
                           </div>
                         )}
 
-                        {/* Services + per-service schedule */}
+                        {/* ONE list, one row per service, Done on the same row.
+                            A service finished here goes to Billing on its own;
+                            the rest of the booking stays open. */}
                         <div style={{ padding: "10px 14px", border: "1px solid #c8dce0", borderRadius: 10, background: "#f0f8f9" }}>
                           <p style={{ marginBottom: 6, color: "#6b7280", fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>
                             Services for this appointment
                           </p>
-                          {detailServices.map((s, i, arr) => (
-                            <div
-                              key={s.key}
-                              style={{
-                                display: "flex", justifyContent: "space-between", gap: 10,
-                                padding: "6px 0",
-                                borderBottom: i < arr.length - 1 ? "1px solid #e5eeee" : "none",
-                                color: "#1e3a40", fontSize: 13,
-                              }}
-                            >
-                              <span style={{ fontWeight: 600 }}>
-                                {i + 1}. {s.serviceName}
-                                {s.count > 1 && (
-                                  <span style={{ color: "#64748b" }}> × {s.count}</span>
-                                )}
-                                <small style={{ display: "block", color: "#6b7280", fontSize: 11, fontWeight: 500 }}>
-                                  {s.providerName}
-                                </small>
-                              </span>
-                              <span style={{ whiteSpace: "nowrap", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
-                                <Ico.Clock /> {s.startTime}
-                                {s.endTime ? ` – ${s.endTime}` : ""}
-                              </span>
-                            </div>
-                          ))}
+                          {(appt?.serviceSchedule ?? []).length > 0
+                            ? displaySchedule.map((s, i, arr) => {
+                                const key = `${(s.guessID || "MAIN").trim().toUpperCase()}|${(s.itemCode || s.serviceName).trim()}`;
+                                const isDone = doneKeys.has(key);
+                                return (
+                                  <div
+                                    key={key}
+                                    style={{
+                                      display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+                                      padding: "6px 0",
+                                      borderBottom: i < arr.length - 1 ? "1px solid #e5eeee" : "none",
+                                      color: "#1e3a40", fontSize: 13,
+                                    }}
+                                  >
+                                    <span style={{ fontWeight: 600, minWidth: 0 }}>
+                                      {i + 1}. {s.serviceName}
+                                      <small style={{ display: "block", color: "#6b7280", fontSize: 11, fontWeight: 500 }}>
+                                        {s.providerName}
+                                      </small>
+                                    </span>
+                                    <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                                      <span style={{ whiteSpace: "nowrap", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                                        <Ico.Clock /> {s.startTime}
+                                        {s.endTime ? ` – ${s.endTime}` : ""}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        disabled={isDone || busyService === key}
+                                        onClick={() => void markServiceDone(s, key)}
+                                        style={{
+                                          border: "none", borderRadius: 8, padding: "6px 12px",
+                                          fontSize: 12, fontWeight: 700, cursor: isDone ? "default" : "pointer",
+                                          background: isDone ? "#dcfce7" : "#6d28d9",
+                                          color: isDone ? "#15803d" : "#fff",
+                                          opacity: busyService === key ? 0.6 : 1,
+                                        }}
+                                      >
+                                        {isDone ? "Done ✓" : "Done"}
+                                      </button>
+                                    </span>
+                                  </div>
+                                );
+                              })
+                            : detailServices.map((s, i, arr) => (
+                                <div
+                                  key={s.key}
+                                  style={{
+                                    display: "flex", justifyContent: "space-between", gap: 10,
+                                    padding: "6px 0",
+                                    borderBottom: i < arr.length - 1 ? "1px solid #e5eeee" : "none",
+                                    color: "#1e3a40", fontSize: 13,
+                                  }}
+                                >
+                                  <span style={{ fontWeight: 600 }}>
+                                    {i + 1}. {s.serviceName}
+                                    {s.count > 1 && <span style={{ color: "#64748b" }}> × {s.count}</span>}
+                                    <small style={{ display: "block", color: "#6b7280", fontSize: 11, fontWeight: 500 }}>
+                                      {s.providerName}
+                                    </small>
+                                  </span>
+                                  <span style={{ whiteSpace: "nowrap", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                                    <Ico.Clock /> {s.startTime}
+                                    {s.endTime ? ` – ${s.endTime}` : ""}
+                                  </span>
+                                </div>
+                              ))}
+                          <p style={{ marginTop: 6, color: "#6b7280", fontSize: 11 }}>
+                            A service marked Done moves to the Billing Dashboard on its own — the rest of the booking stays open.
+                          </p>
                         </div>
 
                         {appt.notes && appt.notes.trim() && (

@@ -10,7 +10,6 @@ import { guestCheckInState, segmentDisplayStatus } from "@/lib/bookingGuests";
 import { clockToMinutes } from "@/lib/bookingSchedule";
 import {
   SessionRow,
-  sessionBuckets,
   sessionKey,
   sessionRows,
   sessionRowsForTechnician,
@@ -495,19 +494,39 @@ export default function TechnicianAppointmentsPage() {
     );
   }, [mine, viewAll, techName, myUserId]);
 
+  /* The cards must count what the LIST shows: this technician's own sessions,
+     coloured the same way the cards are. Counting a booking's whole session
+     list (including services another technician does) would inflate the
+     numbers — a 3-service booking of which Amali does one is ONE of her
+     sessions, not three. */
   const stats = useMemo(() => {
-    const buckets = sessionBuckets(mine);
-    return {
-      total: buckets.total.bookings,
-      totalSessions: buckets.total.sessions,
-      ongoing: buckets.ongoing.bookings,
-      ongoingSessions: buckets.ongoing.sessions,
-      confirmed: buckets.confirmed.bookings,
-      confirmedSessions: buckets.confirmed.sessions,
-      pending: buckets.pending.bookings,
-      pendingSessions: buckets.pending.sessions,
+    const s = {
+      total: mine.length,
+      totalSessions: mineRows.length,
+      ongoing: 0,
+      ongoingSessions: 0,
+      confirmed: 0,
+      confirmedSessions: 0,
+      pending: 0,
+      pendingSessions: 0,
     };
-  }, [mine]);
+    const bookingsIn = {
+      ongoing: new Set<string>(),
+      confirmed: new Set<string>(),
+      pending: new Set<string>(),
+    };
+    for (const { appointment, session } of mineRows) {
+      const key = `${appointment.locCode}|${appointment.bookingID}`;
+      const state = segmentDisplayStatus(appointment, session, appointment.status).status;
+      if (state === "ongoing") { s.ongoingSessions++; bookingsIn.ongoing.add(key); }
+      else if (state === "confirmed") { s.confirmedSessions++; bookingsIn.confirmed.add(key); }
+      else if (state === "pending") { s.pendingSessions++; bookingsIn.pending.add(key); }
+    }
+    s.ongoing = bookingsIn.ongoing.size;
+    s.confirmed = bookingsIn.confirmed.size;
+    s.pending = bookingsIn.pending.size;
+    return s;
+  }, [mine, mineRows]);
 
   /** Per-guest check-in state for a booking, scoped to this screen's
    *  technician. A group booking's guests arrive at their own times, and the
@@ -521,13 +540,58 @@ export default function TechnicianAppointmentsPage() {
     });
   }
 
+  /* Per-service completion from the list itself: one tap marks THIS service
+     done and sends just it to billing — no need to open the booking.
+     `doneKeys` mirrors the server for this session so the button flips to
+     "Done" without a full reload. */
+  const [doneKeys, setDoneKeys] = useState<Set<string>>(new Set());
+  const [busyService, setBusyService] = useState<string | null>(null);
+
+  async function markServiceDone(
+    a: TechAppointment,
+    session: SessionRow,
+    key: string,
+  ) {
+    if (doneKeys.has(key) || busyService) return;
+    setBusyService(key);
+    try {
+      const res = await fetch(
+        `/api/appointments/${encodeURIComponent(a.bookingID)}/service`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "done",
+            guessID: session.guessID || "MAIN",
+            itemCode: session.itemCode || "",
+            serviceIndex: session.serviceIndex,
+          }),
+        },
+      );
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.success) {
+        setDoneKeys((prev) => new Set(prev).add(key));
+        showToast(`${session.serviceName} done — sent to billing`, "success");
+      } else {
+        showToast(json?.message || "Could not mark the service done", "error");
+      }
+    } catch {
+      showToast("Could not reach the server", "error");
+    } finally {
+      setBusyService(null);
+    }
+  }
+
   function isOpenable(a: TechAppointment) {
     const state = checkInState(a);
     if (!state.hasSchedule) return a.status === "ongoing";
     return state.checkedInRows.length > 0;
   }
 
-  function openDetail(a: TechAppointment) {
+  function openDetail(
+    a: TechAppointment,
+    focus?: { serviceIndex?: number; guessID?: string },
+  ) {
     if (!isOpenable(a)) {
       showToast(
         a.status === "ongoing"
@@ -541,6 +605,12 @@ export default function TechnicianAppointmentsPage() {
       locCode: a.locCode,
       date: a.date,
     });
+    /* Carry which single service card was tapped so the workstation shows
+       just that one row instead of the whole booking's list. */
+    if (focus && typeof focus.serviceIndex === "number") {
+      params.set("svc", String(focus.serviceIndex));
+      if (focus.guessID) params.set("g", focus.guessID);
+    }
     router.push(`/technician-appointments/${encodeURIComponent(a.bookingID)}?${params.toString()}`);
   }
 
@@ -837,11 +907,22 @@ export default function TechnicianAppointmentsPage() {
                     session.sessionTotal > 1
                       ? `Service ${session.serviceIndex + 1} of ${session.sessionTotal}`
                       : "";
+                  /* This very service row's key, and whether it is already
+                     done — the Done button lives on the card itself so the
+                     technician never has to open the booking. */
+                  const rowKey = sessionKey(a.bookingID, a.locCode, session);
+                  const isDone = doneKeys.has(rowKey);
+                  const canDone = segment.guestCheckedIn && !cancelled && !isDone;
                   return (
                     <div
-                      key={sessionKey(a.bookingID, a.locCode, session)}
+                      key={rowKey}
                       className={`tech-card fade-up${clickable ? " clickable" : " locked"}${cancelled ? " cancelled-card" : ""}`}
-                      onClick={() => openDetail(a)}
+                      onClick={() =>
+                        openDetail(a, {
+                          serviceIndex: session.serviceIndex,
+                          guessID: session.guessID,
+                        })
+                      }
                       role={clickable ? "button" : undefined}
                       title={clickable ? "Open appointment" : "Opens after check-in"}
                     >
@@ -870,6 +951,31 @@ export default function TechnicianAppointmentsPage() {
                             LKR {a.price.toLocaleString()}
                             {session.sessionTotal > 1 ? " total" : ""}
                           </span>
+                          {/* Finish THIS service and send just it to billing. */}
+                          {(canDone || isDone) && (
+                            <button
+                              type="button"
+                              disabled={isDone || busyService === rowKey}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void markServiceDone(a, session, rowKey);
+                              }}
+                              title={isDone ? "Already sent to billing" : "Mark this service done and send it to billing"}
+                              style={{
+                                border: "none",
+                                borderRadius: 8,
+                                padding: "5px 12px",
+                                fontSize: 12,
+                                fontWeight: 700,
+                                cursor: isDone ? "default" : "pointer",
+                                background: isDone ? "#dcfce7" : "#6d28d9",
+                                color: isDone ? "#15803d" : "#fff",
+                                opacity: busyService === rowKey ? 0.6 : 1,
+                              }}
+                            >
+                              {isDone ? "Done ✓" : "Done"}
+                            </button>
+                          )}
                         </div>
                       </div>
 
