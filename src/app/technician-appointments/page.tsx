@@ -6,7 +6,16 @@ import AccessLoading from "@/components/AccessLoading";
 import { useMyAccess } from "@/lib/useMyAccess";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
-import { guestCheckInState } from "@/lib/bookingGuests";
+import { guestCheckInState, segmentDisplayStatus } from "@/lib/bookingGuests";
+import { clockToMinutes } from "@/lib/bookingSchedule";
+import {
+  SessionRow,
+  sessionBuckets,
+  sessionKey,
+  sessionRows,
+  sessionRowsForTechnician,
+} from "@/lib/bookingSessions";
+import SessionDualCount from "@/components/SessionDualCount";
 import {
   SAMPLE_TECHNICIAN_NAME,
   TechAppointment,
@@ -460,15 +469,45 @@ export default function TechnicianAppointmentsPage() {
     }
   }, [canChangeTech, choiceResolved, viewAll, loading, autoAll, mine, dayRows]);
 
-  const stats = useMemo(
-    () => ({
-      total: mine.length,
-      ongoing: mine.filter((a) => a.status === "ongoing").length,
-      confirmed: mine.filter((a) => a.status === "confirmed").length,
-      pending: mine.filter((a) => a.status === "pending").length,
-    }),
-    [mine],
-  );
+  /* ONE CARD PER SERVICE, not per booking.
+     A booking that carries a Facial for this technician and a Haircut for
+     somebody else lands here with only the Facial on it — the Haircut belongs
+     to the other technician's list. When the SAME technician holds both
+     services they still get two separate cards, because those are two pieces
+     of work at two different times, not one appointment. */
+  const mineRows = useMemo(() => {
+    const rows: { appointment: TechAppointment; session: SessionRow }[] = [];
+    for (const appointment of mine) {
+      /* An unfiltered viewer (an admin looking across the floor) sees every
+         service of every booking; a technician sees only their own rows. */
+      const sessions = viewAll
+        ? sessionRows(appointment)
+        : sessionRowsForTechnician(appointment, techName, myUserId);
+      for (const session of sessions) rows.push({ appointment, session });
+    }
+    /* Chronological, the way the day actually runs; the booking ID only
+       breaks ties between services scheduled for the same minute. */
+    return rows.sort(
+      (first, second) =>
+        clockToMinutes(first.session.startTime) -
+          clockToMinutes(second.session.startTime) ||
+        first.appointment.bookingID.localeCompare(second.appointment.bookingID),
+    );
+  }, [mine, viewAll, techName, myUserId]);
+
+  const stats = useMemo(() => {
+    const buckets = sessionBuckets(mine);
+    return {
+      total: buckets.total.bookings,
+      totalSessions: buckets.total.sessions,
+      ongoing: buckets.ongoing.bookings,
+      ongoingSessions: buckets.ongoing.sessions,
+      confirmed: buckets.confirmed.bookings,
+      confirmedSessions: buckets.confirmed.sessions,
+      pending: buckets.pending.bookings,
+      pendingSessions: buckets.pending.sessions,
+    };
+  }, [mine]);
 
   /** Per-guest check-in state for a booking, scoped to this screen's
    *  technician. A group booking's guests arrive at their own times, and the
@@ -645,22 +684,39 @@ export default function TechnicianAppointmentsPage() {
                 <div className="sc-label" style={{ color: "rgba(255,255,255,.6)" }}>
                   {viewAll ? "All Technicians" : "My Appointments"}
                 </div>
-                <div className="sc-value" style={{ color: "#fff" }}>{stats.total}</div>
+                <SessionDualCount
+                  bookings={stats.total}
+                  sessions={stats.totalSessions}
+                  color="#fff"
+                  size={26}
+                />
                 <div style={{ color: "rgba(255,255,255,.45)", fontSize: 10, fontWeight: 500 }}>{fmtDateNav(date)}</div>
               </div>
               <div className="stat-card" style={{ background: "linear-gradient(135deg,#eff6ff,#dbeafe)", border: "1px solid rgba(59,130,246,.3)" }}>
                 <div className="sc-label" style={{ color: "#1d4ed8" }}><span className="live-dot-blue" /> Checked-in</div>
-                <div className="sc-value" style={{ color: "#1e3a8a" }}>{stats.ongoing}</div>
+                <SessionDualCount
+                  bookings={stats.ongoing}
+                  sessions={stats.ongoingSessions}
+                  color="#1e3a8a"
+                />
                 <div style={{ color: "#2563eb", fontSize: 10, fontWeight: 500 }}>Tap to open</div>
               </div>
               <div className="stat-card" style={{ background: "linear-gradient(135deg,#f0fdf4,#dcfce7)", border: "1px solid rgba(34,197,94,.25)" }}>
                 <div className="sc-label" style={{ color: "#15803d" }}>Confirmed</div>
-                <div className="sc-value" style={{ color: "#14532d" }}>{stats.confirmed}</div>
+                <SessionDualCount
+                  bookings={stats.confirmed}
+                  sessions={stats.confirmedSessions}
+                  color="#14532d"
+                />
                 <div style={{ color: "#16a34a", fontSize: 10, fontWeight: 500 }}>Upcoming</div>
               </div>
               <div className="stat-card" style={{ background: "linear-gradient(135deg,#fffbeb,#fef3c7)", border: "1px solid rgba(245,158,11,.3)" }}>
                 <div className="sc-label" style={{ color: "#b45309" }}>Pending</div>
-                <div className="sc-value" style={{ color: "#78350f" }}>{stats.pending}</div>
+                <SessionDualCount
+                  bookings={stats.pending}
+                  sessions={stats.pendingSessions}
+                  color="#78350f"
+                />
                 <div style={{ color: "#d97706", fontSize: 10, fontWeight: 500 }}>Awaiting confirmation</div>
               </div>
             </div>
@@ -715,7 +771,7 @@ export default function TechnicianAppointmentsPage() {
               <p style={{ color: "#374151", fontSize: 13, fontWeight: 700 }}>
                 {fmtDateLong(date)}
                 <span style={{ color: "#6b7280", fontWeight: 500 }}>
-                  {" "}· {mine.length} appointment{mine.length !== 1 ? "s" : ""}{" "}
+                  {" "}· {mine.length} booking{mine.length !== 1 ? "s" : ""} · {mineRows.length} session{mineRows.length !== 1 ? "s" : ""}{" "}
                   {viewAll ? "across all technicians" : `for ${techName}`}
                 </span>
               </p>
@@ -726,7 +782,7 @@ export default function TechnicianAppointmentsPage() {
                     <div key={i} className="skeleton" style={{ height: 96 }} />
                   ))}
                 </div>
-              ) : mine.length === 0 ? (
+              ) : mineRows.length === 0 ? (
                 <div className="empty-state">
                   <div className="empty-ico"><Ico.Inbox /></div>
                   <p style={{ color: "#6b7280", fontSize: 14, fontWeight: 600 }}>
@@ -750,42 +806,40 @@ export default function TechnicianAppointmentsPage() {
                   )}
                 </div>
               ) : (
-                mine.map((a) => {
+                mineRows.map(({ appointment: a, session }) => {
                   const state = checkInState(a);
-                  const clickable = isOpenable(a);
-                  const cancelled = a.status === "cancelled";
-                  /* A group booking whose later guests have not arrived yet
-                     shows only the services that are already checked in — the
-                     rest appear here at their own check-in time. */
-                  const partial =
-                    state.hasSchedule &&
-                    state.checkedInRows.length > 0 &&
-                    state.checkedInRows.length < state.rowCount;
-                  const shownServiceName =
-                    partial && state.checkedInRows.length > 0
-                      ? Array.from(
-                          new Set(
-                            state.checkedInRows.map((s) => s.serviceName),
-                          ),
-                        ).join(", ") || a.serviceName
-                      : a.serviceName;
-                  /* Same time as inside the booking: the scheduled service
-                     window, falling back to the header label. For a partially
-                     checked-in group it is the checked-in guests' window. */
-                  const startLabel =
-                    (partial ? state.checkedInRows[0]?.startTime : "") ||
-                    a.scheduleStartTime ||
-                    a.timeSlot;
+                  /* This card is ONE SERVICE of the booking, so its colour and
+                     its lock come from its own guest's row — the booking header
+                     reads ONGOING the moment the FIRST guest of a group is
+                     checked in, which says nothing about this service. */
+                  const segment = segmentDisplayStatus(a, session, a.status);
+                  const cancelled = segment.status === "cancelled";
+                  /* A legacy booking with no schedule projection carries no
+                     per-guest information, so it keeps the booking-level rule. */
+                  const clickable = state.hasSchedule
+                    ? segment.guestCheckedIn && !cancelled
+                    : isOpenable(a);
+                  const technicianName =
+                    session.providerName || a.providerName || "Unassigned";
+                  const startLabelText =
+                    session.startTime || a.scheduleStartTime || a.timeSlot;
+                  const windowMinutes =
+                    clockToMinutes(session.endTime) -
+                    clockToMinutes(session.startTime);
+                  const minutes =
+                    windowMinutes > 0 ? windowMinutes : Math.max(0, a.duration);
                   const endLabelText =
-                    (partial
-                      ? state.checkedInRows[state.checkedInRows.length - 1]
-                          ?.endTime
-                      : "") ||
-                    a.scheduleEndTime ||
-                    (a.duration > 0 ? endLabel(startLabel, a.duration) : "");
+                    session.endTime ||
+                    (minutes > 0 ? endLabel(startLabelText, minutes) : "");
+                  /* "Service 2 of 3" — the technician can see at a glance that
+                     this card is one piece of a bigger booking. */
+                  const positionLabel =
+                    session.sessionTotal > 1
+                      ? `Service ${session.serviceIndex + 1} of ${session.sessionTotal}`
+                      : "";
                   return (
                     <div
-                      key={`${a.locCode}|${a.bookingID}`}
+                      key={sessionKey(a.bookingID, a.locCode, session)}
                       className={`tech-card fade-up${clickable ? " clickable" : " locked"}${cancelled ? " cancelled-card" : ""}`}
                       onClick={() => openDetail(a)}
                       role={clickable ? "button" : undefined}
@@ -794,7 +848,7 @@ export default function TechnicianAppointmentsPage() {
                       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
                         <div style={{ minWidth: 0 }}>
                           <p style={{ color: "#1e3a40", fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {shownServiceName}
+                            {session.serviceName}
                           </p>
                           <p style={{ marginTop: 2, color: "#374151", fontSize: 13, fontWeight: 600 }}>
                             {a.clientName}
@@ -802,18 +856,33 @@ export default function TechnicianAppointmentsPage() {
                           </p>
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
-                          <StatusBadge status={a.status} />
-                          <span style={{ color: "#1e3a40", fontSize: 13, fontWeight: 700 }}>
+                          <StatusBadge status={segment.status} />
+                          {/* The payload carries the booking total only, never a
+                              per-service price, so it is labelled as such. */}
+                          <span
+                            style={{ color: "#1e3a40", fontSize: 13, fontWeight: 700 }}
+                            title={
+                              session.sessionTotal > 1
+                                ? "Total for the whole booking, not this service alone"
+                                : undefined
+                            }
+                          >
                             LKR {a.price.toLocaleString()}
+                            {session.sessionTotal > 1 ? " total" : ""}
                           </span>
                         </div>
                       </div>
 
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ display: "flex", alignItems: "center", gap: 3, color: "#374151", fontSize: 12, fontWeight: 600 }}>
-                          <Ico.Clock /> {startLabel}
+                          <Ico.Clock /> {startLabelText}
                           {endLabelText ? ` – ${endLabelText}` : ""}
-                          <span style={{ color: "#9ca3af", fontWeight: 500 }}>({a.duration} min)</span>
+                          {minutes > 0 && (
+                            <span style={{ color: "#9ca3af", fontWeight: 500 }}>({minutes} min)</span>
+                          )}
+                        </span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 3, color: "#1e3a40", fontSize: 12, fontWeight: 700 }}>
+                          <Ico.Users /> {technicianName}
                         </span>
                         {state.guestTotal > 1 && (
                           <span
@@ -827,7 +896,7 @@ export default function TechnicianAppointmentsPage() {
                             }}
                             title="Guests of this group who have been checked in"
                           >
-                            <Ico.Users /> {state.checkedInGuests}/{state.guestTotal} checked in
+                            {state.checkedInGuests}/{state.guestTotal} checked in
                           </span>
                         )}
                         <span style={{ display: "flex", alignItems: "center", gap: 3, color: "#6b7280", fontSize: 12 }}>
@@ -839,7 +908,7 @@ export default function TechnicianAppointmentsPage() {
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                         <span style={{ color: "#9ca3af", fontSize: 11 }}>
                           Booking: {a.bookingID}
-                          {a.providerName ? ` · ${a.providerName}` : ""}
+                          {positionLabel ? ` · ${positionLabel}` : ""}
                         </span>
                         {clickable ? (
                           <span style={{ display: "flex", alignItems: "center", gap: 3, color: "#1d4ed8", fontSize: 12, fontWeight: 700 }}>

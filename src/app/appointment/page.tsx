@@ -20,6 +20,12 @@ import {
   guestGroupsFromSchedule,
   segmentDisplayStatus,
 } from "@/lib/bookingGuests";
+import {
+  SessionBuckets,
+  sessionBuckets,
+  sessionRows,
+} from "@/lib/bookingSessions";
+import SessionDualCount from "@/components/SessionDualCount";
 
 /** One guest filed on the booking = one tbl_bookingtxndetail row, carrying
  *  that guest's OWN check-in stamp and cancellation state. */
@@ -88,6 +94,9 @@ interface Stats {
   cancelled: number;
   pending: number;
   ongoing: number;
+  /** Sessions (service rows) behind each booking count above. A booking with
+   *  a Facial and a Haircut is 1 booking and 2 sessions. */
+  sessions: SessionBuckets;
 }
 
 interface ToastMsg {
@@ -409,6 +418,10 @@ const CSS = `
   .stat-card { position: relative; display: flex; flex: 1 1 0; min-width: 80px; flex-direction: column; gap: 4px; overflow: hidden; padding: 14px 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.05); }
   .stat-card .sc-label { display: flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; opacity: .7; }
   .stat-card .sc-value { color: #1f2937; font-size: 30px; font-weight: 800; line-height: 1.1; }
+  /* One line per service row inside a booking card. */
+  .appt-session { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 6px 8px; border-radius: 8px; background: rgba(30,58,64,.045); border-left: 3px solid rgba(30,58,64,.18); }
+  .appt-session .ss-name { color: #1e3a40; font-size: 12px; font-weight: 700; }
+  .appt-session .ss-meta { color: #6b7280; font-size: 11px; font-weight: 600; }
   .stat-card .sc-sub { margin-top: 2px; font-size: 10px; font-weight: 500; opacity: .55; }
   .stat-card .sc-icon { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); opacity: .12; }
   .stat-card .sc-bar { position: absolute; bottom: 0; left: 0; height: 3px; border-radius: 0 0 12px 12px; }
@@ -1087,9 +1100,12 @@ function StatsRow({
         <div className="sc-label" style={{ color: "rgba(255,255,255,.6)" }}>
           <Ico.Appt size={12} /> Total Appointments
         </div>
-        <div className="sc-value" style={{ color: "#fff", fontSize: 38 }}>
-          {stats.total}
-        </div>
+        <SessionDualCount
+          bookings={stats.total}
+          sessions={stats.sessions.total.sessions}
+          color="#fff"
+          size={30}
+        />
         <div className="sc-sub" style={{ color: "rgba(255,255,255,.45)" }}>
           {fmtDateNav(todayISO())}
         </div>
@@ -1120,11 +1136,13 @@ function StatsRow({
           />{" "}
           Confirmed
         </div>
-        <div className="sc-value" style={{ color: "#14532d" }}>
-          {stats.confirmed}
-        </div>
+        <SessionDualCount
+          bookings={stats.confirmed}
+          sessions={stats.sessions.confirmed.sessions}
+          color="#14532d"
+        />
         <div className="sc-sub" style={{ color: "#16a34a" }}>
-          {percentage(stats.confirmed)}% of total
+          {percentage(stats.confirmed)}% of bookings
         </div>
         <div className="sc-icon">
           <Ico.Check size={40} />
@@ -1150,9 +1168,11 @@ function StatsRow({
         <div className="sc-label" style={{ color: "#1d4ed8" }}>
           <span className="live-dot-blue" /> Ongoing
         </div>
-        <div className="sc-value" style={{ color: "#1e3a8a" }}>
-          {stats.ongoing}
-        </div>
+        <SessionDualCount
+          bookings={stats.ongoing}
+          sessions={stats.sessions.ongoing.sessions}
+          color="#1e3a8a"
+        />
         <div className="sc-sub" style={{ color: "#2563eb" }}>
           {stats.ongoing > 0 ? "In session now" : "None active"}
         </div>
@@ -1186,11 +1206,13 @@ function StatsRow({
           />{" "}
           Pending
         </div>
-        <div className="sc-value" style={{ color: "#78350f" }}>
-          {stats.pending}
-        </div>
+        <SessionDualCount
+          bookings={stats.pending}
+          sessions={stats.sessions.pending.sessions}
+          color="#78350f"
+        />
         <div className="sc-sub" style={{ color: "#d97706" }}>
-          {percentage(stats.pending)}% of total
+          {percentage(stats.pending)}% of bookings
         </div>
         <div className="sc-icon">
           <Ico.Pending size={40} />
@@ -1222,11 +1244,13 @@ function StatsRow({
           />{" "}
           Cancelled
         </div>
-        <div className="sc-value" style={{ color: "#7f1d1d" }}>
-          {stats.cancelled}
-        </div>
+        <SessionDualCount
+          bookings={stats.cancelled}
+          sessions={stats.sessions.cancelled.sessions}
+          color="#7f1d1d"
+        />
         <div className="sc-sub" style={{ color: "#dc2626" }}>
-          {percentage(stats.cancelled)}% of total
+          {percentage(stats.cancelled)}% of bookings
         </div>
         <div className="sc-icon">
           <Ico.Cancel size={40} />
@@ -1666,7 +1690,8 @@ function checkInClock(iso: string | null): string {
  *  follows guestGroupsFromSchedule (the main client is index 0). */
 function guestBlockLabel(
   appointment: Appointment,
-  segment?: ServiceSchedule,
+  /* Only the guest code is read, so a projected session row is accepted too. */
+  segment?: { guessID?: string },
 ): string {
   if (appointment.guests.length < 2) return "";
   const code = (segment?.guessID ?? "").trim().toUpperCase() || "MAIN";
@@ -1792,9 +1817,13 @@ function ServiceScheduleModal({
       onConfirm(Array.from(selected));
       return;
     }
-    // Use the full reschedule page for every selection, including one guest,
-    // so the time-selection flow is identical to selecting all guests.
-    onRescheduleFull?.(appointment);
+    if (allSelected) {
+      // Moving everyone is the normal whole-booking reschedule — hand off to
+      // the full Reschedule page, which has the complete availability grid.
+      onRescheduleFull?.(appointment);
+      return;
+    }
+    setStep("time");
   };
 
   if (isReschedule && step === "time") {
@@ -2085,7 +2114,9 @@ function ServiceScheduleModal({
               onClick={handlePrimary}
             >
               {isReschedule
-                ? "Continue"
+                ? allSelected
+                  ? "Continue"
+                  : `Pick a time (${selected.size})`
                 : action === "checkin" &&
                     earlySelected.length > 0 &&
                     !earlyAcknowledged
@@ -3214,6 +3245,11 @@ function AppointmentCard({
   const endLabel = minutesToSlotLabel(
     parseSlotToMinutes(appointment.timeSlot) + appointment.duration,
   );
+  /* One line per service row of the booking. Each row carries its own
+     technician, its own scheduled window and its own guest's status, so a
+     booking that splits a Facial and a Haircut across two technicians no
+     longer collapses into a single "Hair Cut, Facial" line. */
+  const sessions = sessionRows(appointment);
 
   return (
     <div className="appt-card" onClick={onClick}>
@@ -3236,13 +3272,22 @@ function AppointmentCard({
               whiteSpace: "nowrap",
             }}
           >
+            {appointment.clientName}
+            <span style={{ color: "#9ca3af", fontWeight: 500 }}>
+              {" "}
+              · {appointment.clientPhone || "—"}
+            </span>
+          </p>
+          <p
+            style={{
+              marginTop: 1,
+              color: "#6b7280",
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+          >
+            {sessions.length} session{sessions.length !== 1 ? "s" : ""} ·{" "}
             {appointment.serviceName}
-          </p>
-          <p style={{ marginTop: 1, color: "#6b7280", fontSize: 12 }}>
-            {appointment.providerName}
-          </p>
-          <p style={{ marginTop: 1, color: "#9ca3af", fontSize: 11 }}>
-            {appointment.clientName} · {appointment.clientPhone}
           </p>
         </div>
         <div
@@ -3259,6 +3304,44 @@ function AppointmentCard({
             LKR {appointment.price.toLocaleString()}
           </span>
         </div>
+      </div>
+      {/* One row per service — the session list of this booking. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+        {sessions.map((session) => {
+          const segment = segmentDisplayStatus(
+            appointment,
+            session,
+            appointment.status,
+          );
+          const start = session.startTime || appointment.timeSlot;
+          const end = session.endTime || endLabel;
+          return (
+            <div
+              className="appt-session"
+              key={`${session.serviceIndex}|${session.itemCode ?? ""}|${
+                session.serviceName
+              }`}
+            >
+              <span className="ss-name">
+                {session.serviceName}
+                <span style={{ color: "#9ca3af", fontWeight: 500 }}>
+                  {guestBlockLabel(appointment, session)}
+                </span>
+              </span>
+              {sessions.length > 1 && (
+                <StatusBadge status={segment.status} />
+              )}
+              <span className="ss-meta">
+                <Ico.Clock /> {start}
+                {end ? ` – ${end}` : ""}
+              </span>
+              <span className="ss-meta">
+                <Ico.Users />{" "}
+                {session.providerName || appointment.providerName || "Unassigned"}
+              </span>
+            </div>
+          );
+        })}
       </div>
       <div
         style={{
@@ -4055,6 +4138,9 @@ export default function AppointmentsPage() {
     ongoing: appointments.filter(
       (appointment) => appointment.status === "ongoing",
     ).length,
+    /* Same list, counted by service rows. `detailCount` is the server's own
+       row count, so a booking with no schedule projection is still 1 session. */
+    sessions: sessionBuckets(appointments),
   };
 
   const providers = useMemo(() => {

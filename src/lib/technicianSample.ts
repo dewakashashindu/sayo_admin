@@ -113,6 +113,9 @@ export interface TechAppointment {
   mode: string;
   location: string;
   duration: number;
+  /** Service rows on the booking = sessions. Sent by GET /api/appointments;
+   *  used to count sessions when no schedule projection came back. */
+  detailCount?: number;
   price: number;
   gender: string;
   notes?: string;
