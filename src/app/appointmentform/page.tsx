@@ -77,6 +77,8 @@ interface ExistingAppointment {
         never needed it until the reschedule summary started grouping by
         guest. */
     guessID?: string;
+    techID?: string;
+    durationMin?: number;
   }[];
 }
 
@@ -3063,6 +3065,85 @@ function PhoneField({
  * min after Main Client on the new date too), exactly like the backend
  * already preserves when it actually saves a whole-booking reschedule.
  */
+function RescheduleGuestCards({
+  form,
+  rescheduleBooking,
+  onSelect,
+}: {
+  form: BookingFormData;
+  rescheduleBooking?: ExistingAppointment | null;
+  onSelect: (guestID: string) => void;
+}) {
+  const rows = rescheduleBooking?.serviceSchedule ?? [];
+  const groups = new Map<string, ExistingAppointment["serviceSchedule"]>();
+  rows.forEach((row) => {
+    const guestID = row.guessID?.trim().toUpperCase() || "MAIN";
+    const group = groups.get(guestID) ?? [];
+    group.push(row);
+    groups.set(guestID, group);
+  });
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))",
+        gap: 10,
+        marginBottom: 18,
+      }}
+    >
+      {[...groups.entries()]
+        .sort(([a], [b]) => (a === "MAIN" ? -1 : b === "MAIN" ? 1 : a.localeCompare(b)))
+        .map(([guestID, guestRows], index) => {
+          const guest = guestID === "MAIN"
+            ? null
+            : form.subClients.find((client) => client.guessID === guestID);
+          const selectedTime = guest?.timeSlot || form.timeSlot;
+          return (
+            <button
+              type="button"
+              key={guestID}
+              onClick={() => onSelect(guestID)}
+              style={{
+                textAlign: "left",
+                border: "1px solid #cbdede",
+                borderRadius: 10,
+                padding: "11px 12px",
+                background: "#f8fbfb",
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <strong style={{ fontSize: 12, color: "#1e3a40" }}>
+                  {guestID === "MAIN" ? "Main Client" : `Person ${index}`}
+                </strong>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#15803d" }}>
+                  {selectedTime || "Select slot"}
+                </span>
+              </div>
+              <div style={{ marginTop: 7, display: "flex", flexDirection: "column", gap: 4 }}>
+                {guestRows?.map((row, rowIndex) => (
+                  <div key={`${guestID}-${row.serviceIndex}-${rowIndex}`} style={{ fontSize: 11, color: "#4b5563" }}>
+                    <div style={{ fontWeight: 700, color: "#1f2937" }}>
+                      {row.serviceName}
+                    </div>
+                    <div>
+                      {row.providerName || "Unassigned"} ·{" "}
+                      {formatDurationMin(
+                        row.durationMin ??
+                          Math.max(0, slotToMins(row.endTime) - slotToMins(row.startTime)),
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </button>
+          );
+        })}
+    </div>
+  );
+}
+
 function RescheduleSummary({
   form,
   rescheduleBooking,
@@ -3086,12 +3167,6 @@ function RescheduleSummary({
   });
   // MAIN always leads, whatever order the rows happened to arrive in.
   guestOrder.sort((a, b) => (a === "MAIN" ? -1 : b === "MAIN" ? 1 : 0));
-
-  const anchorOldMin = slotToMins(form.rescheduleOriginalTimeSlot);
-  const newMin = slotToMins(form.timeSlot);
-  const hasNewTime =
-    form.timeSlot.length > 0 && anchorOldMin >= 0 && newMin >= 0;
-  const shiftMin = hasNewTime ? newMin - anchorOldMin : 0;
 
   let guestIndex = 0;
 
@@ -3136,6 +3211,18 @@ function RescheduleSummary({
           const label = isMainGuest ? "Main Client" : `Guest ${guestIndex + 1}`;
           if (!isMainGuest) guestIndex += 1;
           const guestRows = byGuest.get(guestKey) || [];
+          const guestForm = form.subClients.find(
+            (guest) => guest.guessID.trim().toUpperCase() === guestKey,
+          );
+          const newGuestSlot = isMainGuest
+            ? form.timeSlot
+            : guestForm?.timeSlot || "";
+          const oldGuestStart = slotToMins(guestRows[0]?.startTime || "");
+          const newGuestStart = slotToMins(newGuestSlot);
+          const guestShift =
+            oldGuestStart >= 0 && newGuestStart >= 0
+              ? newGuestStart - oldGuestStart
+              : 0;
 
           return (
             <div key={guestKey} style={{ marginBottom: 10 }}>
@@ -3155,7 +3242,7 @@ function RescheduleSummary({
                 const oldStart = slotToMins(row.startTime);
                 const oldEnd = slotToMins(row.endTime);
                 const canShift =
-                  hasNewTime && oldStart >= 0 && oldEnd >= 0;
+                  newGuestStart >= 0 && oldStart >= 0 && oldEnd >= 0;
                 return (
                   <div
                     key={`${guestKey}-${row.serviceIndex}-${i}`}
@@ -3175,15 +3262,15 @@ function RescheduleSummary({
                       style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}
                     >
                       {row.providerName ? `${row.providerName} · ` : ""}
-                      {canShift ? (
+                      {canShift && newGuestSlot ? (
                         <>
                           <span style={{ textDecoration: "line-through", opacity: 0.6 }}>
                             {row.startTime} – {row.endTime}
                           </span>
                           {" → "}
                           <span style={{ fontWeight: 700, color: "#15803d" }}>
-                            {minsToSlot(oldStart + shiftMin)} –{" "}
-                            {minsToSlot(oldEnd + shiftMin)}
+                            {minsToSlot(oldStart + guestShift)} –{" "}
+                            {minsToSlot(oldEnd + guestShift)}
                           </span>
                         </>
                       ) : (
@@ -4598,6 +4685,7 @@ function WalkInPage() {
   >([]);
   const [rescheduleBooking, setRescheduleBooking] =
     useState<ExistingAppointment | null>(null);
+  const rescheduleHydratedBooking = useRef("");
   const [availabilityStatus, setAvailabilityStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
@@ -4708,6 +4796,7 @@ function WalkInPage() {
         prefilledTechName:
           paramTechName !== paramTechID ? paramTechName : paramTechID,
       }));
+      rescheduleHydratedBooking.current = "";
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -4924,7 +5013,47 @@ function WalkInPage() {
               normalizedCode(appointment.bookingID) ===
               normalizedCode(form.bookingID),
           );
-          if (currentBooking) setRescheduleBooking(currentBooking);
+          if (currentBooking) {
+            setRescheduleBooking(currentBooking);
+            if (rescheduleHydratedBooking.current !== form.bookingID) {
+              const byGuest = new Map<
+                string,
+                NonNullable<ExistingAppointment["serviceSchedule"]>
+              >();
+              for (const row of currentBooking.serviceSchedule ?? []) {
+                const guestID = row.guessID?.trim().toUpperCase() || "MAIN";
+                const guestRows = byGuest.get(guestID) ?? [];
+                guestRows.push(row);
+                byGuest.set(guestID, guestRows);
+              }
+
+              const mainRows = byGuest.get("MAIN") ?? [];
+              const guestEntries = [...byGuest.entries()]
+                .filter(([guestID]) => guestID !== "MAIN")
+                .sort(([a], [b]) => a.localeCompare(b));
+
+              setForm((previous) => ({
+                ...previous,
+                selectedServices: [...new Set(mainRows.map((row) => row.itemCode).filter(Boolean))],
+                timeSlot: mainRows[0]?.startTime || previous.timeSlot,
+                subClients: guestEntries.map(([guestID, guestRows], index) => ({
+                  id: `reschedule-${guestID}`,
+                  guessID: guestID,
+                  label: `Person ${index + 1}`,
+                  gender: "",
+                  selectedServices: [...new Set(guestRows.map((row) => row.itemCode).filter(Boolean))],
+                  timeSlot: guestRows[0]?.startTime || "",
+                  date: "",
+                  activeCategoryCode: "",
+                  activeSubCat2: "",
+                  activeSubCat3: "",
+                  activeSubCat4: "",
+                  providers: [],
+                })),
+              }));
+              rescheduleHydratedBooking.current = form.bookingID;
+            }
+          }
         }
 
         setAvailabilityStatus("ready");
@@ -5365,6 +5494,12 @@ function WalkInPage() {
       e.selectedServices = "Select at least one service.";
     if (!form.date) e.date = "Please select an appointment date.";
     if (!form.timeSlot) e.timeSlot = "Please select a time slot.";
+    if (
+      form.isReschedule &&
+      form.subClients.some((guest) => !guest.timeSlot)
+    ) {
+      e.timeSlot = "Select a new time slot for every person in this group.";
+    }
     return e;
   }
   function handleReviewClick() {
@@ -5393,21 +5528,51 @@ function WalkInPage() {
       );
 
       if (form.isReschedule) {
-        const res = await fetch("/api/appointments", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            bookingID: form.bookingID,
-            locCode: form.locCode || form.branch,
-            date: form.date,
-            timeSlot: form.timeSlot,
-            ...(resolvedPrefilledTechID
-              ? { techID: resolvedPrefilledTechID }
-              : {}),
-          }),
+        const locCode = form.locCode || form.branch;
+        const groupGuests = form.subClients.length > 0;
+        const guestDates = form.subClients
+          .map((guest) => guest.date || form.date)
+          .filter(Boolean);
+        if (groupGuests && guestDates.some((date) => date !== form.date)) {
+          throw new Error(
+            "A group booking must be rescheduled to one date. Choose the same date for every person, then select each person's time slot.",
+          );
+        }
+
+        const patchBooking = async (payload: Record<string, unknown>) => {
+          const response = await fetch("/api/appointments", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              bookingID: form.bookingID,
+              locCode,
+              ...payload,
+            }),
+          });
+          const json = await response.json();
+          if (!json.success) throw new Error(json.error || "Reschedule failed");
+        };
+
+        // Move the booking header and all guest rows to the new date/anchor
+        // first. The following guest-scoped patches then put each person's
+        // own slot back where the admin selected it.
+        await patchBooking({
+          date: form.date,
+          timeSlot: form.timeSlot,
+          ...(resolvedPrefilledTechID
+            ? { techID: resolvedPrefilledTechID }
+            : {}),
         });
-        const json = await res.json();
-        if (!json.success) throw new Error(json.error || "Reschedule failed");
+        if (groupGuests) {
+          for (const guest of form.subClients) {
+            if (!guest.timeSlot) continue;
+            await patchBooking({
+              date: form.date,
+              timeSlot: guest.timeSlot,
+              guessIDs: [guest.guessID],
+            });
+          }
+        }
         setRefNumber(form.bookingID);
       } else {
         // Defensive dedupe: one row per itemCode per guest. Guards against a
@@ -6464,7 +6629,20 @@ function WalkInPage() {
                   icon={<Ico.Cal />}
                   title="Appointment Date & Time"
                 >
-                  {!form.isReschedule && (
+                  {form.isReschedule && form.subClients.length > 0 && (
+                    <RescheduleGuestCards
+                      form={form}
+                      rescheduleBooking={rescheduleBooking}
+                      onSelect={(guestID) =>
+                        setActiveTab(
+                          guestID === "MAIN"
+                            ? "main"
+                            : form.subClients.find((client) => client.guessID === guestID)?.id || "main",
+                        )
+                      }
+                    />
+                  )}
+                  {(!form.isReschedule || form.subClients.length > 0) && (
                     <div className="cli-bar" style={{ marginBottom: 16 }}>
                       <button
                         type="button"

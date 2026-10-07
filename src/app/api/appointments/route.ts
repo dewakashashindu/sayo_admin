@@ -1073,6 +1073,8 @@ export async function GET(req: NextRequest) {
           serviceIndex: entry.serviceIndex,
           itemCode,
           guessID: trimValue(detail.GuessID),
+          techID: detailTechID,
+          durationMin: Math.max(0, entry.endMin - entry.startMin),
           serviceName: itemMap.get(itemCode) || itemCode,
           providerName:
             detailTechID !== "0"
