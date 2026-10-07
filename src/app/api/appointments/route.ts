@@ -319,6 +319,7 @@ interface RawDetail {
   ScheduleIndex?: number | string | null;
   ScheduleStartMin?: number | string | null;
   ScheduleEndMin?: number | string | null;
+  CheckInTime?: Date | string | null;
   ItemDes?: string | null;
   ItemPrintDes?: string | null;
   SerDuration?: number | string | null;
@@ -883,6 +884,7 @@ export async function GET(req: NextRequest) {
         d.ScheduleIndex,
         d.ScheduleStartMin,
         d.ScheduleEndMin,
+        t.CheckInTime,
         RTRIM(i.ItemDes)       AS ItemDes,
         RTRIM(i.ItemPrintDes)  AS ItemPrintDes,
         i.SerDuration,
@@ -1074,6 +1076,10 @@ export async function GET(req: NextRequest) {
           itemCode,
           guessID: trimValue(detail.GuessID),
           techID: detailTechID,
+          checkedIn:
+            detail.CheckInTime !== null &&
+            detail.CheckInTime !== undefined &&
+            dateTimeIso(detail.CheckInTime) !== null,
           durationMin: Math.max(0, entry.endMin - entry.startMin),
           serviceName: itemMap.get(itemCode) || itemCode,
           providerName:
@@ -1385,7 +1391,8 @@ export async function PATCH(req: NextRequest) {
     // the eventual header/detail/status writes live in one transaction. In
     // particular, do not update Status before a reschedule conflict is known to
     // be clear: a failed reschedule must leave the whole booking untouched.
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(
+      async (tx) => {
       const headerRows = await tx.$queryRaw<
         {
           Remarks: string | null;
@@ -1897,6 +1904,7 @@ export async function PATCH(req: NextRequest) {
           SET TechID = ${toChar(targetTechID, 10)}
           WHERE RTRIM(BookingID) = ${bookingID}
             AND RTRIM(LocCode) = ${locCode}
+            ${guestFilter}
         `;
       }
 
@@ -2087,7 +2095,12 @@ export async function PATCH(req: NextRequest) {
             AND RTRIM(LocCode) = ${locCode}
         `;
       }
-    });
+      },
+      {
+        maxWait: 10000,
+        timeout: 30000,
+      },
+    );
 
     // A guest-scoped action (Service Schedule picker) never sends the
     // whole-booking confirmed/cancelled/rescheduled SMS templates — they

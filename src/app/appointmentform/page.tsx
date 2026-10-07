@@ -5031,11 +5031,45 @@ function WalkInPage() {
               const guestEntries = [...byGuest.entries()]
                 .filter(([guestID]) => guestID !== "MAIN")
                 .sort(([a], [b]) => a.localeCompare(b));
+              const providersForRows = (
+                rows: NonNullable<ExistingAppointment["serviceSchedule"]>,
+              ): GuestProvider[] =>
+                Array.from(
+                  new Map(
+                    rows
+                      .filter((row) => row.techID && row.techID !== "0")
+                      .map((row) => {
+                        const service = services.find(
+                          (candidate) => candidate.itemCode === row.itemCode,
+                        );
+                        return [
+                          `${row.techID}:${service?.category1 ?? ""}`,
+                          {
+                            guessID: row.guessID?.trim() || "MAIN",
+                            techID: row.techID!.trim(),
+                            techName: row.providerName,
+                            categoryCode: service?.category1?.trim() || "",
+                          },
+                        ] as const;
+                      }),
+                  ).values(),
+                ).map((provider) => {
+                  const technician = technicians.find(
+                    (candidate) =>
+                      candidate.UserId.trim().toUpperCase() ===
+                      provider.techID.toUpperCase(),
+                  );
+                  return {
+                    ...provider,
+                    techName: technician?.UserName || provider.techName,
+                  };
+                });
 
               setForm((previous) => ({
                 ...previous,
                 selectedServices: [...new Set(mainRows.map((row) => row.itemCode).filter(Boolean))],
                 timeSlot: mainRows[0]?.startTime || previous.timeSlot,
+                providers: providersForRows(mainRows),
                 subClients: guestEntries.map(([guestID, guestRows], index) => ({
                   id: `reschedule-${guestID}`,
                   guessID: guestID,
@@ -5048,7 +5082,7 @@ function WalkInPage() {
                   activeSubCat2: "",
                   activeSubCat3: "",
                   activeSubCat4: "",
-                  providers: [],
+                  providers: providersForRows(guestRows),
                 })),
               }));
               rescheduleHydratedBooking.current = form.bookingID;
@@ -5566,6 +5600,9 @@ function WalkInPage() {
         if (groupGuests) {
           for (const guest of form.subClients) {
             if (!guest.timeSlot) continue;
+            // A guest-scoped reschedule only changes that guest's time.
+            // Technician reassignment is intentionally a whole-booking
+            // operation and is handled by the initial PATCH above.
             await patchBooking({
               date: form.date,
               timeSlot: guest.timeSlot,

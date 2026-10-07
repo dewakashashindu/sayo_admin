@@ -11,6 +11,10 @@ export const BOOKING_SERVICE_DETAIL_FROM = Prisma.raw(`
   FROM tbl_bookingheder h
   JOIN tbl_bookingservicedetail d
     ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
+  LEFT JOIN tbl_bookingtxndetail t
+    ON RTRIM(t.LocCode) = RTRIM(d.LocCode)
+   AND RTRIM(t.BookingID) = RTRIM(d.BookingID)
+   AND RTRIM(t.GuessID) = RTRIM(d.GuessID)
   LEFT JOIN tbl_itemmaster i
     ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
    AND ${itemCodeJoinSql('i.ItemCode', 'd.ServiceItemID')}
@@ -26,6 +30,10 @@ export const BOOKING_SERVICE_DETAIL_FROM_SQL = `
   FROM tbl_bookingheder h
   JOIN tbl_bookingservicedetail d
     ON d.LocCode = h.LocCode AND d.BookingID = h.BookingID
+  LEFT JOIN tbl_bookingtxndetail t
+    ON RTRIM(t.LocCode) = RTRIM(d.LocCode)
+   AND RTRIM(t.BookingID) = RTRIM(d.BookingID)
+   AND RTRIM(t.GuessID) = RTRIM(d.GuessID)
   LEFT JOIN tbl_itemmaster i
     ON RTRIM(i.LocCode) = RTRIM(d.LocCode)
    AND ${itemCodeJoinSql('i.ItemCode', 'd.ServiceItemID')}

@@ -21,6 +21,8 @@ interface ServiceSchedule {
   guessID?: string;
   serviceName: string;
   providerName: string;
+  techID?: string;
+  checkedIn?: boolean;
   startTime: string;
   endTime: string;
 }
@@ -1714,12 +1716,20 @@ function ServiceScheduleModal({
     const now = nowMinutes();
     const active = groups.filter(
       (group) =>
+        group.services.some((service) => !service.checkedIn) &&
         group.startMin >= 0 && group.endMin > group.startMin &&
         now >= group.startMin && now < group.endMin,
     );
-    if (active.length > 0) return new Set(active.map((group) => group.guessID));
+    // Default to one guest even when several guests share the same time
+    // window. Selecting all guests remains an explicit action via the
+    // "Select all" checkbox.
+    if (active.length > 0) return new Set([active[0].guessID]);
     const upcoming = [...groups]
-      .filter((group) => group.startMin >= now)
+      .filter(
+        (group) =>
+          group.services.some((service) => !service.checkedIn) &&
+          group.startMin >= now,
+      )
       .sort((a, b) => a.startMin - b.startMin)[0];
     return upcoming ? new Set([upcoming.guessID]) : new Set<string>();
   });
@@ -1735,7 +1745,10 @@ function ServiceScheduleModal({
     });
   };
 
-  const allIds = groups.map((group) => group.guessID);
+  const selectableGroups = groups.filter((group) =>
+    group.services.some((service) => !service.checkedIn),
+  );
+  const allIds = selectableGroups.map((group) => group.guessID);
   const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
   const actionLabel = action === "checkin" ? "Check In" : action === "cancel" ? "Cancel" : "Reschedule";
   const actionVerb = action === "checkin" ? "check in" : action === "cancel" ? "cancel" : "reschedule";
@@ -1892,7 +1905,8 @@ function ServiceScheduleModal({
             }}
           >
             {groups.map((group) => {
-              const isChecked = selected.has(group.guessID);
+              const checkedIn = group.services.every((service) => service.checkedIn);
+              const isChecked = selected.has(group.guessID) && !checkedIn;
               return (
                 <label
                   key={group.guessID}
@@ -1912,6 +1926,7 @@ function ServiceScheduleModal({
                   <input
                     type="checkbox"
                     checked={isChecked}
+                    disabled={checkedIn}
                     onChange={() => toggle(group.guessID)}
                     style={{ marginTop: 2 }}
                   />
@@ -1927,6 +1942,11 @@ function ServiceScheduleModal({
                         style={{ fontWeight: 700, fontSize: 13, color: "#1e3a40" }}
                       >
                         {group.label}
+                        {checkedIn && (
+                          <span style={{ marginLeft: 8, color: "#15803d" }}>
+                            Checked in
+                          </span>
+                        )}
                       </span>
                       <span
                         style={{
