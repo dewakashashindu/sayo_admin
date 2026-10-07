@@ -6,6 +6,7 @@ import AccessLoading from "@/components/AccessLoading";
 import { useMyAccess } from "@/lib/useMyAccess";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
+import { guestCheckInState } from "@/lib/bookingGuests";
 import {
   SAMPLE_TECHNICIAN_NAME,
   TechAppointment,
@@ -138,6 +139,11 @@ const Ico = {
   Lock: ({ size = 11 }: { size?: number }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  ),
+  Users: ({ size = 13 }: { size?: number }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
     </svg>
   ),
   Refresh: () => (
@@ -464,9 +470,32 @@ export default function TechnicianAppointmentsPage() {
     [mine],
   );
 
+  /** Per-guest check-in state for a booking, scoped to this screen's
+   *  technician. A group booking's guests arrive at their own times, and the
+   *  booking turns ONGOING the moment its FIRST guest is checked in — so the
+   *  booking status cannot be the gate here. The guests' own stamps are. */
+  function checkInState(a: TechAppointment) {
+    return guestCheckInState(a, {
+      viewAll,
+      techName,
+      techUserId: myUserId,
+    });
+  }
+
+  function isOpenable(a: TechAppointment) {
+    const state = checkInState(a);
+    if (!state.hasSchedule) return a.status === "ongoing";
+    return state.checkedInRows.length > 0;
+  }
+
   function openDetail(a: TechAppointment) {
-    if (a.status !== "ongoing") {
-      showToast("Only checked-in appointments can be opened", "info");
+    if (!isOpenable(a)) {
+      showToast(
+        a.status === "ongoing"
+          ? "None of your guests are checked in yet"
+          : "Only checked-in appointments can be opened",
+        "info",
+      );
       return;
     }
     const params = new URLSearchParams({
@@ -722,12 +751,36 @@ export default function TechnicianAppointmentsPage() {
                 </div>
               ) : (
                 mine.map((a) => {
-                  const clickable = a.status === "ongoing";
+                  const state = checkInState(a);
+                  const clickable = isOpenable(a);
                   const cancelled = a.status === "cancelled";
+                  /* A group booking whose later guests have not arrived yet
+                     shows only the services that are already checked in — the
+                     rest appear here at their own check-in time. */
+                  const partial =
+                    state.hasSchedule &&
+                    state.checkedInRows.length > 0 &&
+                    state.checkedInRows.length < state.rowCount;
+                  const shownServiceName =
+                    partial && state.checkedInRows.length > 0
+                      ? Array.from(
+                          new Set(
+                            state.checkedInRows.map((s) => s.serviceName),
+                          ),
+                        ).join(", ") || a.serviceName
+                      : a.serviceName;
                   /* Same time as inside the booking: the scheduled service
-                     window, falling back to the header label. */
-                  const startLabel = a.scheduleStartTime || a.timeSlot;
+                     window, falling back to the header label. For a partially
+                     checked-in group it is the checked-in guests' window. */
+                  const startLabel =
+                    (partial ? state.checkedInRows[0]?.startTime : "") ||
+                    a.scheduleStartTime ||
+                    a.timeSlot;
                   const endLabelText =
+                    (partial
+                      ? state.checkedInRows[state.checkedInRows.length - 1]
+                          ?.endTime
+                      : "") ||
                     a.scheduleEndTime ||
                     (a.duration > 0 ? endLabel(startLabel, a.duration) : "");
                   return (
@@ -741,7 +794,7 @@ export default function TechnicianAppointmentsPage() {
                       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
                         <div style={{ minWidth: 0 }}>
                           <p style={{ color: "#1e3a40", fontSize: 14, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {a.serviceName}
+                            {shownServiceName}
                           </p>
                           <p style={{ marginTop: 2, color: "#374151", fontSize: 13, fontWeight: 600 }}>
                             {a.clientName}
@@ -762,6 +815,21 @@ export default function TechnicianAppointmentsPage() {
                           {endLabelText ? ` – ${endLabelText}` : ""}
                           <span style={{ color: "#9ca3af", fontWeight: 500 }}>({a.duration} min)</span>
                         </span>
+                        {state.guestTotal > 1 && (
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 3,
+                              color: state.checkedInGuests > 0 ? "#15803d" : "#9ca3af",
+                              fontSize: 12,
+                              fontWeight: 700,
+                            }}
+                            title="Guests of this group who have been checked in"
+                          >
+                            <Ico.Users /> {state.checkedInGuests}/{state.guestTotal} checked in
+                          </span>
+                        )}
                         <span style={{ display: "flex", alignItems: "center", gap: 3, color: "#6b7280", fontSize: 12 }}>
                           <Ico.Loc /> {a.location}
                         </span>
@@ -781,7 +849,10 @@ export default function TechnicianAppointmentsPage() {
                           <span style={{ color: "#b91c1c", fontSize: 11, fontWeight: 600 }}>Cancelled</span>
                         ) : (
                           <span style={{ display: "flex", alignItems: "center", gap: 4, color: "#9ca3af", fontSize: 11, fontWeight: 600 }}>
-                            <Ico.Lock /> Opens after check-in
+                            <Ico.Lock />
+                            {a.status === "ongoing" && state.guestTotal > 1
+                              ? "Your guest is not checked in yet"
+                              : "Opens after check-in"}
                           </span>
                         )}
                       </div>

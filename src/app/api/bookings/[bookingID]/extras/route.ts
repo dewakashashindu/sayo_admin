@@ -252,6 +252,53 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     const locPadded = pad10(header.LocCode.trim());
     const bookingPadded = pad10(bookingID);
 
+    /* The booking-wide stamp checked above only proves SOMEONE is in the chair.
+       A group booking's guests arrive at their own times, so every guest this
+       request names must have its own tbl_bookingtxndetail.CheckInTime before
+       anything is written against it. */
+    const namedGuests = new Set<string>();
+    for (const list of [body.addTech, body.recipe, body.recipeScope]) {
+      if (!Array.isArray(list)) continue;
+      for (const entry of list as Array<Record<string, unknown>>) {
+        namedGuests.add((trim(entry.guessID) || "MAIN").toUpperCase());
+      }
+    }
+    if (namedGuests.size > 0) {
+      const guestIDs = [...namedGuests];
+      const guestRows = await prisma.$queryRaw<
+        { GuessID: string; CheckInTime: Date | string | null }[]
+      >`
+        SELECT RTRIM(GuessID) AS GuessID, MAX(CheckInTime) AS CheckInTime
+        FROM tbl_bookingtxndetail
+        WHERE RTRIM(BookingID) = ${bookingID}
+          AND RTRIM(GuessID) IN (${Prisma.join(
+            guestIDs.map((guestID) => Prisma.sql`${guestID}`),
+          )})
+        GROUP BY RTRIM(GuessID)
+      `;
+      const arrived = new Set(
+        guestRows
+          .filter(
+            (row) =>
+              row.CheckInTime !== null &&
+              new Date(row.CheckInTime).getTime() > EPOCH_1900,
+          )
+          .map((row) => trim(row.GuessID).toUpperCase()),
+      );
+      const notArrived = guestIDs.filter(
+        (guestID) => !arrived.has(guestID.toUpperCase()),
+      );
+      if (notArrived.length > 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            message: `Guest ${notArrived.join(", ")} is not checked in yet — materials and technicians are locked until that guest arrives`,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     await prisma.$transaction(async (tx) => {
       if (Array.isArray(body.addTech)) {
         const seen = new Set<string>();

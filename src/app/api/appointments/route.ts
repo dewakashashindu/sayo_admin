@@ -320,6 +320,10 @@ interface RawDetail {
   ScheduleStartMin?: number | string | null;
   ScheduleEndMin?: number | string | null;
   CheckInTime?: Date | string | null;
+  /** This detail row's OWN guest's cancellation stamp. tbl_bookingtxndetail is
+   *  joined on GuessID, so a group booking's guests can each be cancelled /
+   *  checked in independently — the header row cannot say which of them is. */
+  GuestCancelledDate?: Date | string | null;
   ItemDes?: string | null;
   ItemPrintDes?: string | null;
   SerDuration?: number | string | null;
@@ -885,6 +889,7 @@ export async function GET(req: NextRequest) {
         d.ScheduleStartMin,
         d.ScheduleEndMin,
         t.CheckInTime,
+        t.CancelledDate AS GuestCancelledDate,
         RTRIM(i.ItemDes)       AS ItemDes,
         RTRIM(i.ItemPrintDes)  AS ItemPrintDes,
         i.SerDuration,
@@ -1091,6 +1096,43 @@ export async function GET(req: NextRequest) {
         };
       });
 
+      /* Per-guest check-in state. tbl_bookingtxndetail keeps ONE row per guest
+         and BOOKING_SERVICE_DETAIL_FROM_SQL joins it on GuessID, so every
+         detail row already carries its own guest's CheckInTime. The header's
+         MAX(CheckInTime) further up is only a display convenience: on a group
+         booking it is stamped by the FIRST guest who arrives, so it must never
+         decide who else is in the chair. Screens read this list instead. */
+      const guestCheckInByGuest = new Map<
+        string,
+        { guessID: string; checkInTime: string | null; cancelled: boolean }
+      >();
+      bookingDetails.forEach((detail) => {
+        const guessID =
+          trimValue(detail.GuessID).toUpperCase() || "MAIN";
+        const existing = guestCheckInByGuest.get(guessID);
+        const checkInTime = dateTimeIso(detail.CheckInTime);
+        const cancelled = dateTimeIso(detail.GuestCancelledDate) !== null;
+        if (!existing) {
+          guestCheckInByGuest.set(guessID, { guessID, checkInTime, cancelled });
+          return;
+        }
+        if (!existing.checkInTime && checkInTime) {
+          existing.checkInTime = checkInTime;
+        }
+        if (cancelled) existing.cancelled = true;
+      });
+      const guestCheckIns = [...guestCheckInByGuest.values()]
+        .map((guest) => ({
+          guessID: guest.guessID,
+          checkInTime: guest.checkInTime,
+          checkedIn: guest.checkInTime !== null,
+          cancelled: guest.cancelled,
+        }))
+        .sort((a, b) => a.guessID.localeCompare(b.guessID));
+      const checkedInGuestCount = guestCheckIns.filter(
+        (guest) => guest.checkedIn,
+      ).length;
+
       // Keep each provider's real occupied window independent. Parallel
       // technicians therefore do not inflate the appointment's elapsed time.
       const windowsByProvider = new Map<
@@ -1194,6 +1236,9 @@ export async function GET(req: NextRequest) {
         price: totalPrice,
         notes: extractNotes(header.Remarks),
         guests,
+        guestCheckIns,
+        checkedInGuestCount,
+        totalGuestCount: guestCheckIns.length,
         detailCount: bookingDetails.length,
         pax: Number(header.Pax ?? guests.length) || guests.length,
         confirmed: isTrue(header.Confirmed),
@@ -1702,7 +1747,15 @@ export async function PATCH(req: NextRequest) {
       // entire BookingID, so it would never notice the moved guest landing
       // on the same technician's existing slot as an unmoved sibling guest
       // in this same group booking. Check that case explicitly.
-      if (movingSubset && status !== "CANCELLED") {
+      /*
+        Only when the named guests are actually being RE-SCHEDULED. A per-guest
+        check-in / cancel names guests too but moves nothing — and a group
+        booking routinely seats several of its guests on the same technician at
+        the same time, so without this guard checking one sub client in is
+        refused as a clash with their own siblings ("Technician … is already
+        busy with another guest in this same booking").
+      */
+      if (movingSubset && hasScheduleChange && status !== "CANCELLED") {
         const siblingWindows = otherDetails
           .map((detail) => {
             const techID = trimValue(detail.TechID);

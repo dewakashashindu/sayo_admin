@@ -72,9 +72,23 @@ export interface TechServiceSchedule {
   itemCode: string;
   serviceName: string;
   providerName: string;
+  /** Canonical UserId of the technician on this row ("0"/"" = unassigned). */
+  techID?: string;
   startTime: string;
   endTime: string;
+  /** This service row's own guest is already checked in. A group booking's
+   *  guests arrive at their own times, so this is per row, never per booking. */
+  checkedIn?: boolean;
 }
+
+/** One entry per guest filed on the booking (tbl_bookingtxndetail row). */
+export interface GuestCheckIn {
+  guessID: string;
+  checkInTime: string | null;
+  checkedIn: boolean;
+  cancelled: boolean;
+}
+
 
 export interface TechAppointment {
   id: string;
@@ -104,7 +118,12 @@ export interface TechAppointment {
   notes?: string;
   guests: string[];
   techIDs?: string[];
+  /** Booking-wide stamp = the FIRST guest who arrived. Use guestCheckIns to
+   *  tell who is actually in the chair. */
   checkInTime?: string | null;
+  guestCheckIns?: GuestCheckIn[];
+  checkedInGuestCount?: number;
+  totalGuestCount?: number;
   txnDateTime: string;
 }
 

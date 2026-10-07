@@ -6,6 +6,7 @@ import AccessLoading from "@/components/AccessLoading";
 import { useMyAccess } from "@/lib/useMyAccess";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AdminSidebar from "@/components/AdminSidebar";
+import { guestCheckInState } from "@/lib/bookingGuests";
 /* Suggestion lists are portalled so a card with overflow:hidden cannot clip
    them (the recipe panel and the add-technician panel both did). */
 import FloatingPanel from "@/components/FloatingPanel";
@@ -314,6 +315,32 @@ export default function TechnicianAppointmentDetailPage() {
   const canEditExtras =
     !!extras && extras.checkedIn && !extras.billed && appt?.status !== "done";
 
+  /* A group booking's guests arrive at their own times, and the booking turns
+     ONGOING the moment its FIRST guest is checked in. Everything below works
+     off the guests' own stamps instead, so materials and supporting
+     technicians can never be recorded against a guest who has not arrived. */
+  const guestState = useMemo(
+    () =>
+      guestCheckInState(
+        appt ?? { guests: [], timeSlot: "" },
+        // This screen belongs to the booking, not to one technician.
+        { viewAll: true, techName: "" },
+      ),
+    [appt],
+  );
+
+  /** The service rows this screen may show right now. */
+  const checkedInSchedule = guestState.visibleRows;
+
+  const guestProgress = {
+    total: guestState.guestTotal,
+    checkedIn: guestState.checkedInGuests,
+  };
+
+  /** True while part of the group is still waiting for its own check-in. */
+  const hasPendingGuests =
+    guestProgress.total > 1 && guestProgress.checkedIn < guestProgress.total;
+
   // Load per-booking extras (add-tech + used materials) once the booking is known.
   useEffect(() => {
     const bookingID = appt?.bookingID;
@@ -439,8 +466,11 @@ export default function TechnicianAppointmentDetailPage() {
   useEffect(() => {
     if (tab !== "recipe" || !appt) return;
     const current = appt;
-    const services = current.serviceSchedule?.length
-      ? current.serviceSchedule
+    /* Only the guests already in the chair get a recipe card here — the rest of
+       the group appears when they are checked in at their own time. */
+    const bookingSchedule = current.serviceSchedule ?? [];
+    const services = bookingSchedule.length > 0
+      ? bookingSchedule.filter((service) => service.checkedIn)
       : current.serviceNames.map((name, i) => ({
           serviceIndex: i,
           itemCode: "",
@@ -667,7 +697,8 @@ export default function TechnicianAppointmentDetailPage() {
     const pairs = Array.from(
       new Set(
         (appt.serviceSchedule ?? [])
-          .filter((s) => (s.itemCode || "").trim())
+          /* Never write supporters for a guest who has not arrived yet. */
+          .filter((s) => (s.itemCode || "").trim() && s.checkedIn)
           .map((s) => `${(s.guessID || "MAIN").trim()}|${s.itemCode.trim()}`),
       ),
     ).map((key) => {
@@ -933,6 +964,16 @@ export default function TechnicianAppointmentDetailPage() {
       showToast("Client must be checked in before marking the work done", "error");
       return;
     }
+    /* Done flips the WHOLE booking, so every guest of a group has to be either
+       checked in or cancelled first — otherwise the guests still on their way
+       would be billed for work nobody did. */
+    if (hasPendingGuests) {
+      showToast(
+        `${guestProgress.total - guestProgress.checkedIn} of ${guestProgress.total} guests are not checked in yet — check them in or cancel them first`,
+        "error",
+      );
+      return;
+    }
     try {
       const res = await fetch(
         `/api/appointments/${encodeURIComponent(appt.bookingID)}/done`,
@@ -964,8 +1005,10 @@ export default function TechnicianAppointmentDetailPage() {
   // rows (same service, provider and time window) into one row with a count
   // so a multi-guest walk-in does not render as twelve identical lines.
   const detailServices = (() => {
-    const source = appt?.serviceSchedule?.length
-      ? appt.serviceSchedule
+    /* Same rule as the Recipe tab: a group booking's later guests are not
+       shown until their own check-in. */
+    const source = (appt?.serviceSchedule ?? []).length > 0
+      ? checkedInSchedule
       : (appt?.serviceNames ?? []).map((name, i) => ({
           serviceIndex: i,
           itemCode: "",
@@ -1153,12 +1196,38 @@ export default function TechnicianAppointmentDetailPage() {
                           {appt.gender && <InfoBox label="Gender" value={appt.gender} />}
                           {appt.checkInTime && (
                             <InfoBox
-                              label="Checked-in At"
-                              /* Stored as the shop’s wall clock (MySQL NOW()) — show it as stored, not shifted by the browser timezone. */
+                              label={
+                                guestProgress.total > 1
+                                  ? `Checked-in (${guestProgress.checkedIn}/${guestProgress.total} guests)`
+                                  : "Checked-in At"
+                              }
+                              /* Stored as the shop’s wall clock (MySQL NOW()) — show it as stored, not shifted by the browser timezone.
+                                 On a group booking this is the FIRST arrival only; the guests listed below carry their own times. */
                               value={new Date(appt.checkInTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })}
                             />
                           )}
                         </div>
+
+                        {hasPendingGuests && (
+                          <div
+                            style={{
+                              padding: "10px 12px",
+                              border: "1px solid #fde68a",
+                              borderRadius: 10,
+                              background: "#fffbeb",
+                              color: "#92400e",
+                              fontSize: 12,
+                              fontWeight: 600,
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            {guestProgress.checkedIn} of {guestProgress.total}{" "}
+                            guests checked in — only checked-in guests are shown
+                            here. The remaining{" "}
+                            {guestProgress.total - guestProgress.checkedIn}{" "}
+                            appear at their own check-in time.
+                          </div>
+                        )}
 
                         {/* Services + per-service schedule */}
                         <div style={{ padding: "10px 14px", border: "1px solid #c8dce0", borderRadius: 10, background: "#f0f8f9" }}>

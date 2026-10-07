@@ -14,7 +14,15 @@ import AdminSidebar from "@/components/AdminSidebar";
 import { useMyAccess } from "@/lib/useMyAccess";
 import { logoutAdmin } from "@/lib/logout";
 import AccessLoading from "@/components/AccessLoading";
+import {
+  GuestCheckInRow as GuestCheckIn,
+  guestsAwaitingCheckIn,
+  guestGroupsFromSchedule,
+  segmentDisplayStatus,
+} from "@/lib/bookingGuests";
 
+/** One guest filed on the booking = one tbl_bookingtxndetail row, carrying
+ *  that guest's OWN check-in stamp and cancellation state. */
 interface ServiceSchedule {
   serviceIndex: number;
   itemCode: string;
@@ -54,6 +62,12 @@ interface Appointment {
   gender: string;
   notes?: string;
   guests: string[];
+  /** One entry per guest row in tbl_bookingtxndetail. `checkInTime` on the
+   *  appointment itself is only the FIRST arrival — read this list to know
+   *  which guests are really in the chair. */
+  guestCheckIns?: GuestCheckIn[];
+  checkedInGuestCount?: number;
+  totalGuestCount?: number;
   detailCount: number;
   pax?: number;
   confirmed?: boolean;
@@ -802,7 +816,7 @@ const Ico = {
   ),
 };
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, suffix }: { status: string; suffix?: string }) {
   const normalized = status.toLowerCase();
 
   if (normalized === "confirmed") {
@@ -840,7 +854,7 @@ function StatusBadge({ status }: { status: string }) {
   if (normalized === "ongoing") {
     return (
       <span className="badge b-ong">
-        <span className="live-dot-blue" /> Ongoing
+        <span className="live-dot-blue" /> Ongoing{suffix ? ` · ${suffix}` : ""}
       </span>
     );
   }
@@ -1633,59 +1647,36 @@ function InfoBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** One row per distinct guest on the booking, with that guest's own time
- * window (earliest service start → latest service end) and service list.
- * A group booking files Check In / Cancel per guest in the database — this
- * is what lets the "Service Schedule" picker act on just one guest instead
- * of the whole BookingID. */
-function guestGroupsFromSchedule(appointment: Appointment): {
-  guessID: string;
-  label: string;
-  services: ServiceSchedule[];
-  startMin: number;
-  endMin: number;
-  startTime: string;
-  endTime: string;
-}[] {
-  const schedule = appointment.serviceSchedule ?? [];
-  const ids = Array.from(
-    new Set([
-      ...appointment.guests
-        .map((guest) => guest.trim().toUpperCase())
-        .filter(Boolean),
-      ...schedule.map(
-        (service) => (service.guessID ?? "").trim().toUpperCase() || "MAIN",
-      ),
-    ]),
-  );
-
-  return ids
-    .map((id, index) => {
-      const services = schedule.filter(
-        (service) =>
-          ((service.guessID ?? "").trim().toUpperCase() || "MAIN") === id,
-      );
-      const starts = services
-        .map((service) => parseSlotToMinutes(service.startTime))
-        .filter((min) => min >= 0);
-      const ends = services
-        .map((service) => parseSlotToMinutes(service.endTime))
-        .filter((min) => min >= 0);
-      const startMin = starts.length > 0 ? Math.min(...starts) : -1;
-      const endMin = ends.length > 0 ? Math.max(...ends) : -1;
-
-      return {
-        guessID: id,
-        label: id === "MAIN" ? "Main client" : `Guest ${index + 1}`,
-        services,
-        startMin,
-        endMin,
-        startTime: services[0]?.startTime || appointment.timeSlot,
-        endTime: services[services.length - 1]?.endTime || "",
-      };
-    })
-    .sort((a, b) => a.startMin - b.startMin);
+/** "12:05" from a stored check-in stamp. The API hands back the wall-clock
+ *  value shifted into UTC, so it is read back in UTC — same convention as the
+ *  technician screen's Check In box. */
+function checkInClock(iso: string | null): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+  });
 }
+
+/** " · Guest 2" on a group booking's calendar block, so the blocks of one
+ *  client can be told apart. Empty for a single-guest booking. Numbering
+ *  follows guestGroupsFromSchedule (the main client is index 0). */
+function guestBlockLabel(
+  appointment: Appointment,
+  segment?: ServiceSchedule,
+): string {
+  if (appointment.guests.length < 2) return "";
+  const code = (segment?.guessID ?? "").trim().toUpperCase() || "MAIN";
+  if (code === "MAIN") return " · Main client";
+  const position = appointment.guests
+    .map((guest) => guest.trim().toUpperCase())
+    .indexOf(code);
+  return ` · Guest ${position > 0 ? position + 1 : 1}`;
+}
+
 
 /** Opens before Check In / Cancel on a multi-guest booking so the action can
  * target just the guest(s) whose time has actually arrived, instead of
@@ -1714,12 +1705,17 @@ function ServiceScheduleModal({
   const isToday = appointment.date === todayISO();
   const isReschedule = action === "reschedule";
 
+  /* A guest who is already in the chair, or who was cancelled, can never be
+     picked again — the row is rendered disabled with the reason. */
+  const awaiting = groups.filter(
+    (group) => !group.checkedIn && !group.cancelled,
+  );
+  const now = nowMinutes();
+
   const [selected, setSelected] = useState<Set<string>>(() => {
     if (action !== "checkin" || !isToday) return new Set<string>();
-    const now = nowMinutes();
-    const active = groups.filter(
+    const active = awaiting.filter(
       (group) =>
-        group.services.some((service) => !service.checkedIn) &&
         group.startMin >= 0 && group.endMin > group.startMin &&
         now >= group.startMin && now < group.endMin,
     );
@@ -1727,19 +1723,20 @@ function ServiceScheduleModal({
     // window. Selecting all guests remains an explicit action via the
     // "Select all" checkbox.
     if (active.length > 0) return new Set([active[0].guessID]);
-    const upcoming = [...groups]
-      .filter(
-        (group) =>
-          group.services.some((service) => !service.checkedIn) &&
-          group.startMin >= now,
-      )
+    const upcoming = [...awaiting]
+      .filter((group) => group.startMin >= now)
       .sort((a, b) => a.startMin - b.startMin)[0];
     return upcoming ? new Set([upcoming.guessID]) : new Set<string>();
   });
   const [step, setStep] = useState<"guests" | "time">("guests");
   const [timeSlot, setTimeSlot] = useState("");
+  /* Checking a guest in before their own slot is allowed, but it is a
+     deliberate second click — the receptionist has to read the guest's real
+     time first. */
+  const [earlyAcknowledged, setEarlyAcknowledged] = useState(false);
 
   const toggle = (id: string) => {
+    setEarlyAcknowledged(false);
     setSelected((prev) => {
       if (action === "checkin") {
         return prev.has(id) ? new Set() : new Set([id]);
@@ -1751,13 +1748,25 @@ function ServiceScheduleModal({
     });
   };
 
-  const selectableGroups = groups.filter((group) =>
-    group.services.some((service) => !service.checkedIn),
-  );
+  const selectableGroups = awaiting;
   const allIds = selectableGroups.map((group) => group.guessID);
   const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
   const actionLabel = action === "checkin" ? "Check In" : action === "cancel" ? "Cancel" : "Reschedule";
   const actionVerb = action === "checkin" ? "check in" : action === "cancel" ? "cancel" : "reschedule";
+
+  /* Guests selected for check-in whose own window has not opened yet. */
+  const earlySelected = useMemo(
+    () =>
+      action === "checkin"
+        ? groups.filter(
+            (group) =>
+              selected.has(group.guessID) &&
+              group.startMin >= 0 &&
+              now < group.startMin,
+          )
+        : [],
+    [action, groups, selected, now],
+  );
 
   const timeOptions = useMemo(() => {
     if (!dayHours?.open) return [];
@@ -1770,16 +1779,22 @@ function ServiceScheduleModal({
 
   const handlePrimary = () => {
     if (!isReschedule) {
+      // First press on an early check-in only reveals the warning; the second
+      // press is the real one.
+      if (
+        action === "checkin" &&
+        earlySelected.length > 0 &&
+        !earlyAcknowledged
+      ) {
+        setEarlyAcknowledged(true);
+        return;
+      }
       onConfirm(Array.from(selected));
       return;
     }
-    if (allSelected) {
-      // Moving everyone is the normal whole-booking reschedule — hand off to
-      // the full Reschedule page, which has the complete availability grid.
-      onRescheduleFull?.(appointment);
-      return;
-    }
-    setStep("time");
+    // Use the full reschedule page for every selection, including one guest,
+    // so the time-selection flow is identical to selecting all guests.
+    onRescheduleFull?.(appointment);
   };
 
   if (isReschedule && step === "time") {
@@ -1875,8 +1890,16 @@ function ServiceScheduleModal({
           }}
         >
           <p style={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
-            This booking has {groups.length} guests at different times. Pick
-            who to {actionVerb} — everyone else keeps their current
+            This booking has {groups.length} guests at different times.
+            {action === "checkin" && (
+              <>
+                {" "}
+                {groups.filter((group) => group.checkedIn).length} of{" "}
+                {groups.length} already checked in — pick the guest who has
+                actually arrived.
+              </>
+            )}{" "}
+            Pick who to {actionVerb} — everyone else keeps their current
             {isReschedule ? " time" : " status"}.
           </p>
 
@@ -1913,8 +1936,17 @@ function ServiceScheduleModal({
             }}
           >
             {groups.map((group) => {
-              const checkedIn = group.services.every((service) => service.checkedIn);
-              const isChecked = selected.has(group.guessID) && !checkedIn;
+              const checkedIn = group.checkedIn;
+              const cancelled = action === "checkin" && group.cancelled;
+              const notYet =
+                action === "checkin" &&
+                !checkedIn &&
+                !cancelled &&
+                group.startMin >= 0 &&
+                now < group.startMin;
+              const isChecked =
+                selected.has(group.guessID) && !checkedIn && !cancelled;
+              const disabledRow = checkedIn || cancelled;
               return (
                 <label
                   key={group.guessID}
@@ -1924,17 +1956,24 @@ function ServiceScheduleModal({
                     gap: 10,
                     padding: "10px 12px",
                     border: isChecked
-                      ? "1.5px solid #1e3a40"
+                      ? notYet
+                        ? "1.5px solid #f59e0b"
+                        : "1.5px solid #1e3a40"
                       : "1.5px solid #e5eaeb",
                     borderRadius: 10,
-                    background: isChecked ? "rgba(30,58,64,.05)" : "#fff",
-                    cursor: "pointer",
+                    background: isChecked
+                      ? notYet
+                        ? "#fffbeb"
+                        : "rgba(30,58,64,.05)"
+                      : "#fff",
+                    opacity: disabledRow ? 0.6 : 1,
+                    cursor: disabledRow ? "not-allowed" : "pointer",
                   }}
                 >
                   <input
                     type="checkbox"
                     checked={isChecked}
-                    disabled={checkedIn}
+                    disabled={disabledRow}
                     onChange={() => toggle(group.guessID)}
                     style={{ marginTop: 2 }}
                   />
@@ -1953,6 +1992,14 @@ function ServiceScheduleModal({
                         {checkedIn && (
                           <span style={{ marginLeft: 8, color: "#15803d" }}>
                             Checked in
+                            {group.checkInTime
+                              ? ` ${checkInClock(group.checkInTime)}`
+                              : ""}
+                          </span>
+                        )}
+                        {cancelled && (
+                          <span style={{ marginLeft: 8, color: "#b91c1c" }}>
+                            Cancelled
                           </span>
                         )}
                       </span>
@@ -1972,6 +2019,17 @@ function ServiceScheduleModal({
                       {Array.from(
                         new Set(group.services.map((service) => service.serviceName)),
                       ).join(", ")}
+                      {notYet && (
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            color: "#b45309",
+                            fontWeight: 700,
+                          }}
+                        >
+                          · booked for {group.startTime}, not due yet
+                        </span>
+                      )}
                     </div>
                   </div>
                 </label>
@@ -1985,6 +2043,28 @@ function ServiceScheduleModal({
               on the same date ({fmtDateLong(appointment.date)}) — only the
               time can change here. To move a guest to a different date,
               reschedule the whole booking instead.
+            </p>
+          )}
+
+          {action === "checkin" && earlySelected.length > 0 && (
+            <p
+              style={{
+                fontSize: 11,
+                color: "#92400e",
+                background: "#fffbeb",
+                border: "1px solid #fde68a",
+                borderRadius: 8,
+                padding: "7px 10px",
+                lineHeight: 1.5,
+              }}
+            >
+              <strong>
+                {earlySelected.map((group) => group.label).join(", ")}
+              </strong>{" "}
+              {earlySelected.length > 1 ? "are" : "is"} booked for{" "}
+              {earlySelected.map((group) => group.startTime).join(", ")} — it is{" "}
+              {minutesToSlotLabel(now)} now. Checking in now stamps an early
+              arrival.
             </p>
           )}
 
@@ -2005,10 +2085,12 @@ function ServiceScheduleModal({
               onClick={handlePrimary}
             >
               {isReschedule
-                ? allSelected
-                  ? "Continue"
-                  : `Pick a time (${selected.size})`
-                : `${actionLabel} (${selected.size})`}
+                ? "Continue"
+                : action === "checkin" &&
+                    earlySelected.length > 0 &&
+                    !earlyAcknowledged
+                  ? "Check in anyway"
+                  : `${actionLabel} (${selected.size})`}
             </button>
           </div>
         </div>
@@ -2056,6 +2138,15 @@ function DetailModal({
     ),
   );
   const isMultiGuest = guestIDs.length > 1;
+  /* A group booking's guests arrive one at a time. The booking's own status
+     turns ONGOING as soon as the FIRST guest is checked in, so it can no longer
+     be used to decide whether Check In is still available — the per-guest rows
+     decide that instead. */
+  const awaitingGuests = guestsAwaitingCheckIn(appointment);
+  const checkedInGuests = guestGroupsFromSchedule(appointment).filter(
+    (group) => group.checkedIn,
+  ).length;
+  const totalGuests = guestGroupsFromSchedule(appointment).length;
   const guestLabel = (guessID?: string) => {
     const code = (guessID ?? "").trim().toUpperCase();
     if (!code) return "";
@@ -2172,7 +2263,14 @@ function DetailModal({
           }}
         >
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <StatusBadge status={appointment.status} />
+            <StatusBadge
+              status={appointment.status}
+              suffix={
+                appointment.status === "ongoing" && totalGuests > 1
+                  ? `${checkedInGuests}/${totalGuests} guests in`
+                  : undefined
+              }
+            />
             <ModeBadge mode={appointment.mode} />
             {appointment.gender && (
               <span className="badge b-pre">
@@ -2379,6 +2477,9 @@ function DetailModal({
                   }}
                 >
                   <Ico.Login size={18} /> Check In
+                  {awaitingGuests.length > 1
+                    ? ` (${awaitingGuests.length} guests)`
+                    : ""}
                 </button>
               )}
               {canReschedule && (
@@ -2411,15 +2512,56 @@ function DetailModal({
           )}
 
           {appointment.status === "ongoing" && (
-            <button
-              className="btn-modal-bill"
-              type="button"
-              disabled
-              title="Technician must mark the work Done first"
-              style={{ opacity: 0.5, cursor: "not-allowed" }}
-            >
-              <Ico.Receipt size={18} /> Go to Bill — after technician Done
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* The booking turned ONGOING when its first guest arrived — the
+                  rest of the group still has to be checked in at their own
+                  times, so Check In stays until the last one is in. */}
+              {awaitingGuests.length > 0 && (
+                <>
+                  <div
+                    style={{
+                      padding: "10px 12px",
+                      border: "1px solid #bae6fd",
+                      borderRadius: 10,
+                      background: "#f0f9ff",
+                      color: "#075985",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {checkedInGuests} of {totalGuests} guests checked in.
+                    {awaitingGuests.length > 1
+                      ? ` ${awaitingGuests.length} still to arrive.`
+                      : " One still to arrive."}
+                  </div>
+                  {canCheckIn && (
+                    <button
+                      className="btn-modal-checkin"
+                      type="button"
+                      onClick={() => {
+                        onRequestAction(appointment, "ongoing");
+                        onClose();
+                      }}
+                    >
+                      <Ico.Login size={18} /> Check In
+                      {awaitingGuests.length > 1
+                        ? ` next guest (${awaitingGuests.length} left)`
+                        : " last guest"}
+                    </button>
+                  )}
+                </>
+              )}
+              <button
+                className="btn-modal-bill"
+                type="button"
+                disabled
+                title="Technician must mark the work Done first"
+                style={{ opacity: 0.5, cursor: "not-allowed" }}
+              >
+                <Ico.Receipt size={18} /> Go to Bill — after technician Done
+              </button>
+            </div>
           )}
 
           {appointment.status === "cancelled" && (
@@ -2654,8 +2796,20 @@ function ScheduleGrid({
     return true;
   }
 
-  function handleDragStart(event: React.DragEvent, appointment: Appointment) {
-    if (appointment.status === "ongoing" || appointment.status === "done") {
+  function handleDragStart(
+    event: React.DragEvent,
+    appointment: Appointment,
+    segment?: ServiceSchedule,
+  ) {
+    /* Only the checked-in guest's own block is locked. The rest of the group
+       is still waiting for its own time, so it must stay reschedulable even
+       though the booking as a whole already reads ONGOING. */
+    const blockState = segmentDisplayStatus(
+      appointment,
+      segment,
+      appointment.status,
+    );
+    if (blockState.status === "ongoing" || blockState.status === "done") {
       event.preventDefault();
       return;
     }
@@ -2855,13 +3009,22 @@ function ScheduleGrid({
 
                   if (cell && cell.isStart) {
                     const appointment = cell.appointment;
-                    const locked = appointment.status === "ongoing";
+                    const segment = cell.service;
+                    /* One block per guest, so paint it from that guest's own
+                       row. The booking-wide status turns ONGOING at the first
+                       check-in and would light up every guest still waiting
+                       for their own time. */
+                    const segmentState = segmentDisplayStatus(
+                      appointment,
+                      segment,
+                      appointment.status,
+                    );
+                    const locked = segmentState.status === "ongoing";
                     const appointmentIdentity = bookingIdentity(
                       appointment.bookingID,
                       appointment.locCode,
                     );
-                    const pillClass = `appt-pill pill-${appointment.status}${dragAppointmentID === appointmentIdentity ? " dragging" : ""}${locked ? " locked-pill" : ""}`;
-                    const segment = cell.service;
+                    const pillClass = `appt-pill pill-${segmentState.status}${dragAppointmentID === appointmentIdentity ? " dragging" : ""}${locked ? " locked-pill" : ""}`;
                     const serviceLabel = segment?.serviceName || appointment.serviceName;
                     const startLabel = segment?.startTime || appointment.timeSlot;
                     const endLabel = segment?.endTime || minutesToSlotLabel(
@@ -2918,7 +3081,7 @@ function ScheduleGrid({
                           type="button"
                           draggable={!locked}
                           onDragStart={(event) =>
-                            handleDragStart(event, appointment)
+                            handleDragStart(event, appointment, segment)
                           }
                           onDragEnd={handleDragEnd}
                           onClick={() => {
@@ -2927,12 +3090,12 @@ function ScheduleGrid({
                           }}
                           title={
                             locked
-                              ? "Ongoing appointments are locked"
+                              ? "This guest is checked in — locked"
                               : "Drag to reschedule · Click for details"
                           }
                         >
                           <span className="ap-service">
-                            {appointment.status === "ongoing" && (
+                            {segmentState.status === "ongoing" && (
                               <span className="live-dot-blue" />
                             )}
                             {locked && <Ico.Lock />}
@@ -2943,6 +3106,7 @@ function ScheduleGrid({
                           </span>
                           <span className="ap-client">
                             {appointment.clientName}
+                            {guestBlockLabel(appointment, segment)}
                           </span>
                           <span className="ap-meta">
                             <MiniModeBadge mode={appointment.mode} />
