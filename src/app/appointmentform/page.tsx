@@ -23,6 +23,8 @@ interface ServiceItem {
   itemPrintDes: string;
   price: number;
   durationMin?: number;
+  /** 'male' | 'female' | 'other' (unisex, shown to everyone). */
+  gender?: string;
   category1: string;
   category1Label: string;
   category2: string;
@@ -31,6 +33,23 @@ interface ServiceItem {
   category3Label: string;
   category4: string;
   category4Label: string;
+}
+
+/** Client-facing gender label ("Male"/"Female"/"Other"/"") -> the service's
+    own gender field ('male'/'female'/'other'). Empty/"Other" means "do not
+    filter", matching the public booking page's own fallback. */
+function clientGenderKey(label: string | undefined): "male" | "female" | "" {
+  const normalized = String(label || "").trim().toLowerCase();
+  if (normalized === "male") return "male";
+  if (normalized === "female") return "female";
+  return "";
+}
+
+function serviceMatchesGender(service: ServiceItem, clientGender: string | undefined): boolean {
+  const key = clientGenderKey(clientGender);
+  if (!key) return true;
+  const serviceGender = String(service.gender || "other").toLowerCase();
+  return serviceGender === "other" || serviceGender === key;
 }
 
 interface ExistingAppointment {
@@ -92,11 +111,39 @@ interface GuestProvider {
 
 interface AvailabilityRequirement {
   id: string;
+  /** Human label ("Main Client" / "Person 2" / ...) for clash messages. */
+  label: string;
+  /** ISO date (yyyy-mm-dd) this guest's own slot/date is on. A clash against
+      another guest only matters when both fall on the same calendar date. */
+  date: string;
   timeSlot: string;
   categories: string[];
   workloads?: CategoryWorkload[];
   selectedProviders: GuestProvider[];
   preferredTechID: string;
+}
+
+/**
+ * Tri-state slot result instead of a plain boolean, so the picker can show
+ * "partially available" instead of lying with a flat green/red.
+ * - available:   every one of this guest's selected categories can get its
+ *                own distinct technician at this slot.
+ * - partial:     at least one category can, but not all of them together
+ *                (they would have to share one technician, or a different
+ *                 category has nobody free).
+ * - unavailable: none of this guest's categories can be served, OR this
+ *                exact technician was already explicitly claimed by another
+ *                guest in the same form at this exact slot (guestClash).
+ */
+interface SlotAvailabilityResult {
+  status: "available" | "partial" | "unavailable";
+  matchedCount: number;
+  totalCount: number;
+  reason?: "guestClash";
+  /** Which other guest holds the technician, when reason is "guestClash". */
+  conflictLabel?: string;
+  /** "12:45 PM" — when the conflicting technician frees up again. */
+  conflictUntil?: string;
 }
 
 interface SubClient {
@@ -106,6 +153,9 @@ interface SubClient {
   gender: string;
   selectedServices: string[];
   timeSlot: string;
+  /** Own date for this guest. Empty string = follow the Main Client's date
+      automatically; set once the admin picks a different date for them. */
+  date: string;
   activeCategoryCode: string;
   activeSubCat2: string;
   activeSubCat3: string;
@@ -188,6 +238,16 @@ function catColor(code: string) {
       dot: "#9ca3af",
     }
   );
+}
+
+/** 75 -> "1 hr 15 min"; 45 -> "45 min"; 60 -> "1 hr". */
+function formatDurationMin(totalMin: number): string {
+  const mins = Math.max(0, Math.round(totalMin));
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  if (hrs === 0) return `${rem} min`;
+  if (rem === 0) return `${hrs} hr`;
+  return `${hrs} hr ${rem} min`;
 }
 
 function slotToMins(slot: string): number {
@@ -511,8 +571,61 @@ function technicianHasShiftForDuration(
   );
 }
 
+/**
+ * For one guest's own requirement bundle (their categories + per-category
+ * workload durations + whatever technician they explicitly picked for each),
+ * work out the [start, end) minute window each explicitly-assigned
+ * technician is actually busy with this guest, starting at `startMinutes`.
+ * Categories with no explicit technician are not included — there is
+ * nothing to clash on until a technician is actually picked. Multiple
+ * categories explicitly given to the SAME technician stack sequentially
+ * (that technician works through them back to back for this one guest).
+ */
+function explicitTechWindows(
+  categories: string[],
+  workloads: CategoryWorkload[],
+  selectedProviders: GuestProvider[],
+  preferredTechID: string,
+  startMinutes: number,
+  technicians: Technician[],
+): Map<string, { startMin: number; endMin: number }> {
+  const workloadMap = new Map(
+    workloads.map((workload) => [
+      normalizedCode(workload.category),
+      Number(workload.durationMin) > 0 ? Number(workload.durationMin) : 30,
+    ]),
+  );
+  const windows = new Map<string, { startMin: number; endMin: number }>();
+
+  [...new Set(categories.map(normalizedCode).filter(Boolean))].forEach(
+    (category) => {
+      const assignedProvider = selectedProviders.find(
+        (provider) => normalizedCode(provider.categoryCode) === category,
+      );
+      const techID = resolveTechnicianId(
+        assignedProvider?.techID || preferredTechID,
+        technicians,
+      );
+      if (!techID || techID === "0") return;
+
+      const key = normalizedCode(techID);
+      const duration = workloadMap.get(category) || 30;
+      const existing = windows.get(key);
+      if (existing) {
+        existing.endMin += duration;
+      } else {
+        windows.set(key, { startMin: startMinutes, endMin: startMinutes + duration });
+      }
+    },
+  );
+
+  return windows;
+}
+
 function calculateSlotAvailability({
   slot,
+  date,
+  label,
   categories,
   workloads = [],
   selectedProviders,
@@ -528,6 +641,11 @@ function calculateSlotAvailability({
   additionalRequirements = [],
 }: {
   slot: string;
+  /** This tab's own date (yyyy-mm-dd). Used so a clash is only raised
+      against another guest who is actually on the same calendar date. */
+  date?: string;
+  /** This tab's own label ("Main Client" / "Person 2" / ...). */
+  label?: string;
   categories: string[];
   workloads?: CategoryWorkload[];
   selectedProviders: GuestProvider[];
@@ -541,9 +659,72 @@ function calculateSlotAvailability({
   branchCloseMin: number;
   staffWindowsByTech: Record<string, StaffShiftWindow[]>;
   additionalRequirements?: AvailabilityRequirement[];
-}): boolean {
+}): SlotAvailabilityResult {
   const slotMinutes = slotToMins(slot);
-  if (slotMinutes < 0) return false;
+  if (slotMinutes < 0) {
+    return { status: "unavailable", matchedCount: 0, totalCount: 0 };
+  }
+
+  const sameSlotOthers = additionalRequirements.filter(
+    (requirement) => slotToMins(requirement.timeSlot) === slotMinutes,
+  );
+
+  // A technician is one person: if this tab explicitly assigned a provider
+  // to one of its own categories, work out the full [start, end) window that
+  // technician would actually be busy with THIS guest starting at the
+  // candidate slot, and compare it against every OTHER guest's own window
+  // for that same technician on the same date. Any overlap — not just an
+  // exact matching start time — is a real-world double-booking, so every
+  // sub-slot inside the other guest's window (12:05, 12:10, ... not only
+  // 12:00) is blocked here too, instead of only the exact start time.
+  if (categories.length > 0 && additionalRequirements.length > 0) {
+    const ownWindows = explicitTechWindows(
+      categories,
+      workloads,
+      selectedProviders,
+      preferredTechID,
+      slotMinutes,
+      technicians,
+    );
+
+    if (ownWindows.size > 0) {
+      for (const other of additionalRequirements) {
+        // Different calendar dates can never clash, even if the clock time
+        // matches.
+        if (date && other.date && other.date !== date) continue;
+
+        const otherStart = slotToMins(other.timeSlot);
+        if (otherStart < 0) continue;
+
+        const otherWindows = explicitTechWindows(
+          other.categories,
+          other.workloads || [],
+          other.selectedProviders,
+          other.preferredTechID,
+          otherStart,
+          technicians,
+        );
+
+        for (const [techID, ownWindow] of ownWindows) {
+          const otherWindow = otherWindows.get(techID);
+          if (!otherWindow) continue;
+          const overlaps =
+            ownWindow.startMin < otherWindow.endMin &&
+            otherWindow.startMin < ownWindow.endMin;
+          if (overlaps) {
+            return {
+              status: "unavailable",
+              matchedCount: 0,
+              totalCount: Math.max(categories.length, 1),
+              reason: "guestClash",
+              conflictLabel: other.label || "another guest",
+              conflictUntil: minsToSlot(otherWindow.endMin),
+            };
+          }
+        }
+      }
+    }
+  }
 
   const requirementGroups = [
     {
@@ -551,15 +732,15 @@ function calculateSlotAvailability({
       workloads,
       selectedProviders,
       preferredTechID,
+      isOwn: true,
     },
-    ...additionalRequirements
-      .filter((requirement) => slotToMins(requirement.timeSlot) === slotMinutes)
-      .map((requirement) => ({
-        categories: requirement.categories,
-        workloads: requirement.workloads || [],
-        selectedProviders: requirement.selectedProviders,
-        preferredTechID: requirement.preferredTechID,
-      })),
+    ...sameSlotOthers.map((requirement) => ({
+      categories: requirement.categories,
+      workloads: requirement.workloads || [],
+      selectedProviders: requirement.selectedProviders,
+      preferredTechID: requirement.preferredTechID,
+      isOwn: false,
+    })),
   ];
   const categoryRequirements = requirementGroups.flatMap((group) => {
     const workloadMap = new Map(
@@ -576,11 +757,14 @@ function calculateSlotAvailability({
       durationMin: workloadMap.get(category) || 30,
       selectedProviders: group.selectedProviders,
       preferredTechID: group.preferredTechID,
+      isOwn: group.isOwn,
     }));
   });
 
   // Before a service is selected there is no technician requirement to test.
-  if (categoryRequirements.length === 0) return true;
+  if (categoryRequirements.length === 0) {
+    return { status: "available", matchedCount: 0, totalCount: 0 };
+  }
 
   const branchTechnicians = technicians.filter((technician) =>
     isTechnicianInBranch(technician, branch),
@@ -640,6 +824,7 @@ function calculateSlotAvailability({
       ...requirement,
       selectedProviders: [] as GuestProvider[],
       preferredTechID: "",
+      isOwn: false,
     })),
   ];
 
@@ -652,6 +837,7 @@ function calculateSlotAvailability({
       categories: string[];
       durationMin: number;
       assignedTechID: string;
+      isOwn: boolean;
     }
   >();
   const flexibleRequirements: {
@@ -659,6 +845,7 @@ function calculateSlotAvailability({
     durationMin: number;
     selectedProviders: GuestProvider[];
     preferredTechID: string;
+    isOwn: boolean;
   }[] = [];
 
   allRequirements.forEach((requirement) => {
@@ -678,11 +865,13 @@ function calculateSlotAvailability({
         categories: [],
         durationMin: 0,
         assignedTechID,
+        isOwn: false,
       };
       if (!current.categories.includes(requirement.category)) {
         current.categories.push(requirement.category);
       }
       current.durationMin += requirement.durationMin;
+      current.isOwn = current.isOwn || requirement.isOwn;
       explicitRequirements.set(key, current);
     } else {
       flexibleRequirements.push({
@@ -690,6 +879,7 @@ function calculateSlotAvailability({
         durationMin: requirement.durationMin,
         selectedProviders: requirement.selectedProviders,
         preferredTechID: requirement.preferredTechID,
+        isOwn: requirement.isOwn,
       });
     }
   });
@@ -724,7 +914,8 @@ function calculateSlotAvailability({
             requirement.durationMin,
             staffWindowsByTech,
           ));
-      return eligible &&
+      const candidates =
+        eligible &&
         scheduleFits &&
         isTechnicianFreeForDuration(
           requirement.assignedTechID,
@@ -733,8 +924,9 @@ function calculateSlotAvailability({
           appointments,
           currentBookingID,
         )
-        ? [normalizedCode(requirement.assignedTechID)]
-        : [];
+          ? [normalizedCode(requirement.assignedTechID)]
+          : [];
+      return { candidates, isOwn: requirement.isOwn };
     }),
     ...flexibleRequirements.map((requirement) => {
       const assignedProvider = requirement.selectedProviders.find(
@@ -750,7 +942,7 @@ function calculateSlotAvailability({
         ? [assignedTechID]
         : branchTechnicians.map((technician) => technician.UserId);
 
-      return [
+      const filtered = [
         ...new Set(
           candidates
             .map(normalizedCode)
@@ -792,18 +984,18 @@ function calculateSlotAvailability({
             ),
         ),
       ];
+      return { candidates: filtered, isOwn: requirement.isOwn };
     }),
   ];
 
-  if (possibleTechnicians.some((candidates) => candidates.length === 0)) {
-    return false;
-  }
-
   // Independent category workloads (for example Hair + Nail assigned to
   // different providers) need distinct technicians at the same time. Do not
-  // reuse one person for two parallel requirements.
+  // reuse one person for two parallel requirements. Unlike the old
+  // short-circuit version, this always runs the full augmenting-path matcher
+  // so a slot that works for SOME but not all of this guest's own categories
+  // is reported as "partial" instead of being lumped in with "unavailable".
   const ordered = possibleTechnicians
-    .map((candidates) => ({ candidates }))
+    .map((requirement) => requirement)
     .sort((a, b) => a.candidates.length - b.candidates.length);
   const matched = new Map<string, number>();
 
@@ -829,10 +1021,33 @@ function calculateSlotAvailability({
   }
 
   for (let index = 0; index < ordered.length; index += 1) {
-    if (!assignCategory(index, new Set<string>())) return false;
+    assignCategory(index, new Set<string>());
   }
 
-  return true;
+  const matchedOrderIndexes = new Set(matched.values());
+  const ownIndexes = ordered
+    .map((requirement, index) => ({ requirement, index }))
+    .filter(({ requirement }) => requirement.isOwn);
+  const totalCount = ownIndexes.length;
+  const matchedCount = ownIndexes.filter(({ index }) =>
+    matchedOrderIndexes.has(index),
+  ).length;
+
+  if (totalCount === 0) {
+    // This tab selected no categories of its own — only other guests'
+    // sharing/placeholder requirements landed here, so there is nothing of
+    // this guest's to report as available or not.
+    return { status: "available", matchedCount: 0, totalCount: 0 };
+  }
+
+  const status =
+    matchedCount === totalCount
+      ? "available"
+      : matchedCount === 0
+        ? "unavailable"
+        : "partial";
+
+  return { status, matchedCount, totalCount };
 }
 
 function getSubCat2(services: ServiceItem[], cat1: string): string[] {
@@ -891,8 +1106,11 @@ function getVisibleServices(
   cat2: string,
   cat3: string,
   cat4: string,
+  clientGender?: string,
 ): ServiceItem[] {
-  let scoped = services.filter((s) => s.category1?.trim() === cat1);
+  let scoped = services
+    .filter((s) => s.category1?.trim() === cat1)
+    .filter((s) => serviceMatchesGender(s, clientGender));
 
   // If Cat2 values exist under Cat1, wait until the user selects one.
   // Services with an empty Cat2 remain visible as direct Cat1 services.
@@ -1120,7 +1338,7 @@ html,body{height:100%;font-family:'Inter',sans-serif;overflow:hidden;}
 .subcat-bar{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;align-items:center}.subcat-btn{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;border:1.5px solid transparent;background:#c8dde3;cursor:pointer;font-family:'Inter',sans-serif;font-size:11px;font-weight:700;color:#1e3a40;white-space:nowrap;flex-shrink:0;transition:all .15s}.subcat-btn:hover:not(.sub-active){background:#bdd5da;border-color:rgba(30,58,64,.2)}.subcat-btn.sub-active{background:#1e3a40;color:#fff;border-color:#1e3a40}.subcat-sep{color:#9ca3af;font-size:14px;flex-shrink:0;user-select:none}
 .svc-card{background:#d0e3e7;border-radius:10px;padding:13px 15px;cursor:pointer;border:2px solid transparent;transition:all .15s;display:flex;flex-direction:column;gap:4px;position:relative;overflow:hidden;text-align:left;font-family:'Inter',sans-serif}.svc-card:hover:not(.sel-s){background:#c8dde3;transform:translateY(-1px);box-shadow:0 3px 10px rgba(0,0,0,.08)}.svc-card.sel-s{background:linear-gradient(135deg,#c4dce1,#b8d4da);border-color:#1e3a40;box-shadow:0 0 0 3px rgba(30,58,64,.12);animation:popIn .2s ease}.svc-card.err-s{border-color:#e53e3e!important}.svc-chk{width:20px;height:20px;border-radius:50%;border:2px solid rgba(30,58,64,.3);background:#deeaea;display:flex;align-items:center;justify-content:center;transition:all .2s;flex-shrink:0;position:absolute;top:11px;right:11px}.svc-chk.on{background:#1e3a40;border-color:#1e3a40}
 .breadcrumb-wrap{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px}.bc-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:10px;font-weight:700;font-family:'Inter',sans-serif;background:rgba(30,58,64,.08);color:#1e3a40;white-space:nowrap}.bc-sep{color:#9ca3af;font-size:11px}
-.ts-section{display:flex;flex-direction:column;gap:16px}.just-now-btn{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;border-radius:10px;border:none;background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;cursor:pointer;transition:all .18s;white-space:nowrap;flex-shrink:0;animation:nowPulse 2s ease-in-out infinite;box-shadow:0 2px 10px rgba(239,68,68,.35)}.just-now-btn:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(239,68,68,.45)}.just-now-btn.selected{background:linear-gradient(135deg,#15803d,#22c55e);animation:none;box-shadow:0 2px 10px rgba(34,197,94,.35)}.ts-main-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:7px}.ts-btn{background:#d0e3e7;border-radius:8px;padding:10px 4px;text-align:center;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;border:2px solid transparent;transition:all .15s;color:#1e3a40;min-height:40px;display:flex;align-items:center;justify-content:center}.ts-btn:hover:not(.sel-t):not(.base-active){background:#b8d0d5}.ts-btn.base-active{background:#c4dce1;border-color:#1e3a40;color:#1e3a40;box-shadow:0 0 0 2px rgba(30,58,64,.2)}.ts-btn.available{background:#dcfce7;border-color:#86efac;color:#166534}.ts-btn.unavailable{background:#fee2e2;border-color:#fca5a5;color:#b91c1c;cursor:not-allowed}.ts-btn.available:hover:not(.sel-t){background:#bbf7d0}.ts-btn.unavailable:hover{background:#fecaca}.ts-btn.sel-t{background:#1e3a40;color:#fff;border-color:#1e3a40;transform:scale(1.04)}.ts-btn.err-t{border-color:#e53e3e}.ts-offset-wrap{background:rgba(30,58,64,.06);border-radius:12px;padding:14px 16px;border:1.5px solid rgba(30,58,64,.15);animation:slideDown .18s ease both}.ts-offset-label{font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;display:flex;align-items:center;gap:6px}.ts-offset-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.ts-off-btn{background:#d0e3e7;border-radius:8px;padding:8px 4px;text-align:center;font-family:'Inter',sans-serif;cursor:pointer;border:2px solid transparent;transition:all .15s;color:#1e3a40;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:46px;justify-content:center}.ts-off-btn.available{background:#dcfce7;border-color:#86efac;color:#166534}.ts-off-btn.unavailable{background:#fee2e2;border-color:#fca5a5;color:#b91c1c;cursor:not-allowed}.ts-off-btn.available:hover:not(.sel-t){background:#bbf7d0}.ts-off-btn.unavailable:hover{background:#fecaca}.ts-off-btn:disabled{opacity:1}.ts-off-btn:hover:not(.sel-t){background:#b8d0d5}.ts-off-btn.unavailable:hover:not(.sel-t){background:#fecaca}.ts-off-btn.sel-t{background:#1e3a40;color:#fff;border-color:#1e3a40}.ts-off-btn .off-delta{font-size:10px;font-weight:700;opacity:.7;line-height:1}.ts-off-btn .off-time{font-size:12px;font-weight:800;line-height:1.3}.slot-availability-legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:11px;font-weight:700;color:#6b7280}.slot-availability-legend span{display:inline-flex;align-items:center;gap:5px}.slot-legend-dot{display:inline-block;width:9px;height:9px;border-radius:50%}.available-dot{background:#22c55e}.unavailable-dot{background:#ef4444}.slot-availability-note{display:flex;align-items:center;gap:7px;border-radius:8px;padding:8px 10px;font-size:11px;font-weight:600}.slot-availability-note.checking{background:#f0fdf4;color:#166534}.slot-availability-note.failed{background:#fee2e2;color:#b91c1c}.slot-availability-dot{width:8px;height:8px;border-radius:50%;background:#22c55e;animation:nowPulse 1.2s ease-in-out infinite}.sel-time-badge{display:inline-flex;align-items:center;gap:10px;background:linear-gradient(135deg,#1e3a40,#2a5060);border-radius:10px;padding:10px 16px}.sel-time-badge .stb-label{font-size:10px;color:rgba(255,255,255,.55);font-weight:700;text-transform:uppercase;letter-spacing:.05em}.sel-time-badge .stb-time{font-size:18px;font-weight:800;color:#4ade80;letter-spacing:.02em}.tech-prefill-badge{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1.5px solid rgba(34,197,94,.35);border-radius:10px;padding:10px 14px;margin-bottom:4px}
+.ts-section{display:flex;flex-direction:column;gap:16px}.just-now-btn{display:inline-flex;align-items:center;gap:7px;padding:10px 18px;border-radius:10px;border:none;background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff;font-family:'Inter',sans-serif;font-size:13px;font-weight:700;cursor:pointer;transition:all .18s;white-space:nowrap;flex-shrink:0;animation:nowPulse 2s ease-in-out infinite;box-shadow:0 2px 10px rgba(239,68,68,.35)}.just-now-btn:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(239,68,68,.45)}.just-now-btn.selected{background:linear-gradient(135deg,#15803d,#22c55e);animation:none;box-shadow:0 2px 10px rgba(34,197,94,.35)}.ts-main-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:7px}.ts-btn{background:#d0e3e7;border-radius:8px;padding:10px 4px;text-align:center;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;border:2px solid transparent;transition:all .15s;color:#1e3a40;min-height:40px;display:flex;align-items:center;justify-content:center}.ts-btn:hover:not(.sel-t):not(.base-active){background:#b8d0d5}.ts-btn.base-active{background:#c4dce1;border-color:#1e3a40;color:#1e3a40;box-shadow:0 0 0 2px rgba(30,58,64,.2)}.ts-btn.available{background:#dcfce7;border-color:#86efac;color:#166534}.ts-btn.unavailable{background:#fee2e2;border-color:#fca5a5;color:#b91c1c;cursor:not-allowed}.ts-btn.partial{background:#fef3c7;border-color:#fcd34d;color:#92400e;cursor:not-allowed}.ts-btn.partial:hover{background:#fde68a}.ts-btn.available:hover:not(.sel-t){background:#bbf7d0}.ts-btn.unavailable:hover{background:#fecaca}.ts-btn.sel-t{background:#1e3a40;color:#fff;border-color:#1e3a40;transform:scale(1.04)}.ts-btn.err-t{border-color:#e53e3e}.ts-offset-wrap{background:rgba(30,58,64,.06);border-radius:12px;padding:14px 16px;border:1.5px solid rgba(30,58,64,.15);animation:slideDown .18s ease both}.ts-offset-label{font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;display:flex;align-items:center;gap:6px}.ts-offset-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.ts-off-btn{background:#d0e3e7;border-radius:8px;padding:8px 4px;text-align:center;font-family:'Inter',sans-serif;cursor:pointer;border:2px solid transparent;transition:all .15s;color:#1e3a40;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:46px;justify-content:center}.ts-off-btn.available{background:#dcfce7;border-color:#86efac;color:#166534}.ts-off-btn.unavailable{background:#fee2e2;border-color:#fca5a5;color:#b91c1c;cursor:not-allowed}.ts-off-btn.partial{background:#fef3c7;border-color:#fcd34d;color:#92400e;cursor:not-allowed}.ts-off-btn.partial:hover:not(.sel-t){background:#fde68a}.ts-off-btn.available:hover:not(.sel-t){background:#bbf7d0}.ts-off-btn.unavailable:hover{background:#fecaca}.ts-off-btn:disabled{opacity:1}.ts-off-btn:hover:not(.sel-t){background:#b8d0d5}.ts-off-btn.unavailable:hover:not(.sel-t){background:#fecaca}.ts-off-btn.sel-t{background:#1e3a40;color:#fff;border-color:#1e3a40}.ts-off-btn .off-delta{font-size:10px;font-weight:700;opacity:.7;line-height:1}.ts-off-btn .off-time{font-size:12px;font-weight:800;line-height:1.3}.slot-availability-legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:11px;font-weight:700;color:#6b7280}.slot-availability-legend span{display:inline-flex;align-items:center;gap:5px}.slot-legend-dot{display:inline-block;width:9px;height:9px;border-radius:50%}.available-dot{background:#22c55e}.unavailable-dot{background:#ef4444}.partial-dot{background:#f59e0b}.slot-availability-note{display:flex;align-items:center;gap:7px;border-radius:8px;padding:8px 10px;font-size:11px;font-weight:600}.slot-availability-note.checking{background:#f0fdf4;color:#166534}.slot-availability-note.failed{background:#fee2e2;color:#b91c1c}.slot-availability-dot{width:8px;height:8px;border-radius:50%;background:#22c55e;animation:nowPulse 1.2s ease-in-out infinite}.sel-time-badge{display:inline-flex;align-items:center;gap:10px;background:linear-gradient(135deg,#1e3a40,#2a5060);border-radius:10px;padding:10px 16px}.sel-time-badge .stb-label{font-size:10px;color:rgba(255,255,255,.55);font-weight:700;text-transform:uppercase;letter-spacing:.05em}.sel-time-badge .stb-time{font-size:18px;font-weight:800;color:#4ade80;letter-spacing:.02em}.tech-prefill-badge{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1.5px solid rgba(34,197,94,.35);border-radius:10px;padding:10px 14px;margin-bottom:4px}
 .chip-bar{background:#1e3a40;border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.chip{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.14);border-radius:20px;padding:4px 9px;font-size:11px;font-weight:600;color:#fff;white-space:nowrap;animation:chipIn .2s ease both}.chip-x{width:14px;height:14px;border-radius:50%;background:rgba(255,255,255,.22);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:9px;color:#fff;font-weight:700;transition:background .15s;border:none;line-height:1}.chip-x:hover{background:rgba(255,255,255,.42)}
 .prov-card{background:#d0e3e7;border-radius:11px;padding:12px 14px;cursor:pointer;border:2px solid transparent;transition:all .17s;display:flex;align-items:center;gap:12px;font-family:'Inter',sans-serif;animation:rowIn .18s ease both}.prov-card:hover:not(.sel-p){background:#c8dde3;transform:translateY(-1px)}.prov-card.sel-p{background:linear-gradient(135deg,#c4dce1,#b6d2d9);border-color:#1e3a40;box-shadow:0 0 0 3px rgba(30,58,64,.13)}.prov-av{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#5a8a92,#3a6a72);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px;flex-shrink:0;box-shadow:0 2px 6px rgba(0,0,0,.15)}.prov-card.sel-p .prov-av{background:linear-gradient(135deg,#1e3a40,#2a5060)}
 .sum-card{background:#deeaea;border-radius:16px;padding:20px 20px 24px;display:flex;flex-direction:column;gap:0;box-shadow:0 1px 6px rgba(0,0,0,.07);flex:1;min-height:0;overflow-y:auto}.sum-div{height:1px;background:rgba(30,58,64,.15);margin:10px 0 14px}.sum-dot{border-top:1px dashed rgba(30,58,64,.22);margin:10px 0}.confirm-btn{background:#1e3a40;color:#fff;border:none;border-radius:11px;width:100%;height:50px;font-family:'Inter',sans-serif;font-size:15px;font-weight:700;cursor:pointer;transition:all .18s;display:flex;align-items:center;justify-content:center;gap:10px;flex-shrink:0}.confirm-btn:hover:not(:disabled){background:#2a5060;transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,0,0,.18)}.confirm-btn:disabled{background:#6b8e96;cursor:not-allowed;opacity:.8}.spinner{width:18px;height:18px;border-radius:50%;border:2.5px solid rgba(255,255,255,.35);border-top-color:#fff;animation:spin .7s linear infinite;flex-shrink:0}
@@ -1724,6 +1942,9 @@ interface CatPanelProps {
   isMain?: boolean;
   submitted?: boolean;
   errorMsg?: string;
+  /** This guest's gender label ("Male"/"Female"/"Other"/""). When set, the
+      list only shows services for that gender plus unisex ones. */
+  clientGender?: string;
 }
 
 function CategoryPanel({
@@ -1742,6 +1963,7 @@ function CategoryPanel({
   isMain,
   submitted,
   errorMsg,
+  clientGender,
 }: CatPanelProps) {
   const availCat1 = [
     ...new Set(services.map((s) => s.category1?.trim()).filter(Boolean)),
@@ -1764,6 +1986,7 @@ function CategoryPanel({
         activeCat2,
         activeCat3,
         activeCat4,
+        clientGender,
       )
     : [];
 
@@ -2094,13 +2317,28 @@ function CategoryPanel({
               );
             })}
           </div>
-          <div style={{ flexShrink: 0 }}>
+          <div style={{ flexShrink: 0, textAlign: "right" }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>
               LKR{" "}
               {services
                 .filter((s) => selectedServices.includes(s.itemCode))
                 .reduce((a, s) => a + s.price, 0)
                 .toLocaleString()}
+            </div>
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 600,
+                color: "rgba(255,255,255,.75)",
+                marginTop: 1,
+              }}
+            >
+              <Ico.Clock />{" "}
+              {formatDurationMin(
+                services
+                  .filter((s) => selectedServices.includes(s.itemCode))
+                  .reduce((a, s) => a + (s.durationMin || 30), 0),
+              )}
             </div>
           </div>
         </div>
@@ -2256,7 +2494,7 @@ function TimeSlotPicker({
   onSelect: (slot: string) => void;
   hasError?: boolean;
   clientLabel?: string;
-  availability?: Record<string, boolean>;
+  availability?: Record<string, SlotAvailabilityResult>;
   availabilityStatus?: "idle" | "loading" | "ready" | "error";
   branchHours: BranchHoursState;
   baseSlots: string[];
@@ -2285,7 +2523,7 @@ function TimeSlotPicker({
       selectedSlot &&
       branchHours.status === "ready" &&
       availabilityStatus === "ready" &&
-      availability?.[selectedSlot] !== true
+      availability?.[selectedSlot]?.status !== "available"
     ) {
       onSelect("");
     }
@@ -2303,7 +2541,10 @@ function TimeSlotPicker({
       return false;
     }
     if (availabilityStatus === "ready") {
-      return availability?.[slot] === true;
+      // Partial slots are shown with their own colour/badge but are not
+      // bookable here — not every one of this guest's selected categories
+      // can actually be served at this time.
+      return availability?.[slot]?.status === "available";
     }
     return true;
   };
@@ -2316,7 +2557,28 @@ function TimeSlotPicker({
       return " unavailable";
     }
     if (availabilityStatus !== "ready" || !availability) return "";
-    return availability[slot] === true ? " available" : " unavailable";
+    const result = availability[slot];
+    if (!result) return " unavailable";
+    if (result.status === "available") return " available";
+    if (result.status === "partial") return " partial";
+    return " unavailable";
+  };
+  const slotTooltip = (slot: string): string | undefined => {
+    const result = availability?.[slot];
+    if (!result) return undefined;
+    if (result.reason === "guestClash") {
+      const who = result.conflictLabel || "another guest";
+      return result.conflictUntil
+        ? `Technician busy with ${who} until ${result.conflictUntil}`
+        : `Already booked for ${who}`;
+    }
+    if (result.status === "partial") {
+      return `Only ${result.matchedCount} of ${result.totalCount} selected services have a free technician at this time`;
+    }
+    if (result.status === "unavailable") {
+      return "No suitable technician is available at this time";
+    }
+    return undefined;
   };
   const isJustNow =
     !!selectedSlot &&
@@ -2420,6 +2682,9 @@ function TimeSlotPicker({
           <span>
             <i className="slot-legend-dot available-dot" /> Available
           </span>
+          <span title="Some, but not all, of this guest's selected services have a free technician at this time">
+            <i className="slot-legend-dot partial-dot" /> Partially available
+          </span>
           <span title="Outside branch or technician hours, service duration does not fit, or a booking conflict">
             <i className="slot-legend-dot unavailable-dot" /> Unavailable
           </span>
@@ -2505,7 +2770,8 @@ function TimeSlotPicker({
                   onClick={() => handleMainSlot(slot)}
                   title={
                     unavailable
-                      ? "No suitable technician is available at this time"
+                      ? slotTooltip(slot) ||
+                        "No suitable technician is available at this time"
                       : undefined
                   }
                 >
@@ -2552,7 +2818,8 @@ function TimeSlotPicker({
                   title={
                     unavailable
                       ? isCandidateSlot
-                        ? "No suitable technician is available at this time"
+                        ? slotTooltip(computed) ||
+                          "No suitable technician is available at this time"
                         : "This time is outside branch hours"
                       : computed
                   }
@@ -2758,6 +3025,10 @@ function BookingSummary({
     form.selectedServices.includes(s.itemCode),
   );
   const mainTotal = mainSvcs.reduce((a, s) => a + s.price, 0);
+  const mainDurationMin = mainSvcs.reduce(
+    (a, s) => a + (s.durationMin || 30),
+    0,
+  );
   const subTotals = form.subClients.map((sc) => ({
     sc,
     svcs: services.filter((s) => sc.selectedServices.includes(s.itemCode)),
@@ -2765,6 +3036,12 @@ function BookingSummary({
   const grand =
     mainTotal +
     subTotals.reduce((a, x) => a + x.svcs.reduce((b, s) => b + s.price, 0), 0);
+  const grandDurationMin =
+    mainDurationMin +
+    subTotals.reduce(
+      (a, x) => a + x.svcs.reduce((b, s) => b + (s.durationMin || 30), 0),
+      0,
+    );
 
   return (
     <div className="sum-card">
@@ -2925,10 +3202,23 @@ function BookingSummary({
             <span>Subtotal</span>
             <span>LKR {mainTotal.toLocaleString()}</span>
           </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              fontSize: 10,
+              fontWeight: 600,
+              color: "#6b7280",
+              marginTop: 2,
+            }}
+          >
+            <span>{formatDurationMin(mainDurationMin)}</span>
+          </div>
         </div>
       )}
       {subTotals.map(({ sc, svcs }) => {
         const t = svcs.reduce((a, s) => a + s.price, 0);
+        const d = svcs.reduce((a, s) => a + (s.durationMin || 30), 0);
         if (!svcs.length) return null;
         return (
           <div key={sc.id}>
@@ -3011,6 +3301,9 @@ function BookingSummary({
                 }}
               >
                 ⏰ {sc.timeSlot}
+                {sc.date && sc.date !== form.date
+                  ? ` · ${fmtDateLong(sc.date)}`
+                  : ""}
               </p>
             )}
             <div
@@ -3025,6 +3318,18 @@ function BookingSummary({
             >
               <span>Subtotal</span>
               <span>LKR {t.toLocaleString()}</span>
+            </div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                fontSize: 10,
+                fontWeight: 600,
+                color: "#6b7280",
+                marginTop: 2,
+              }}
+            >
+              <span>{formatDurationMin(d)}</span>
             </div>
           </div>
         );
@@ -3043,6 +3348,19 @@ function BookingSummary({
           >
             <span>Grand Total</span>
             <span>LKR {grand.toLocaleString()}</span>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 11,
+              fontWeight: 700,
+              color: "#6b7280",
+              marginTop: 2,
+            }}
+          >
+            <span>Total Estimated Time</span>
+            <span>{formatDurationMin(grandDurationMin)}</span>
           </div>
         </>
       )}
@@ -3490,6 +3808,9 @@ function ConfirmModal({
                           }}
                         >
                           ⏰ {sc.timeSlot}
+                          {sc.date && sc.date !== form.date
+                            ? ` · ${fmtDateLong(sc.date)}`
+                            : ""}
                         </span>
                       )}
                     </div>
@@ -4050,6 +4371,13 @@ function WalkInPage() {
     prefilledTechName: "",
   });
 
+  const isMain = activeTab === "main";
+  const activeSub = form.subClients.find((sc) => sc.id === activeTab) ?? null;
+  // The date actually in effect for whichever tab is active right now — the
+  // Main Client's own date, or a Person's own override once they have one,
+  // falling back to the Main Client's date until they pick their own.
+  const activeDate = isMain ? form.date : (activeSub?.date || form.date);
+
   /* Walk-in is the only mode the API saves as CONFIRMED on its own; every
      other mode is written as PENDING and confirmed later. The same test has to
      run here so the ConfirmationType column matches the BookingTypeID. */
@@ -4182,7 +4510,10 @@ function WalkInPage() {
   }, []);
 
   useEffect(() => {
-    if (!form.branch || !form.date) {
+    // Keyed off the ACTIVE TAB's own date, not always the Main Client's —
+    // once a Person has their own date override, switching to their tab
+    // refetches hours/shifts for that date instead.
+    if (!form.branch || !activeDate) {
       setScheduledStaffIds(null);
       setBranchHours(emptyBranchHours("idle"));
       return;
@@ -4190,9 +4521,15 @@ function WalkInPage() {
 
     let live = true;
     setBranchHours(emptyBranchHours("loading"));
-    setScheduledStaffIds(new Set());
-    const hoursUrl = `/api/bookings/hours?from=${form.date}&to=${form.date}&locCode=${encodeURIComponent(form.branch)}`;
-    const staffHoursUrl = `/api/appointments?meta=staff-hours&date=${encodeURIComponent(form.date)}&locCode=${encodeURIComponent(form.branch)}`;
+    // `null` means "don't know yet / don't filter" (same meaning the
+    // ProviderPicker filter below already gives it via `!scheduledStaffIds`).
+    // An empty Set means "we checked and nobody qualifies" — using an empty
+    // Set here as a loading placeholder used to make every technician look
+    // unqualified for the instant between picking a date and the staff-hours
+    // fetch resolving, which froze the previously selected technician.
+    setScheduledStaffIds(null);
+    const hoursUrl = `/api/bookings/hours?from=${activeDate}&to=${activeDate}&locCode=${encodeURIComponent(form.branch)}`;
+    const staffHoursUrl = `/api/appointments?meta=staff-hours&date=${encodeURIComponent(activeDate)}&locCode=${encodeURIComponent(form.branch)}`;
 
     Promise.all([
       fetch(hoursUrl).then((response) => response.json()),
@@ -4280,10 +4617,13 @@ function WalkInPage() {
       });
 
     return () => { live = false; };
-  }, [form.branch, form.date]);
+  }, [form.branch, activeDate]);
 
   useEffect(() => {
-    if (!form.branch || !form.date) {
+    // Also keyed off the active tab's own date — a Person on a different
+    // date needs that day's existing bookings checked, not the Main
+    // Client's.
+    if (!form.branch || !activeDate) {
       setExistingAppointments([]);
       setAvailabilityStatus("idle");
       if (!form.isReschedule) setRescheduleBooking(null);
@@ -4295,7 +4635,7 @@ function WalkInPage() {
     setExistingAppointments([]);
 
     fetch(
-      `/api/appointments?date=${encodeURIComponent(form.date)}&locCode=${encodeURIComponent(form.branch)}`,
+      `/api/appointments?date=${encodeURIComponent(activeDate)}&locCode=${encodeURIComponent(form.branch)}`,
     )
       .then(async (response) => {
         const json = await response.json();
@@ -4330,7 +4670,7 @@ function WalkInPage() {
     return () => {
       active = false;
     };
-  }, [form.branch, form.date, form.bookingID, form.isReschedule]);
+  }, [form.branch, activeDate, form.bookingID, form.isReschedule]);
 
   useEffect(() => {
     if (!form.branch) {
@@ -4394,8 +4734,6 @@ function WalkInPage() {
       setActiveTab("main");
   }, [form.subClients, activeTab]);
 
-  const isMain = activeTab === "main";
-  const activeSub = form.subClients.find((sc) => sc.id === activeTab) ?? null;
   const tabCat1 = isMain
     ? form.activeCategoryCode
     : (activeSub?.activeCategoryCode ?? "");
@@ -4455,6 +4793,8 @@ function WalkInPage() {
   const availabilityRequirements: AvailabilityRequirement[] = [
     {
       id: "main",
+      label: "Main Client",
+      date: form.date,
       timeSlot: form.timeSlot,
       categories: form.isReschedule
         ? rescheduleCategories.length > 0
@@ -4474,6 +4814,8 @@ function WalkInPage() {
     },
     ...form.subClients.map((subClient) => ({
       id: subClient.id,
+      label: subClient.label,
+      date: subClient.date || form.date,
       timeSlot: subClient.timeSlot,
       categories: services
         .filter((service) =>
@@ -4521,6 +4863,8 @@ function WalkInPage() {
         slot,
         calculateSlotAvailability({
           slot,
+          date: isMain ? form.date : (activeSub?.date || form.date),
+          label: isMain ? "Main Client" : (activeSub?.label ?? "This guest"),
           categories: tabAvailabilityCategories,
           workloads: tabAvailabilityWorkloads,
           selectedProviders: tabSelectedProviders,
@@ -4536,7 +4880,7 @@ function WalkInPage() {
           additionalRequirements: additionalAvailabilityRequirements,
         }),
       ]),
-    ) as Record<string, boolean>;
+    ) as Record<string, SlotAvailabilityResult>;
   }, [
     candidateTimeSlots,
     branchHours,
@@ -4544,6 +4888,8 @@ function WalkInPage() {
     tabAvailabilityWorkloads,
     tabAvailabilityStatus,
     tabSelectedProviders,
+    isMain,
+    activeSub,
     form.prefilledTechID,
     form.branch,
     form.isReschedule,
@@ -4670,6 +5016,7 @@ function WalkInPage() {
           gender: "",
           selectedServices: [],
           timeSlot: "",
+          date: "",
           activeCategoryCode: firstCat,
           activeSubCat2: "",
           activeSubCat3: "",
@@ -4791,68 +5138,88 @@ function WalkInPage() {
             return true;
           });
         };
-        const payload = {
-          locCode: form.branch,
-          regTel: form.phoneNumber.trim(),
-          cusName: form.fullName.trim(),
-          cusEmail: form.emailAddress?.trim() || undefined,
-          gender: form.gender || undefined,
-          /* whatever the front desk picked in the header box — the API reads
-             the same column to decide CONFIRMED (walk-in) vs PENDING */
-          bookingTypeID: form.bookingTypeID || "WALKIN",
-          status: "PENDING",
-          confirmationType: form.bookingTypeID && !isWalkInMode ? "AP" : "WI",
-          remarks: form.specialRequest || undefined,
-          appointmentDate: form.date,
-          guests: [
-            {
-              guessID: "MAIN",
-              label: "Main Client",
-              gender: form.gender,
-              timeSlot: form.timeSlot,
-              services: uniqueSelected(form.selectedServices)
-                .map((s) => ({
-                  serviceItemID: s.itemCode,
-                  qty: 1,
-                  itemPrice: s.price,
-                  techID:
-                    form.providers.find(
-                      (gp) =>
-                        gp.guessID === "MAIN" &&
-                        s.category1?.trim() === gp.categoryCode,
-                    )?.techID ||
-                    resolvedPrefilledTechID ||
-                    "0",
-                })),
-            },
-            ...form.subClients.map((sc) => ({
-              guessID: sc.guessID,
-              label: sc.label,
-              gender: sc.gender,
-              timeSlot: sc.timeSlot,
-              services: uniqueSelected(sc.selectedServices)
-                .map((s) => ({
-                  serviceItemID: s.itemCode,
-                  qty: 1,
-                  itemPrice: s.price,
-                  techID:
-                    sc.providers.find(
-                      (gp) =>
-                        gp.guessID === sc.guessID &&
-                        s.category1?.trim() === gp.categoryCode,
-                    )?.techID || "0",
-                })),
+        // Every guest carries their own effective date (a Person's own
+        // override, or the Main Client's date when they are still following
+        // it). The backend stores one calendar date per BookingID, so guests
+        // on a different day than the Main Client cannot share the Main
+        // Client's booking — they are submitted as their own separate
+        // booking, grouped by date, in one go from this one screen.
+        const allGuests = [
+          {
+            guessID: "MAIN",
+            label: "Main Client",
+            gender: form.gender,
+            timeSlot: form.timeSlot,
+            date: form.date,
+            services: uniqueSelected(form.selectedServices).map((s) => ({
+              serviceItemID: s.itemCode,
+              qty: 1,
+              itemPrice: s.price,
+              techID:
+                form.providers.find(
+                  (gp) =>
+                    gp.guessID === "MAIN" &&
+                    s.category1?.trim() === gp.categoryCode,
+                )?.techID ||
+                resolvedPrefilledTechID ||
+                "0",
             })),
-          ],
-        };
-        const res = await fetch("/api/appointmentform", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
+          },
+          ...form.subClients.map((sc) => ({
+            guessID: sc.guessID,
+            label: sc.label,
+            gender: sc.gender,
+            timeSlot: sc.timeSlot,
+            date: sc.date || form.date,
+            services: uniqueSelected(sc.selectedServices).map((s) => ({
+              serviceItemID: s.itemCode,
+              qty: 1,
+              itemPrice: s.price,
+              techID:
+                sc.providers.find(
+                  (gp) =>
+                    gp.guessID === sc.guessID &&
+                    s.category1?.trim() === gp.categoryCode,
+                )?.techID || "0",
+            })),
+          })),
+        ];
+
+        const guestsByDate = new Map<string, typeof allGuests>();
+        allGuests.forEach((guest) => {
+          const list = guestsByDate.get(guest.date) || [];
+          list.push(guest);
+          guestsByDate.set(guest.date, list);
         });
-        const json = await res.json();
-        if (!json.success) throw new Error(json.error || "Booking failed");
-        setRefNumber(json.data.refNumber ?? json.data.bookingID);
+
+        const bookingRefs: string[] = [];
+        for (const [groupDate, guests] of guestsByDate) {
+          const payload = {
+            locCode: form.branch,
+            regTel: form.phoneNumber.trim(),
+            cusName: form.fullName.trim(),
+            cusEmail: form.emailAddress?.trim() || undefined,
+            gender: form.gender || undefined,
+            /* whatever the front desk picked in the header box — the API
+               reads the same column to decide CONFIRMED (walk-in) vs
+               PENDING */
+            bookingTypeID: form.bookingTypeID || "WALKIN",
+            status: "PENDING",
+            confirmationType: form.bookingTypeID && !isWalkInMode ? "AP" : "WI",
+            remarks: form.specialRequest || undefined,
+            appointmentDate: groupDate,
+            guests: guests.map(({ date: _date, ...guest }) => guest),
+          };
+          const res = await fetch("/api/appointmentform", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const json = await res.json();
+          if (!json.success) throw new Error(json.error || "Booking failed");
+          bookingRefs.push(json.data.refNumber ?? json.data.bookingID);
+        }
+        setRefNumber(bookingRefs.join(", "));
       }
       setShowPreview(false);
       setShowSuccess(true);
@@ -5653,6 +6020,7 @@ function WalkInPage() {
                               isMain
                               submitted={submitted}
                               errorMsg={errors.selectedServices}
+                              clientGender={form.gender}
                             />
                           ) : (
                             activeSub && (
@@ -5680,6 +6048,7 @@ function WalkInPage() {
                                   handleSubCat(activeSub.id, "activeSubCat4", c)
                                 }
                                 onToggleService={handleTabToggleSvc}
+                                clientGender={activeSub.gender}
                               />
                             )
                           )}
@@ -5808,66 +6177,119 @@ function WalkInPage() {
                   icon={<Ico.Cal />}
                   title="Appointment Date & Time"
                 >
+                  {!form.isReschedule && (
+                    <div className="cli-bar" style={{ marginBottom: 16 }}>
+                      <button
+                        type="button"
+                        className={`cli-tab ${activeTab === "main" ? "active" : ""}`}
+                        onClick={() => setActiveTab("main")}
+                      >
+                        {form.timeSlot && <span className="cli-dot" />}
+                        <Ico.Person /> Main Client
+                        {form.timeSlot && (
+                          <span className="cli-badge">✓</span>
+                        )}
+                      </button>
+                      {form.subClients.map((sc) => (
+                        <button
+                          type="button"
+                          key={sc.id}
+                          className={`cli-tab ${activeTab === sc.id ? "active" : ""}`}
+                          onClick={() => setActiveTab(sc.id)}
+                        >
+                          {sc.timeSlot && <span className="cli-dot" />}
+                          {sc.gender === "Female" && <Ico.Female />}
+                          {sc.gender === "Male" && <Ico.Male />}
+                          {sc.label}
+                          {sc.timeSlot && (
+                            <span className="cli-badge">✓</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div style={{ marginBottom: 22 }}>
                     <label className="lbl">
-                      Select Date <span className="req">*</span>
+                      Select Date{" "}
+                      {!isMain && activeSub ? `for ${activeSub.label}` : ""}
+                      {isMain && <span className="req"> *</span>}
+                      {!isMain && !activeSub?.date && (
+                        <span
+                          style={{
+                            marginLeft: 8,
+                            fontSize: 10,
+                            fontWeight: 600,
+                            color: "#6b7280",
+                            textTransform: "none",
+                          }}
+                        >
+                          (following Main Client&rsquo;s date)
+                        </span>
+                      )}
                     </label>
                     <DatePicker
-                      value={form.date}
+                      value={isMain ? form.date : (activeSub?.date || form.date)}
                       minDate={currentMinDate}
-                      hasError={submitted && !!errors.date}
+                      hasError={isMain && submitted && !!errors.date}
                       onChange={(v) => {
-                        setForm((f) => ({
-                          ...f,
-                          date: v,
-                          timeSlot: "",
-                          subClients: f.subClients.map((sc) => ({
-                            ...sc,
+                        if (isMain) {
+                          setForm((f) => ({
+                            ...f,
+                            date: v,
                             timeSlot: "",
-                          })),
-                        }));
-                        clrErr("date");
-                        clrErr("timeSlot");
+                            // Only clear a Person's time if they are still
+                            // following the Main Client's date. One who
+                            // already has their own date override keeps
+                            // their own time — the Main Client's date
+                            // change does not touch their already-separate
+                            // day.
+                            subClients: f.subClients.map((sc) =>
+                              sc.date ? sc : { ...sc, timeSlot: "" },
+                            ),
+                          }));
+                          clrErr("date");
+                          clrErr("timeSlot");
+                        } else if (activeSub) {
+                          updateSub(activeSub.id, {
+                            ...activeSub,
+                            date: v,
+                            timeSlot: "",
+                          });
+                        }
                       }}
                     />
-                    <ErrMsg msg={errors.date} />
+                    {isMain && <ErrMsg msg={errors.date} />}
+                    {!isMain && activeSub?.date && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateSub(activeSub.id, {
+                            ...activeSub,
+                            date: "",
+                            timeSlot: "",
+                          })
+                        }
+                        style={{
+                          marginTop: 6,
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: "#1e3a40",
+                          textDecoration: "underline",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Use Main Client&rsquo;s date instead
+                      </button>
+                    )}
                   </div>
                   <div>
                     <label className="lbl" style={{ marginBottom: 10 }}>
                       Time Slots <span className="req">*</span>
                     </label>
-                    {!form.isReschedule && (
-                      <div className="cli-bar" style={{ marginBottom: 16 }}>
-                        <button
-                          type="button"
-                          className={`cli-tab ${activeTab === "main" ? "active" : ""}`}
-                          onClick={() => setActiveTab("main")}
-                        >
-                          {form.timeSlot && <span className="cli-dot" />}
-                          <Ico.Person /> Main Client
-                          {form.timeSlot && (
-                            <span className="cli-badge">✓</span>
-                          )}
-                        </button>
-                        {form.subClients.map((sc) => (
-                          <button
-                            type="button"
-                            key={sc.id}
-                            className={`cli-tab ${activeTab === sc.id ? "active" : ""}`}
-                            onClick={() => setActiveTab(sc.id)}
-                          >
-                            {sc.timeSlot && <span className="cli-dot" />}
-                            {sc.gender === "Female" && <Ico.Female />}
-                            {sc.gender === "Male" && <Ico.Male />}
-                            {sc.label}
-                            {sc.timeSlot && (
-                              <span className="cli-badge">✓</span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {!form.date ? (
+                    {!activeDate ? (
                       <div
                         style={{
                           background: "#d4e8ea",
@@ -5889,6 +6311,7 @@ function WalkInPage() {
                           }}
                         >
                           Select a date above to unlock time slots.
+
                         </p>
                       </div>
                     ) : (
@@ -5907,7 +6330,13 @@ function WalkInPage() {
                             !form.timeSlot
                           }
                           clientLabel={
-                            isMain ? "Main Client" : (activeSub?.label ?? "")
+                            isMain
+                              ? "Main Client"
+                              : `${activeSub?.label ?? ""}${
+                                  activeSub?.date && activeSub.date !== form.date
+                                    ? ` · ${fmtDateLong(activeSub.date)}`
+                                    : ""
+                                }`
                           }
                           availability={tabAvailability}
                           availabilityStatus={tabAvailabilityStatus}

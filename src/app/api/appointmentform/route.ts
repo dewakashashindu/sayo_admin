@@ -18,6 +18,8 @@ import {
 } from "@/lib/technicianSpecialities";
 import { loadCompanyDay, loadStaffDays, resolveStaffWindow } from "@/lib/dayHours";
 import { clockInSpan } from "@/lib/operatingHours";
+import { genderFromMof } from "@/lib/genderOptions";
+import { ensureLocationExtras } from "@/lib/locationExtras";
 import {
   planBookingServiceWindows,
   providerWindowsOverlap,
@@ -695,6 +697,10 @@ export async function GET(req: NextRequest) {
 
   try {
     if (type === "branches") {
+      // The booking screen only ever offers MAIN locations — a sub location
+      // (a counter/unit filed under a main branch via MainLocCode) is not a
+      // place a client books into directly, so it is left off this list.
+      await ensureLocationExtras();
       const branchRows = await prisma.$queryRaw<
         { LocCode: string; LocDes: string; Address: string | null }[]
       >`
@@ -704,6 +710,7 @@ export async function GET(req: NextRequest) {
           RTRIM(Address) AS Address
         FROM tbl_LocationMaster
         WHERE Enable = 1
+          AND SubLoc = 0
         ORDER BY LocDes ASC
       `;
 
@@ -778,6 +785,7 @@ export async function GET(req: NextRequest) {
           ItemPrintDes: true,
           Retailprice: true,
           SerDuration: true,
+          MOF: true,
         },
         orderBy: { ItemDes: "asc" },
       });
@@ -829,6 +837,10 @@ export async function GET(req: NextRequest) {
             itemPrintDes: s.ItemPrintDes?.trim() || itemDes,
             price: Number(s.Retailprice ?? 0),
             durationMin: Number(s.SerDuration) > 0 ? Number(s.SerDuration) : 30,
+            /* 'male' | 'female' | 'other' — tbl_itemmaster.MOF, same mapping
+               the public booking page already uses. 'other' means unisex:
+               shown to every client regardless of gender. */
+            gender: genderFromMof(s.MOF),
             /* category1 IS the speciality now: the panel below already keys
                its tabs and its filter off this one field, so reusing it keeps
                the change small and the rest of the screen working. */

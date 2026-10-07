@@ -30,6 +30,7 @@ import {
   isTechnicianAppointment,
   type TechAppointment,
 } from "@/lib/technicianSample";
+import { loadStaffDays } from "@/lib/dayHours";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -785,6 +786,47 @@ export async function GET(req: NextRequest) {
       console.error("[GET /api/appointments?meta=filters]", err);
       return NextResponse.json(
         { success: false, error: err?.message || "Failed to load filters" },
+        { status: 500 },
+      );
+    }
+  }
+
+  /* The admin appointment form's "Assign Technicians" and "Appointment Date
+     & Time" steps both need to know each technician's shift windows for the
+     selected day — this is what used to be a 404-shaped no-op (this branch
+     did not exist, so the request fell through to the booking list below and
+     silently came back without `windowsByTech`). That made every technician
+     look unscheduled, which in turn made every time slot look unavailable.
+     `loadStaffDays` already powers the exact same check on the public
+     booking page, so reuse it instead of re-deriving shift logic here. */
+  if (searchParams.get("meta") === "staff-hours") {
+    if (!requestedDate || !locCode) {
+      return NextResponse.json(
+        { success: false, error: "date and locCode are required." },
+        { status: 400 },
+      );
+    }
+    try {
+      const staffDays = await loadStaffDays(requestedDate, locCode);
+      const windowsByTech: Record<
+        string,
+        { startMin: number; closeMin: number }[]
+      > = {};
+      for (const [staffId, day] of staffDays) {
+        // Keep staff with zero windows out of the payload too (off/leave/no
+        // roster row) — the caller already treats "no entry" and "entry with
+        // an empty array" the same way, so this just keeps the response small.
+        if (day.windows.length === 0) continue;
+        windowsByTech[staffId] = day.windows.map((w) => ({
+          startMin: w.startMin,
+          closeMin: w.closeMin,
+        }));
+      }
+      return NextResponse.json({ success: true, windowsByTech });
+    } catch (err: any) {
+      console.error("[GET /api/appointments?meta=staff-hours]", err);
+      return NextResponse.json(
+        { success: false, error: err?.message || "Failed to load technician shifts" },
         { status: 500 },
       );
     }

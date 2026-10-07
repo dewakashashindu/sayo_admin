@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { genderFromMof, type GenderValue } from '@/lib/genderOptions';
+import { ensureLocationExtras } from '@/lib/locationExtras';
 import {
   itemSpecKey,
   itemSpecMap,
@@ -76,10 +77,14 @@ interface CatalogProvider {
 
 export async function GET() {
   try {
+    await ensureLocationExtras();
     const [locations, items, users, specialities, assignments, itemSpecs] =
       await Promise.all([
+        // Only MAIN locations are offered to a customer booking online — a
+        // sub location (a counter/unit filed under a main branch) is not a
+        // place anyone books into directly.
         prisma.tbl_LocationMaster.findMany({
-          where: { Enable: true },
+          where: { Enable: true, SubLoc: false },
           orderBy: { LocCode: 'asc' },
         }),
         // ServiceItem = 1 only: this is the booking page, so physical stock
