@@ -5593,7 +5593,11 @@ function WalkInPage() {
         await patchBooking({
           date: form.date,
           timeSlot: form.timeSlot,
-          ...(resolvedPrefilledTechID
+          // A group booking can have different technicians per service.
+          // Do not pass the single calendar technician here, because the API
+          // treats techID as a whole-booking reassignment and would overwrite
+          // every service row with that one technician.
+          ...(!groupGuests && resolvedPrefilledTechID
             ? { techID: resolvedPrefilledTechID }
             : {}),
         });

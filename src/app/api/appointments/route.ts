@@ -1563,6 +1563,11 @@ export async function PATCH(req: NextRequest) {
       const allBookingGuestIDs = [
         ...new Set(selfDetails.map((d) => trimValue(d.GuessID).toUpperCase())),
       ];
+      if (status === "ONGOING" && guestIDs.length === 0) {
+        throw new BookingValidationError(
+          "Check-in must specify a guest.",
+        );
+      }
       const movingSubset =
         requestedGuestSet.size > 0 &&
         allBookingGuestIDs.some((id) => !requestedGuestSet.has(id));

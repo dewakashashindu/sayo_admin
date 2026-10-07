@@ -1649,11 +1649,14 @@ function guestGroupsFromSchedule(appointment: Appointment): {
 }[] {
   const schedule = appointment.serviceSchedule ?? [];
   const ids = Array.from(
-    new Set(
-      schedule.map(
+    new Set([
+      ...appointment.guests
+        .map((guest) => guest.trim().toUpperCase())
+        .filter(Boolean),
+      ...schedule.map(
         (service) => (service.guessID ?? "").trim().toUpperCase() || "MAIN",
       ),
-    ),
+    ]),
   );
 
   return ids
@@ -1738,6 +1741,9 @@ function ServiceScheduleModal({
 
   const toggle = (id: string) => {
     setSelected((prev) => {
+      if (action === "checkin") {
+        return prev.has(id) ? new Set() : new Set([id]);
+      }
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -1874,26 +1880,28 @@ function ServiceScheduleModal({
             {isReschedule ? " time" : " status"}.
           </p>
 
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 12,
-              fontWeight: 700,
-              color: "#1e3a40",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={allSelected}
-              onChange={() =>
-                setSelected(allSelected ? new Set() : new Set(allIds))
-              }
-            />
-            Select all
-          </label>
+          {action !== "checkin" && (
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: 12,
+                fontWeight: 700,
+                color: "#1e3a40",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={() =>
+                  setSelected(allSelected ? new Set() : new Set(allIds))
+                }
+              />
+              Select all
+            </label>
+          )}
 
           <div
             style={{
@@ -3448,19 +3456,35 @@ export default function AppointmentsPage() {
     kind: "checkin" | "cancel" | "reschedule";
   } | null>(null);
 
-  // Cancel / Check In from the detail modal: a single-guest booking acts
-  // immediately exactly as before. A multi-guest booking opens the Service
-  // Schedule picker first so the admin names which guest(s) are affected —
-  // this is what stops checking in the 12:30 PM guest from also checking in
-  // the 5:00 PM guest filed under the same BookingID.
+  // Cancel / Check In from the detail modal: check-in always names an
+  // explicit guest, even for a booking that currently renders only one
+  // schedule group. This prevents a missing/incomplete schedule projection
+  // from falling back to a whole-booking CheckInTime update.
   const requestGuestScopedAction = useCallback(
     (appointment: Appointment, status: "ongoing" | "cancelled") => {
       const groups = guestGroupsFromSchedule(appointment);
+      if (status === "ongoing") {
+        if (groups.length > 1) {
+          setScheduleAction({ appointment, kind: "checkin" });
+          return;
+        }
+        const firstGuestID =
+          groups[0]?.guessID ||
+          appointment.guests[0]?.trim().toUpperCase() ||
+          "MAIN";
+        void handleStatusChange(
+          appointment.bookingID,
+          appointment.locCode,
+          status,
+          [firstGuestID],
+        );
+        return;
+      }
       if (groups.length <= 1) {
         void handleStatusChange(appointment.bookingID, appointment.locCode, status);
         return;
       }
-      setScheduleAction({ appointment, kind: status === "ongoing" ? "checkin" : "cancel" });
+      setScheduleAction({ appointment, kind: "cancel" });
     },
     [handleStatusChange],
   );
