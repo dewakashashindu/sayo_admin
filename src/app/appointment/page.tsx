@@ -1631,10 +1631,369 @@ function InfoBox({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** One row per distinct guest on the booking, with that guest's own time
+ * window (earliest service start → latest service end) and service list.
+ * A group booking files Check In / Cancel per guest in the database — this
+ * is what lets the "Service Schedule" picker act on just one guest instead
+ * of the whole BookingID. */
+function guestGroupsFromSchedule(appointment: Appointment): {
+  guessID: string;
+  label: string;
+  services: ServiceSchedule[];
+  startMin: number;
+  endMin: number;
+  startTime: string;
+  endTime: string;
+}[] {
+  const schedule = appointment.serviceSchedule ?? [];
+  const ids = Array.from(
+    new Set(
+      schedule.map(
+        (service) => (service.guessID ?? "").trim().toUpperCase() || "MAIN",
+      ),
+    ),
+  );
+
+  return ids
+    .map((id, index) => {
+      const services = schedule.filter(
+        (service) =>
+          ((service.guessID ?? "").trim().toUpperCase() || "MAIN") === id,
+      );
+      const starts = services
+        .map((service) => parseSlotToMinutes(service.startTime))
+        .filter((min) => min >= 0);
+      const ends = services
+        .map((service) => parseSlotToMinutes(service.endTime))
+        .filter((min) => min >= 0);
+      const startMin = starts.length > 0 ? Math.min(...starts) : -1;
+      const endMin = ends.length > 0 ? Math.max(...ends) : -1;
+
+      return {
+        guessID: id,
+        label: id === "MAIN" ? "Main client" : `Guest ${index + 1}`,
+        services,
+        startMin,
+        endMin,
+        startTime: services[0]?.startTime || appointment.timeSlot,
+        endTime: services[services.length - 1]?.endTime || "",
+      };
+    })
+    .sort((a, b) => a.startMin - b.startMin);
+}
+
+/** Opens before Check In / Cancel on a multi-guest booking so the action can
+ * target just the guest(s) whose time has actually arrived, instead of
+ * flipping every guest filed under the same BookingID at once. */
+function ServiceScheduleModal({
+  appointment,
+  action,
+  dayHours,
+  onClose,
+  onConfirm,
+  onRescheduleFull,
+  onReschedulePartial,
+}: {
+  appointment: Appointment;
+  action: "checkin" | "cancel" | "reschedule";
+  dayHours?: { open: boolean; startMin: number; closeMin: number } | null;
+  onClose: () => void;
+  onConfirm: (guestIDs: string[]) => void;
+  onRescheduleFull?: (appointment: Appointment) => void;
+  onReschedulePartial?: (guestIDs: string[], timeSlot: string) => void;
+}) {
+  const groups = useMemo(
+    () => guestGroupsFromSchedule(appointment),
+    [appointment],
+  );
+  const isToday = appointment.date === todayISO();
+  const isReschedule = action === "reschedule";
+
+  const [selected, setSelected] = useState<Set<string>>(() => {
+    if (action !== "checkin" || !isToday) return new Set<string>();
+    const now = nowMinutes();
+    const active = groups.filter(
+      (group) =>
+        group.startMin >= 0 && group.endMin > group.startMin &&
+        now >= group.startMin && now < group.endMin,
+    );
+    if (active.length > 0) return new Set(active.map((group) => group.guessID));
+    const upcoming = [...groups]
+      .filter((group) => group.startMin >= now)
+      .sort((a, b) => a.startMin - b.startMin)[0];
+    return upcoming ? new Set([upcoming.guessID]) : new Set<string>();
+  });
+  const [step, setStep] = useState<"guests" | "time">("guests");
+  const [timeSlot, setTimeSlot] = useState("");
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allIds = groups.map((group) => group.guessID);
+  const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
+  const actionLabel = action === "checkin" ? "Check In" : action === "cancel" ? "Cancel" : "Reschedule";
+  const actionVerb = action === "checkin" ? "check in" : action === "cancel" ? "cancel" : "reschedule";
+
+  const timeOptions = useMemo(() => {
+    if (!dayHours?.open) return [];
+    const opts: string[] = [];
+    for (let m = dayHours.startMin; m < dayHours.closeMin; m += 30) {
+      opts.push(minutesToSlotLabel(m));
+    }
+    return opts;
+  }, [dayHours]);
+
+  const handlePrimary = () => {
+    if (!isReschedule) {
+      onConfirm(Array.from(selected));
+      return;
+    }
+    if (allSelected) {
+      // Moving everyone is the normal whole-booking reschedule — hand off to
+      // the full Reschedule page, which has the complete availability grid.
+      onRescheduleFull?.(appointment);
+      return;
+    }
+    setStep("time");
+  };
+
+  if (isReschedule && step === "time") {
+    return (
+      <div className="modal-bg" onClick={onClose}>
+        <div
+          className="modal-box slide-up"
+          onClick={(event) => event.stopPropagation()}
+          style={{ maxWidth: 420 }}
+        >
+          <ModalHeader
+            title={`Booking ${appointment.bookingID}`}
+            subtitle="New time for selected guests"
+            onClose={onClose}
+          />
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              padding: "18px 20px 24px",
+            }}
+          >
+            <p style={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+              Pick a new time on {fmtDateLong(appointment.date)} for{" "}
+              {selected.size} selected guest{selected.size > 1 ? "s" : ""}.
+              Everyone else on this booking keeps their current time. The
+              salon's hours and the technician's shift are checked again when
+              you save.
+            </p>
+            <select
+              value={timeSlot}
+              onChange={(event) => setTimeSlot(event.target.value)}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 9,
+                border: "1.5px solid #c0cbcc",
+                fontSize: 13,
+                fontFamily: "inherit",
+                color: "#1e3a40",
+              }}
+            >
+              <option value="">Select a time…</option>
+              {timeOptions.map((slot) => (
+                <option key={slot} value={slot}>
+                  {slot}
+                </option>
+              ))}
+            </select>
+            <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+              <button
+                type="button"
+                className="btn-modal-cancel"
+                style={{ flex: 1, justifyContent: "center" }}
+                onClick={() => setStep("guests")}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                className="btn-modal-reschedule"
+                style={{ flex: 1, justifyContent: "center" }}
+                disabled={!timeSlot}
+                onClick={() => onReschedulePartial?.(Array.from(selected), timeSlot)}
+              >
+                Reschedule ({selected.size})
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-bg" onClick={onClose}>
+      <div
+        className="modal-box slide-up"
+        onClick={(event) => event.stopPropagation()}
+        style={{ maxWidth: 480 }}
+      >
+        <ModalHeader
+          title={`Booking ${appointment.bookingID}`}
+          subtitle="Service Schedule"
+          onClose={onClose}
+        />
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+            padding: "18px 20px 24px",
+          }}
+        >
+          <p style={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+            This booking has {groups.length} guests at different times. Pick
+            who to {actionVerb} — everyone else keeps their current
+            {isReschedule ? " time" : " status"}.
+          </p>
+
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#1e3a40",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={() =>
+                setSelected(allSelected ? new Set() : new Set(allIds))
+              }
+            />
+            Select all
+          </label>
+
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+              maxHeight: 340,
+              overflowY: "auto",
+            }}
+          >
+            {groups.map((group) => {
+              const isChecked = selected.has(group.guessID);
+              return (
+                <label
+                  key={group.guessID}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 10,
+                    padding: "10px 12px",
+                    border: isChecked
+                      ? "1.5px solid #1e3a40"
+                      : "1.5px solid #e5eaeb",
+                    borderRadius: 10,
+                    background: isChecked ? "rgba(30,58,64,.05)" : "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={() => toggle(group.guessID)}
+                    style={{ marginTop: 2 }}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 8,
+                      }}
+                    >
+                      <span
+                        style={{ fontWeight: 700, fontSize: 13, color: "#1e3a40" }}
+                      >
+                        {group.label}
+                      </span>
+                      <span
+                        style={{
+                          fontWeight: 700,
+                          fontSize: 12,
+                          color: "#1e3a40",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {group.startTime}
+                        {group.endTime ? ` – ${group.endTime}` : ""}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                      {Array.from(
+                        new Set(group.services.map((service) => service.serviceName)),
+                      ).join(", ")}
+                    </div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+
+          {isReschedule && !allSelected && selected.size > 0 && (
+            <p style={{ fontSize: 11, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px" }}>
+              Moving only {selected.size} of {groups.length} guests keeps this
+              on the same date ({fmtDateLong(appointment.date)}) — only the
+              time can change here. To move a guest to a different date,
+              reschedule the whole booking instead.
+            </p>
+          )}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+            <button
+              type="button"
+              className="btn-modal-cancel"
+              style={{ flex: 1, justifyContent: "center" }}
+              onClick={onClose}
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              className={action === "checkin" ? "btn-modal-checkin" : action === "cancel" ? "btn-modal-cancel" : "btn-modal-reschedule"}
+              style={{ flex: 1, justifyContent: "center" }}
+              disabled={selected.size === 0}
+              onClick={handlePrimary}
+            >
+              {isReschedule
+                ? allSelected
+                  ? "Continue"
+                  : `Pick a time (${selected.size})`
+                : `${actionLabel} (${selected.size})`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DetailModal({
   appointment,
   onClose,
   onStatusChange,
+  onRequestAction,
   onGoToBill,
   onReschedule,
   canCancel = true,
@@ -1647,6 +2006,13 @@ function DetailModal({
     id: string,
     locCode: string,
     status: Appointment["status"],
+  ) => void;
+  /** Cancel / Check In go through this instead of onStatusChange directly —
+   * on a multi-guest booking the caller opens the Service Schedule picker
+   * first so the action only ever touches the chosen guest(s). */
+  onRequestAction: (
+    appointment: Appointment,
+    status: "cancelled" | "ongoing",
   ) => void;
   onGoToBill: (appointment: Appointment) => void;
   onReschedule: (appointment: Appointment) => void;
@@ -1954,7 +2320,7 @@ function DetailModal({
                   type="button"
                   style={{ flex: "1 1 140px", justifyContent: "center" }}
                   onClick={() => {
-                    onStatusChange(appointment.bookingID, appointment.locCode, "cancelled");
+                    onRequestAction(appointment, "cancelled");
                     onClose();
                   }}
                 >
@@ -1980,7 +2346,7 @@ function DetailModal({
                   type="button"
                   style={{ flex: "1 1 140px", justifyContent: "center" }}
                   onClick={() => {
-                    onStatusChange(appointment.bookingID, appointment.locCode, "ongoing");
+                    onRequestAction(appointment, "ongoing");
                     onClose();
                   }}
                 >
@@ -2952,62 +3318,76 @@ export default function AppointmentsPage() {
       bookingID: string,
       locCode: string,
       status: Appointment["status"],
+      guestIDs?: string[],
     ) => {
-      setAppointments((current) =>
-        current.map((appointment) => {
-          if (
-            bookingIdentity(appointment.bookingID, appointment.locCode) !==
-            bookingIdentity(bookingID, locCode)
-          )
-            return appointment;
+      // A guest-scoped action (from the Service Schedule picker) can leave
+      // the booking's other guests in a different state than the one just
+      // applied, so the card's overall status has to come back from the
+      // server's own derivation instead of being guessed optimistically here.
+      const isPartial = Array.isArray(guestIDs) && guestIDs.length > 0;
 
-          const now = new Date().toISOString();
-          if (status === "confirmed") {
-            return {
-              ...appointment,
-              status,
-              confirmed: true,
-              confirmedBy: "ADMIN",
-              confirmedDate: now,
-              cancelledBy: "",
-              cancelledDate: null,
-            };
-          }
-          if (status === "cancelled") {
+      if (!isPartial) {
+        setAppointments((current) =>
+          current.map((appointment) => {
+            if (
+              bookingIdentity(appointment.bookingID, appointment.locCode) !==
+              bookingIdentity(bookingID, locCode)
+            )
+              return appointment;
+
+            const now = new Date().toISOString();
+            if (status === "confirmed") {
+              return {
+                ...appointment,
+                status,
+                confirmed: true,
+                confirmedBy: "ADMIN",
+                confirmedDate: now,
+                cancelledBy: "",
+                cancelledDate: null,
+              };
+            }
+            if (status === "cancelled") {
+              return {
+                ...appointment,
+                status,
+                confirmed: false,
+                confirmedBy: "",
+                confirmedDate: null,
+                cancelledBy: "ADMIN",
+                cancelledDate: now,
+              };
+            }
+            if (status === "ongoing") {
+              return {
+                ...appointment,
+                status,
+                confirmed: true,
+                cancelledBy: "",
+                cancelledDate: null,
+              };
+            }
             return {
               ...appointment,
               status,
               confirmed: false,
               confirmedBy: "",
               confirmedDate: null,
-              cancelledBy: "ADMIN",
-              cancelledDate: now,
-            };
-          }
-          if (status === "ongoing") {
-            return {
-              ...appointment,
-              status,
-              confirmed: true,
               cancelledBy: "",
               cancelledDate: null,
             };
-          }
-          return {
-            ...appointment,
-            status,
-            confirmed: false,
-            confirmedBy: "",
-            confirmedDate: null,
-            cancelledBy: "",
-            cancelledDate: null,
-          };
-        }),
-      );
+          }),
+        );
+      }
+
       const labels: Record<string, string> = {
         confirmed: "Appointment confirmed",
-        cancelled: "Appointment cancelled",
-        ongoing: "Client checked in",
+        cancelled: isPartial
+          ? `Cancelled for ${guestIDs!.length} guest${guestIDs!.length > 1 ? "s" : ""}`
+          : "Appointment cancelled",
+        ongoing: isPartial
+          ? `Checked in ${guestIDs!.length} guest${guestIDs!.length > 1 ? "s" : ""}`
+          : "Client checked in",
         done: "Work completed — ready to bill",
       };
       showToast(
@@ -3023,16 +3403,76 @@ export default function AppointmentsPage() {
             bookingID,
             locCode,
             status,
+            ...(isPartial ? { guessIDs: guestIDs } : {}),
           }),
         });
         const json = await response.json();
         if (!json.success) {
           await fetchAppointments(date, true);
-          showToast("Failed to update status", "error");
+          showToast(json.error || "Failed to update status", "error");
+        } else if (isPartial) {
+          // No optimistic guess was applied above — pull the server's
+          // derived per-booking status now that the write has landed.
+          await fetchAppointments(date, true);
         }
       } catch {
         await fetchAppointments(date, true);
         showToast("Network error — status not saved", "error");
+      }
+    },
+    [date, fetchAppointments, showToast],
+  );
+
+  const [scheduleAction, setScheduleAction] = useState<{
+    appointment: Appointment;
+    kind: "checkin" | "cancel" | "reschedule";
+  } | null>(null);
+
+  // Cancel / Check In from the detail modal: a single-guest booking acts
+  // immediately exactly as before. A multi-guest booking opens the Service
+  // Schedule picker first so the admin names which guest(s) are affected —
+  // this is what stops checking in the 12:30 PM guest from also checking in
+  // the 5:00 PM guest filed under the same BookingID.
+  const requestGuestScopedAction = useCallback(
+    (appointment: Appointment, status: "ongoing" | "cancelled") => {
+      const groups = guestGroupsFromSchedule(appointment);
+      if (groups.length <= 1) {
+        void handleStatusChange(appointment.bookingID, appointment.locCode, status);
+        return;
+      }
+      setScheduleAction({ appointment, kind: status === "ongoing" ? "checkin" : "cancel" });
+    },
+    [handleStatusChange],
+  );
+
+  // Partial (named-guest) time-only reschedule, saved straight from the
+  // Service Schedule picker — no navigation to the full Reschedule page.
+  const handlePartialReschedule = useCallback(
+    async (appointment: Appointment, guestIDs: string[], timeSlot: string) => {
+      try {
+        const response = await fetch("/api/appointments", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bookingID: appointment.bookingID,
+            locCode: appointment.locCode,
+            date: appointment.date,
+            timeSlot,
+            guessIDs: guestIDs,
+          }),
+        });
+        const json = await response.json();
+        if (!json.success) {
+          showToast(json.error || "Failed to save reschedule", "error");
+          return;
+        }
+        showToast(
+          `Rescheduled ${guestIDs.length} guest${guestIDs.length > 1 ? "s" : ""} to ${timeSlot}`,
+          "success",
+        );
+        await fetchAppointments(date, true);
+      } catch {
+        showToast("Network error — reschedule not saved", "error");
       }
     },
     [date, fetchAppointments, showToast],
@@ -3186,7 +3626,7 @@ export default function AppointmentsPage() {
         const json = await response.json();
         if (!json.success) {
           await fetchAppointments(date, true);
-          showToast("Failed to save reschedule", "error");
+          showToast(json.error || "Failed to save reschedule", "error");
         }
       } catch {
         await fetchAppointments(date, true);
@@ -3249,6 +3689,23 @@ export default function AppointmentsPage() {
       router.push(`/appointmentform?${params.toString()}`);
     },
     [router],
+  );
+
+  // Reschedule from the detail modal: a single-guest booking goes straight
+  // to the full Reschedule page exactly as before. A multi-guest booking
+  // opens the Service Schedule picker first so the admin can either move
+  // everyone (which also lands on the full page) or just the named guest(s)
+  // to a new time on the same day.
+  const requestReschedule = useCallback(
+    (appointment: Appointment) => {
+      const groups = guestGroupsFromSchedule(appointment);
+      if (groups.length <= 1) {
+        handleReschedule(appointment);
+        return;
+      }
+      setScheduleAction({ appointment, kind: "reschedule" });
+    },
+    [handleReschedule],
   );
 
   const handleGoToBill = useCallback(
@@ -3502,13 +3959,46 @@ export default function AppointmentsPage() {
             setSelected(null);
             void handleStatusChange(id, locCode, status);
           }}
+          onRequestAction={(appointment, status) => {
+            setSelected(null);
+            requestGuestScopedAction(appointment, status);
+          }}
           onGoToBill={handleGoToBill}
-          onReschedule={handleReschedule}
+          onReschedule={requestReschedule}
           canCancel={hasPerm("APPT", "CANCEL_BOOKING")}
           canCheckIn={hasPerm("APPT", "CHECK_IN")}
           canReschedule={hasPerm("APPT", "RESCHEDULE")}
         />
       )}
+
+      {scheduleAction && (
+        <ServiceScheduleModal
+          appointment={scheduleAction.appointment}
+          action={scheduleAction.kind}
+          dayHours={dayHours}
+          onClose={() => setScheduleAction(null)}
+          onConfirm={(guestIDs) => {
+            const action = scheduleAction;
+            setScheduleAction(null);
+            void handleStatusChange(
+              action.appointment.bookingID,
+              action.appointment.locCode,
+              action.kind === "checkin" ? "ongoing" : "cancelled",
+              guestIDs,
+            );
+          }}
+          onRescheduleFull={(appointment) => {
+            setScheduleAction(null);
+            handleReschedule(appointment);
+          }}
+          onReschedulePartial={(guestIDs, timeSlot) => {
+            const action = scheduleAction;
+            setScheduleAction(null);
+            void handlePartialReschedule(action.appointment, guestIDs, timeSlot);
+          }}
+        />
+      )}
+
 
       <div
         style={{

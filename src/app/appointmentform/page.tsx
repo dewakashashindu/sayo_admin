@@ -72,6 +72,11 @@ interface ExistingAppointment {
     providerName: string;
     startTime: string;
     endTime: string;
+    /** Which guest this row belongs to ("MAIN" or a guest ID) — present on
+        the live API response even though older call sites of this type
+        never needed it until the reschedule summary started grouping by
+        guest. */
+    guessID?: string;
   }[];
 }
 
@@ -186,6 +191,17 @@ interface BookingFormData {
   locCode: string;
   prefilledTechID: string;
   prefilledTechName: string;
+  /** Total minutes for the booking being rescheduled, carried in from the
+      appointment list link. Used as a true-duration fallback for the
+      availability check when the live booking lookup for the new date
+      hasn't resolved a real service category yet. */
+  rescheduleDuration: number;
+  /** The booking's ORIGINAL time slot at the moment Reschedule was opened,
+      captured once and never overwritten by the date/time picker below
+      (unlike timeSlot, which the admin changes). Used to work out how far
+      the whole group is being shifted so every guest's own new time can be
+      previewed, not just the one slot the admin actually picks. */
+  rescheduleOriginalTimeSlot: string;
 }
 
 interface FieldErrors {
@@ -897,23 +913,26 @@ function calculateSlotAvailability({
             technicianQualifiesForCategory(technician, category, services),
           ),
       );
-      const isRealServiceRequirement = requirement.categories.every(
-        (category) => !category.startsWith("__"),
-      );
+      // Salon hours and the technician's own shift window must ALWAYS be
+      // checked — even when the real service category couldn't be resolved
+      // (the "__..." placeholder used as a reschedule fallback) — otherwise
+      // a reschedule could silently skip both checks entirely. Category
+      // qualification is the only thing that legitimately cannot be
+      // verified without a real category, so that is the only check the
+      // placeholder still skips.
       const scheduleFits =
-        !isRealServiceRequirement ||
-        (fitsDurationInWindow(
+        fitsDurationInWindow(
           slotMinutes,
           requirement.durationMin,
           branchStartMin,
           branchCloseMin,
         ) &&
-          technicianHasShiftForDuration(
-            requirement.assignedTechID,
-            slotMinutes,
-            requirement.durationMin,
-            staffWindowsByTech,
-          ));
+        technicianHasShiftForDuration(
+          requirement.assignedTechID,
+          slotMinutes,
+          requirement.durationMin,
+          staffWindowsByTech,
+        );
       const candidates =
         eligible &&
         scheduleFits &&
@@ -948,17 +967,23 @@ function calculateSlotAvailability({
             .map(normalizedCode)
             .filter((techID) => techID && techID !== "0")
             .filter((techID) => {
-              if (requirement.category.startsWith("__")) return true;
+              // Same reasoning as the explicit-requirement branch above:
+              // the "__..." placeholder category only skips the
+              // category-qualification check (it has no real category to
+              // verify against) — salon hours and the technician's shift
+              // are still enforced unconditionally.
+              const isPlaceholder = requirement.category.startsWith("__");
               const technician = branchTechnicians.find(
                 (candidate) => normalizedCode(candidate.UserId) === techID,
               );
               return Boolean(
                 technician &&
-                  technicianQualifiesForCategory(
-                    technician,
-                    requirement.category,
-                    services,
-                  ) &&
+                  (isPlaceholder ||
+                    technicianQualifiesForCategory(
+                      technician,
+                      requirement.category,
+                      services,
+                    )) &&
                   fitsDurationInWindow(
                     slotMinutes,
                     requirement.durationMin,
@@ -1232,6 +1257,7 @@ function getRescheduleCategoryWorkloads(
   services: ServiceItem[],
   booking: ExistingAppointment | null,
   categories: string[],
+  fallbackTotalDurationMin = 0,
 ): CategoryWorkload[] {
   const byCategory = new Map<string, number>();
 
@@ -1245,9 +1271,22 @@ function getRescheduleCategoryWorkloads(
     byCategory.set(category, (byCategory.get(category) || 0) + duration);
   });
 
+  // The "__BOOKING__" placeholder (used when the real service category
+  // couldn't be resolved, e.g. the live booking lookup hasn't matched yet)
+  // still needs the booking's REAL total duration here, not a generic
+  // 30-minute guess — otherwise the availability check underestimates how
+  // long the technician is actually occupied and can wrongly pass a slot
+  // that is too close to closing time or the end of a shift. Prefer the
+  // booking's own duration; fall back to the duration carried in from the
+  // reschedule link (always available immediately, unlike the booking
+  // lookup) before finally giving up and guessing 30.
   const fallbackDuration =
-    categories.length === 1 && Number(booking?.duration) > 0
-      ? Number(booking?.duration)
+    categories.length === 1
+      ? Number(booking?.duration) > 0
+        ? Number(booking?.duration)
+        : fallbackTotalDurationMin > 0
+          ? fallbackTotalDurationMin
+          : 30
       : 30;
   categories.forEach((category) => {
     if (!byCategory.has(category)) byCategory.set(category, fallbackDuration);
@@ -3014,13 +3053,237 @@ function PhoneField({
   );
 }
 
+/**
+ * Reschedule-only summary panel. A group booking (main client + guests,
+ * each possibly on their own original time) must still show each guest's
+ * OWN row here instead of collapsing everyone into one generic "Main
+ * Client" line — the single date/time field above only drives ONE shared
+ * anchor time, but every guest keeps their own original offset from that
+ * anchor (e.g. Guest 2 starting 30 min after Main Client keeps starting 30
+ * min after Main Client on the new date too), exactly like the backend
+ * already preserves when it actually saves a whole-booking reschedule.
+ */
+function RescheduleSummary({
+  form,
+  rescheduleBooking,
+}: {
+  form: BookingFormData;
+  rescheduleBooking?: ExistingAppointment | null;
+}) {
+  const rows = rescheduleBooking?.serviceSchedule || [];
+
+  // Group rows by guest, preserving first-seen order — same convention the
+  // appointment dashboard already uses (MAIN first, then Guest 2, 3, ...).
+  const guestOrder: string[] = [];
+  const byGuest = new Map<string, typeof rows>();
+  rows.forEach((row) => {
+    const key = (row.guessID ?? "").trim().toUpperCase() || "MAIN";
+    if (!byGuest.has(key)) {
+      byGuest.set(key, []);
+      guestOrder.push(key);
+    }
+    byGuest.get(key)!.push(row);
+  });
+  // MAIN always leads, whatever order the rows happened to arrive in.
+  guestOrder.sort((a, b) => (a === "MAIN" ? -1 : b === "MAIN" ? 1 : 0));
+
+  const anchorOldMin = slotToMins(form.rescheduleOriginalTimeSlot);
+  const newMin = slotToMins(form.timeSlot);
+  const hasNewTime =
+    form.timeSlot.length > 0 && anchorOldMin >= 0 && newMin >= 0;
+  const shiftMin = hasNewTime ? newMin - anchorOldMin : 0;
+
+  let guestIndex = 0;
+
+  return (
+    <div className="sum-card">
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Ico.Book />
+        <span style={{ fontSize: 16, fontWeight: 700, color: "#1f2937" }}>
+          Reschedule Summary
+        </span>
+      </div>
+      <div
+        style={{
+          background: "#fef3c7",
+          border: "1px solid #fcd34d",
+          borderRadius: 8,
+          padding: "8px 12px",
+          marginTop: 8,
+          fontSize: 11,
+          fontWeight: 600,
+          color: "#92400e",
+        }}
+      >
+        ✏️ Rescheduling booking {form.bookingID}
+        {guestOrder.length > 1 ? ` · ${guestOrder.length} guests` : ""}
+      </div>
+      <div className="sum-div" />
+
+      {rows.length === 0 ? (
+        <p
+          style={{
+            fontSize: 11,
+            color: "rgba(0,0,0,.4)",
+            fontStyle: "italic",
+          }}
+        >
+          Loading this booking&rsquo;s current schedule…
+        </p>
+      ) : (
+        guestOrder.map((guestKey) => {
+          const isMainGuest = guestKey === "MAIN";
+          const label = isMainGuest ? "Main Client" : `Guest ${guestIndex + 1}`;
+          if (!isMainGuest) guestIndex += 1;
+          const guestRows = byGuest.get(guestKey) || [];
+
+          return (
+            <div key={guestKey} style={{ marginBottom: 10 }}>
+              <p
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: "#6b7280",
+                  textTransform: "uppercase",
+                  letterSpacing: ".06em",
+                  marginBottom: 5,
+                }}
+              >
+                {label}
+              </p>
+              {guestRows.map((row, i) => {
+                const oldStart = slotToMins(row.startTime);
+                const oldEnd = slotToMins(row.endTime);
+                const canShift =
+                  hasNewTime && oldStart >= 0 && oldEnd >= 0;
+                return (
+                  <div
+                    key={`${guestKey}-${row.serviceIndex}-${i}`}
+                    style={{ marginBottom: 6 }}
+                  >
+                    <p
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: "#1e3a40",
+                        lineHeight: 1.3,
+                      }}
+                    >
+                      {row.serviceName}
+                    </p>
+                    <p
+                      style={{ fontSize: 10, color: "#6b7280", marginTop: 1 }}
+                    >
+                      {row.providerName ? `${row.providerName} · ` : ""}
+                      {canShift ? (
+                        <>
+                          <span style={{ textDecoration: "line-through", opacity: 0.6 }}>
+                            {row.startTime} – {row.endTime}
+                          </span>
+                          {" → "}
+                          <span style={{ fontWeight: 700, color: "#15803d" }}>
+                            {minsToSlot(oldStart + shiftMin)} –{" "}
+                            {minsToSlot(oldEnd + shiftMin)}
+                          </span>
+                        </>
+                      ) : (
+                        <span>
+                          Current: {row.startTime} – {row.endTime}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })
+      )}
+
+      <div className="sum-dot" />
+      <p
+        style={{
+          fontSize: 10,
+          fontWeight: 700,
+          color: "#6b7280",
+          textTransform: "uppercase",
+          letterSpacing: ".06em",
+          marginBottom: 7,
+        }}
+      >
+        New Date
+      </p>
+      {form.date ? (
+        <p style={{ fontSize: 11, fontWeight: 600, color: "#1f2937", marginBottom: 3 }}>
+          {fmtDateLong(form.date)}
+        </p>
+      ) : (
+        <p
+          style={{
+            fontSize: 11,
+            color: "rgba(0,0,0,.32)",
+            fontStyle: "italic",
+            marginBottom: 3,
+          }}
+        >
+          No date selected
+        </p>
+      )}
+      {!form.timeSlot && (
+        <p
+          style={{
+            fontSize: 11,
+            color: "rgba(0,0,0,.32)",
+            fontStyle: "italic",
+          }}
+        >
+          No time selected
+        </p>
+      )}
+
+      {form.fullName && (
+        <>
+          <div className="sum-dot" />
+          <p
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: "#1e3a40",
+              textTransform: "uppercase",
+              letterSpacing: ".04em",
+            }}
+          >
+            {form.fullName}
+          </p>
+          {form.phoneNumber && (
+            <p style={{ fontSize: 10, color: "#6b7280", marginTop: 2 }}>
+              {form.phoneNumber}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function BookingSummary({
   form,
   services,
+  rescheduleBooking,
 }: {
   form: BookingFormData;
   services: ServiceItem[];
+  /** The original booking being rescheduled, including its own per-guest
+      serviceSchedule. Only used when form.isReschedule — a plain new
+      booking passes nothing here. */
+  rescheduleBooking?: ExistingAppointment | null;
 }) {
+  if (form.isReschedule) {
+    return (
+      <RescheduleSummary form={form} rescheduleBooking={rescheduleBooking} />
+    );
+  }
+
   const mainSvcs = services.filter((s) =>
     form.selectedServices.includes(s.itemCode),
   );
@@ -4369,6 +4632,8 @@ function WalkInPage() {
     locCode: "",
     prefilledTechID: "",
     prefilledTechName: "",
+    rescheduleDuration: 0,
+    rescheduleOriginalTimeSlot: "",
   });
 
   const isMain = activeTab === "main";
@@ -4414,6 +4679,7 @@ function WalkInPage() {
       const clientEmail = searchParams.get("clientEmail") || "";
       const gender = searchParams.get("gender") || "";
       const notes = searchParams.get("notes") || "";
+      const paramDuration = Number(searchParams.get("duration") || "0");
       setForm((f) => ({
         ...f,
         isReschedule: true,
@@ -4429,6 +4695,8 @@ function WalkInPage() {
         specialRequest: notes,
         prefilledTechID: paramTechID,
         prefilledTechName: paramTechName !== paramTechID ? paramTechName : "",
+        rescheduleDuration: paramDuration > 0 ? paramDuration : 0,
+        rescheduleOriginalTimeSlot: paramTimeSlot,
       }));
     } else if (paramDate || paramTimeSlot || paramLocation || paramTechID) {
       setForm((f) => ({
@@ -4782,7 +5050,13 @@ function WalkInPage() {
   const rescheduleWorkloads = getRescheduleCategoryWorkloads(
     services,
     rescheduleBooking,
-    rescheduleCategories,
+    // Must match tabAvailabilityCategories (the "__BOOKING__" placeholder
+    // included) — this map is looked up by that exact category key when no
+    // real category could be resolved yet, so passing the pre-placeholder
+    // list here left the placeholder with no workload entry and a silent
+    // 30-minute default regardless of the real service duration.
+    tabAvailabilityCategories,
+    form.rescheduleDuration,
   );
   const tabAvailabilityWorkloads = form.isReschedule
     ? rescheduleWorkloads
@@ -4810,7 +5084,10 @@ function WalkInPage() {
         ? rescheduleWorkloads
         : getCategoryWorkloads(services, form.selectedServices),
       selectedProviders: form.providers,
-      preferredTechID: form.isReschedule ? "" : form.prefilledTechID,
+      // See the matching comment at the tabAvailability calculateSlotAvailability
+      // call below: default to the technician already on this booking during
+      // a reschedule instead of discarding that knowledge.
+      preferredTechID: form.prefilledTechID,
     },
     ...form.subClients.map((subClient) => ({
       id: subClient.id,
@@ -4868,7 +5145,15 @@ function WalkInPage() {
           categories: tabAvailabilityCategories,
           workloads: tabAvailabilityWorkloads,
           selectedProviders: tabSelectedProviders,
-          preferredTechID: form.isReschedule ? "" : form.prefilledTechID,
+          // Reschedule keeps checking against the technician already on
+          // this booking by default (same as a fresh booking defaults to
+          // its prefilled technician) so the slot grid reflects THAT
+          // person's real shift/clash state instead of falling back to
+          // "is anyone in this category free", which is far too loose and
+          // made nearly every slot look open. If the admin explicitly
+          // reassigns a technician in the next step, that choice (carried
+          // via selectedProviders) still takes priority over this default.
+          preferredTechID: form.prefilledTechID,
           branch: form.branch,
           technicians,
           services,
@@ -5257,6 +5542,8 @@ function WalkInPage() {
       locCode: "",
       prefilledTechID: "",
       prefilledTechName: "",
+      rescheduleDuration: 0,
+      rescheduleOriginalTimeSlot: "",
     });
     setErrors({});
     setSubmitted(false);
@@ -6364,7 +6651,7 @@ function WalkInPage() {
                   </p>
                 </FormCard>
                 <div className="mob-sum" style={{ display: "none" }}>
-                  <BookingSummary form={form} services={services} />
+                  <BookingSummary form={form} services={services} rescheduleBooking={rescheduleBooking} />
                   <button
                     type="button"
                     className="confirm-btn"
@@ -6390,7 +6677,7 @@ function WalkInPage() {
                 overflow: "hidden",
               }}
             >
-              <BookingSummary form={form} services={services} />
+              <BookingSummary form={form} services={services} rescheduleBooking={rescheduleBooking} />
               <button
                 type="button"
                 className="confirm-btn"

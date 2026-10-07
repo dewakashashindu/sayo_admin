@@ -30,7 +30,8 @@ import {
   isTechnicianAppointment,
   type TechAppointment,
 } from "@/lib/technicianSample";
-import { loadStaffDays } from "@/lib/dayHours";
+import { loadCompanyDay, loadStaffDays, resolveStaffWindow } from "@/lib/dayHours";
+import { validateBookingTimeRules } from "@/lib/bookingTimeRules";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -1331,6 +1332,21 @@ export async function PATCH(req: NextRequest) {
     const session = await verifyAdminToken(req.cookies.get(ADMIN_COOKIE)?.value);
     const actorName = session?.log || "ADMIN";
     const actor = toChar(actorName, 10);
+
+    /* A group booking files one row per guest in tbl_bookingtxndetail. When the
+       caller names specific guests (the "Service Schedule" picker on Check
+       In / Cancel / Reschedule), a status change only ever touches those
+       guests' rows — e.g. checking in the 12:30 PM guest must never also
+       check in a 5:00 PM guest filed under the same BookingID. Omitting
+       guessIDs keeps the previous whole-booking behaviour. */
+    const guestIDs: string[] = Array.isArray(body.guessIDs)
+      ? body.guessIDs.map((g: unknown) => trimValue(g)).filter(Boolean)
+      : [];
+    const guestFilter: Prisma.Sql =
+      guestIDs.length > 0
+        ? Prisma.sql`AND RTRIM(GuessID) IN (${Prisma.join(guestIDs.map((g) => Prisma.sql`${g}`))})`
+        : Prisma.empty;
+
     const status =
       body.status !== undefined &&
       body.status !== null &&
@@ -1357,6 +1373,11 @@ export async function PATCH(req: NextRequest) {
     let previousTimeSlot: string | null = null;
     let rescheduledDate: string | null = null;
     let rescheduledTimeSlot: string | null = null;
+    // Set inside the transaction once the booking's own guest list is known —
+    // a reschedule SMS is skipped for a partial (named-guest) move since the
+    // new time it would announce only applies to some of the party, not the
+    // whole booking.
+    let isPartialGuestMove = false;
 
     // All reads that determine the candidate schedule, the conflict check, and
     // the eventual header/detail/status writes live in one transaction. In
@@ -1525,48 +1546,120 @@ export async function PATCH(req: NextRequest) {
         ]),
       );
 
+      // A "Service Schedule" picker reschedule names specific guests — when
+      // that set does not cover every guest on the booking, only their rows
+      // move; the rest of the group (and the header's own date/time anchor)
+      // stay exactly where they were.
+      const requestedGuestSet = new Set(guestIDs.map((g) => g.toUpperCase()));
+      const allBookingGuestIDs = [
+        ...new Set(selfDetails.map((d) => trimValue(d.GuessID).toUpperCase())),
+      ];
+      const movingSubset =
+        requestedGuestSet.size > 0 &&
+        allBookingGuestIDs.some((id) => !requestedGuestSet.has(id));
+      isPartialGuestMove = movingSubset;
+
+      if (movingSubset && hasTechnicianChange) {
+        throw new BookingValidationError(
+          "Reassigning the technician together with a partial guest reschedule is not supported — reschedule the whole booking to change technicians.",
+        );
+      }
+      if (
+        movingSubset &&
+        hasScheduleChange &&
+        trimValue(body.date) &&
+        currentDate &&
+        newDate !== currentDate
+      ) {
+        throw new BookingValidationError(
+          "Rescheduling to a different date moves the whole booking. Clear the guest selection to move everyone, or cancel and rebook this guest on the new date.",
+        );
+      }
+
+      const selectedDetails = movingSubset
+        ? selfDetails.filter((d) => requestedGuestSet.has(trimValue(d.GuessID).toUpperCase()))
+        : selfDetails;
+      const otherDetails = movingSubset
+        ? selfDetails.filter((d) => !requestedGuestSet.has(trimValue(d.GuessID).toUpperCase()))
+        : [];
+
       // The existing persisted placement is retained for a date/time-only
       // move. When a booking is assigned to another technician, all of its
       // detail rows are moved together (the existing PATCH behaviour), so
       // rebuild the placement sequentially for that target provider. This
       // preserves same-provider sequential work and avoids retaining parallel
       // starts that belonged to the previous provider assignment.
-      const effectiveDetails: RawDetail[] =
-        targetTechID !== null
-          ? selfDetails.map((detail) => ({
-              ...detail,
-              TechID: targetTechID,
-            }))
-          : selfDetails;
-      const originalPairs = resolveSchedulePairs(
-        selfDetails,
-        storedSchedule,
-        selfDurationMap,
-        oldStartMin,
-      );
-      const scheduleShift =
-        hasScheduleChange && oldStartMin >= 0 && newStartMin >= 0
-          ? newStartMin - oldStartMin
-          : 0;
-
       let candidatePairs: ScheduleDetailPair[];
 
-      if (targetTechID !== null) {
-        const targetStartMin = newStartMin >= 0 ? newStartMin : oldStartMin;
-        candidatePairs = buildFallbackSchedule(
-          effectiveDetails,
-          selfDurationMap,
-          targetStartMin,
-        );
+      if (movingSubset) {
+        const subsetOldStarts = selectedDetails
+          .map((detail) => Number(detail.ScheduleStartMin))
+          .filter((min) => Number.isFinite(min) && min >= 0);
+        const subsetOldStartMin =
+          subsetOldStarts.length > 0 ? Math.min(...subsetOldStarts) : oldStartMin;
+        const subsetShift =
+          hasScheduleChange && subsetOldStartMin >= 0 && newStartMin >= 0
+            ? newStartMin - subsetOldStartMin
+            : 0;
+
+        candidatePairs = selectedDetails.map((detail, index) => {
+          const origStart = Number(detail.ScheduleStartMin);
+          const origEnd = Number(detail.ScheduleEndMin);
+          const hasOwnSchedule =
+            Number.isFinite(origStart) && Number.isFinite(origEnd) && origEnd > origStart;
+          const duration = hasOwnSchedule
+            ? origEnd - origStart
+            : detailDuration(detail, selfDurationMap);
+          const startMin = (hasOwnSchedule ? origStart : subsetOldStartMin) + subsetShift;
+          const storedIndex = Number(detail.ScheduleIndex);
+
+          return {
+            detail,
+            entry: {
+              serviceIndex:
+                Number.isInteger(storedIndex) && storedIndex >= 0 ? storedIndex : index,
+              itemCode: "",
+              startMin,
+              endMin: startMin + duration,
+            },
+          };
+        });
       } else {
-        candidatePairs = originalPairs.map(({ detail, entry }) => ({
-          detail,
-          entry: {
-            ...entry,
-            startMin: entry.startMin + scheduleShift,
-            endMin: entry.endMin + scheduleShift,
-          },
-        }));
+        const effectiveDetails: RawDetail[] =
+          targetTechID !== null
+            ? selfDetails.map((detail) => ({
+                ...detail,
+                TechID: targetTechID,
+              }))
+            : selfDetails;
+        const originalPairs = resolveSchedulePairs(
+          selfDetails,
+          storedSchedule,
+          selfDurationMap,
+          oldStartMin,
+        );
+        const scheduleShift =
+          hasScheduleChange && oldStartMin >= 0 && newStartMin >= 0
+            ? newStartMin - oldStartMin
+            : 0;
+
+        if (targetTechID !== null) {
+          const targetStartMin = newStartMin >= 0 ? newStartMin : oldStartMin;
+          candidatePairs = buildFallbackSchedule(
+            effectiveDetails,
+            selfDurationMap,
+            targetStartMin,
+          );
+        } else {
+          candidatePairs = originalPairs.map(({ detail, entry }) => ({
+            detail,
+            entry: {
+              ...entry,
+              startMin: entry.startMin + scheduleShift,
+              endMin: entry.endMin + scheduleShift,
+            },
+          }));
+        }
       }
 
       const candidateWindows = candidatePairs
@@ -1590,6 +1683,84 @@ export async function PATCH(req: NextRequest) {
         );
       const candidateStartMin =
         newStartMin >= 0 ? newStartMin : oldStartMin;
+
+      // A partial move's own conflict query (further below) excludes this
+      // entire BookingID, so it would never notice the moved guest landing
+      // on the same technician's existing slot as an unmoved sibling guest
+      // in this same group booking. Check that case explicitly.
+      if (movingSubset && status !== "CANCELLED") {
+        const siblingWindows = otherDetails
+          .map((detail) => {
+            const techID = trimValue(detail.TechID);
+            if (!techID || techID === "0") return null;
+            const start = Number(detail.ScheduleStartMin);
+            const end = Number(detail.ScheduleEndMin);
+            if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+            return { techID, startMin: start, endMin: end };
+          })
+          .filter(
+            (window): window is { techID: string; startMin: number; endMin: number } =>
+              Boolean(window),
+          );
+
+        const siblingConflict = candidateWindows.find((candidate) =>
+          siblingWindows.some(
+            (other) =>
+              candidate.techID.toUpperCase() === other.techID.toUpperCase() &&
+              candidate.startMin < other.endMin &&
+              other.startMin < candidate.endMin,
+          ),
+        );
+        if (siblingConflict) {
+          throw new BookingConflictError(
+            `Technician ${siblingConflict.techID} is already busy with another guest in this same booking at that time.`,
+          );
+        }
+      }
+
+      // A reschedule (date/time move) or a technician reassignment must pass
+      // the exact same "is the salon open / is this technician on shift"
+      // checks the booking form enforces when the appointment is first
+      // created — otherwise the calendar's drag-to-reschedule and the
+      // Reschedule button could place a booking outside salon hours or onto
+      // a technician who is off/on leave/unscheduled that day. This never
+      // runs for a plain status PATCH (confirm / check-in / cancel) that
+      // does not touch the date, time or technician.
+      if (
+        (hasScheduleChange || hasTechnicianChange) &&
+        status !== "CANCELLED" &&
+        candidatePairs.length > 0
+      ) {
+        const candidateServiceWindows = candidatePairs.map(({ detail, entry }) => ({
+          serviceIndex: entry.serviceIndex,
+          itemCode: trimValue(detail.ServiceItemID),
+          techID: trimValue(detail.TechID) || "0",
+          startMin: entry.startMin,
+          endMin: entry.startMin + detailDuration(detail, selfDurationMap),
+        }));
+
+        const companyDay = await loadCompanyDay(newDate, locCode);
+        const staffDays = await loadStaffDays(newDate, locCode);
+        const staffByID = new Map<string, ReturnType<typeof resolveStaffWindow>>();
+        for (const window of candidateServiceWindows) {
+          const techKey = window.techID.toUpperCase();
+          if (!techKey || techKey === "0") continue;
+          if (!staffByID.has(techKey)) {
+            staffByID.set(techKey, resolveStaffWindow(companyDay, staffDays.get(techKey)));
+          }
+        }
+
+        const timeRuleError = validateBookingTimeRules({
+          guests: [{ timeSlot: newTime, services: [] }],
+          appointmentTime: newTime,
+          company: companyDay,
+          staffByID,
+          serviceWindows: candidateServiceWindows,
+        });
+        if (timeRuleError) {
+          throw new BookingValidationError(timeRuleError);
+        }
+      }
 
       // Cancelling releases capacity — it must never be blocked by a conflict.
       // The overlap assertion only applies when the booking stays active
@@ -1743,7 +1914,7 @@ export async function PATCH(req: NextRequest) {
         }
       }
 
-      if (hasScheduleChange) {
+      if (hasScheduleChange && !movingSubset) {
         // BookingDate stores the complete schedule date and time. Remarks keeps
         // human notes only; old schedule metadata and Date:/Time: prefixes are
         // removed on edit.
@@ -1770,29 +1941,29 @@ export async function PATCH(req: NextRequest) {
       // successful schedule/provider change reactivates it as PENDING while
       // retaining the same header/detail row. Active statuses clear stale
       // cancellation markers; CANCELLED always clears confirmation markers.
+      // A partial (named-guest) move never reactivates the whole booking —
+      // that header-wide transition only applies to a full reschedule.
       const reactivateCancelled =
         !status &&
+        !movingSubset &&
         currentStatus === "CANCELLED" &&
         (hasScheduleChange || hasTechnicianChange);
       const statusToApply = status || (reactivateCancelled ? "PENDING" : null);
 
       if (hasScheduleChange) {
         // TxnDetail stores the booking date as well as the event timestamps.
+        // Scoped to the moved guest(s) only when this is a partial move —
+        // the rest of the group's own BookingDate stays untouched.
         await tx.$executeRaw`
           UPDATE tbl_bookingtxndetail
           SET BookingDate = ${bookingDateTime}
           WHERE RTRIM(BookingID) = ${bookingID}
             AND RTRIM(LocCode) = ${locCode}
+            ${guestFilter}
         `;
       }
 
       if (statusToApply === "CONFIRMED") {
-        await tx.$executeRaw`
-          UPDATE tbl_bookingheder
-          SET Status = ${toChar("CONFIRMED", 10)}
-          WHERE RTRIM(BookingID) = ${bookingID}
-            AND RTRIM(LocCode) = ${locCode}
-        `;
         await tx.$executeRaw`
           UPDATE tbl_bookingtxndetail
           SET
@@ -1803,14 +1974,9 @@ export async function PATCH(req: NextRequest) {
             CancelledBy = ${toChar("", 10)}
           WHERE RTRIM(BookingID) = ${bookingID}
             AND RTRIM(LocCode) = ${locCode}
+            ${guestFilter}
         `;
       } else if (statusToApply === "CANCELLED") {
-        await tx.$executeRaw`
-          UPDATE tbl_bookingheder
-          SET Status = ${toChar("CANCELLED", 10)}
-          WHERE RTRIM(BookingID) = ${bookingID}
-            AND RTRIM(LocCode) = ${locCode}
-        `;
         await tx.$executeRaw`
           UPDATE tbl_bookingtxndetail
           SET
@@ -1821,14 +1987,9 @@ export async function PATCH(req: NextRequest) {
             CancelledBy = ${actor}
           WHERE RTRIM(BookingID) = ${bookingID}
             AND RTRIM(LocCode) = ${locCode}
+            ${guestFilter}
         `;
       } else if (statusToApply === "ONGOING") {
-        await tx.$executeRaw`
-          UPDATE tbl_bookingheder
-          SET Status = ${toChar("ONGOING", 10)}
-          WHERE RTRIM(BookingID) = ${bookingID}
-            AND RTRIM(LocCode) = ${locCode}
-        `;
         await tx.$executeRaw`
           UPDATE tbl_bookingtxndetail
           SET
@@ -1849,14 +2010,9 @@ export async function PATCH(req: NextRequest) {
             END
           WHERE RTRIM(BookingID) = ${bookingID}
             AND RTRIM(LocCode) = ${locCode}
+            ${guestFilter}
         `;
       } else if (statusToApply === "PENDING") {
-        await tx.$executeRaw`
-          UPDATE tbl_bookingheder
-          SET Status = ${toChar("PENDING", 10)}
-          WHERE RTRIM(BookingID) = ${bookingID}
-            AND RTRIM(LocCode) = ${locCode}
-        `;
         await tx.$executeRaw`
           UPDATE tbl_bookingtxndetail
           SET
@@ -1867,18 +2023,83 @@ export async function PATCH(req: NextRequest) {
             CancelledBy = ${toChar("", 10)}
           WHERE RTRIM(BookingID) = ${bookingID}
             AND RTRIM(LocCode) = ${locCode}
+            ${guestFilter}
+        `;
+      }
+
+      // The header carries one Status for the whole BookingID, but a group
+      // booking's guests can now each be in a different real state (one
+      // checked in, another still only confirmed, a third cancelled). Derive
+      // the header's Status from the guests' actual rows instead of blindly
+      // overwriting it with whatever status this one request just applied —
+      // otherwise acting on a single guest would misreport the other
+      // guests' unrelated appointments on the calendar card.
+      if (
+        statusToApply === "CONFIRMED" ||
+        statusToApply === "CANCELLED" ||
+        statusToApply === "ONGOING" ||
+        statusToApply === "PENDING"
+      ) {
+        const guestStateRows = await tx.$queryRaw<
+          { Total: bigint | number; Cancelled: bigint | number; Ongoing: bigint | number; ConfirmedActive: bigint | number }[]
+        >`
+          SELECT
+            COUNT(*) AS Total,
+            SUM(CASE WHEN CancelledDate > '1900-01-01 00:00:00' THEN 1 ELSE 0 END) AS Cancelled,
+            SUM(CASE
+              WHEN (CancelledDate IS NULL OR CancelledDate <= '1900-01-01 00:00:00')
+               AND CheckInTime > '1900-01-01 00:00:00' THEN 1 ELSE 0
+            END) AS Ongoing,
+            SUM(CASE
+              WHEN (CancelledDate IS NULL OR CancelledDate <= '1900-01-01 00:00:00')
+               AND Confirmed = 1 THEN 1 ELSE 0
+            END) AS ConfirmedActive
+          FROM tbl_bookingtxndetail
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
+        `;
+        const stateRow = guestStateRows[0];
+        const total = Number(stateRow?.Total ?? 0);
+        const cancelled = Number(stateRow?.Cancelled ?? 0);
+        const active = total - cancelled;
+        const ongoing = Number(stateRow?.Ongoing ?? 0);
+        const confirmedActive = Number(stateRow?.ConfirmedActive ?? 0);
+
+        // All guests cancelled ⇒ CANCELLED. Otherwise the card reflects the
+        // most-advanced state among the guests still active: any guest
+        // checked in keeps the whole card ONGOING; all remaining active
+        // guests confirmed ⇒ CONFIRMED; anything else ⇒ PENDING.
+        const headerStatus: "PENDING" | "CONFIRMED" | "CANCELLED" | "ONGOING" =
+          active <= 0
+            ? "CANCELLED"
+            : ongoing > 0
+              ? "ONGOING"
+              : confirmedActive >= active
+                ? "CONFIRMED"
+                : "PENDING";
+
+        await tx.$executeRaw`
+          UPDATE tbl_bookingheder
+          SET Status = ${toChar(headerStatus, 10)}
+          WHERE RTRIM(BookingID) = ${bookingID}
+            AND RTRIM(LocCode) = ${locCode}
         `;
       }
     });
 
+    // A guest-scoped action (Service Schedule picker) never sends the
+    // whole-booking confirmed/cancelled/rescheduled SMS templates — they
+    // would misreport a change that only applies to some of the party.
     const smsEvent: "confirmed" | "cancelled" | "rescheduled" | null =
-      status === "CONFIRMED"
-        ? "confirmed"
-        : status === "CANCELLED"
-          ? "cancelled"
-          : hasScheduleChange
-            ? "rescheduled"
-            : null;
+      isPartialGuestMove
+        ? null
+        : status === "CONFIRMED"
+          ? "confirmed"
+          : status === "CANCELLED"
+            ? "cancelled"
+            : hasScheduleChange
+              ? "rescheduled"
+              : null;
 
     if (smsEvent) {
       const smsRows = await prisma.$queryRaw<RawSMSBooking[]>`
