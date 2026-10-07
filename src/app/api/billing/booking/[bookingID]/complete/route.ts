@@ -58,6 +58,19 @@ export async function POST(req: NextRequest, { params }: Ctx) {
 
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
+    /* Flexible partial billing: the cashier may bill only a selected subset of
+       the booking's DONE services. When `services` is present we bill just
+       those rows (and stamp them billed) instead of requiring the whole
+       booking to be DONE. */
+    const partialServices = Array.isArray(body.services)
+      ? (body.services as Array<Record<string, unknown>>).map((s) => ({
+          serviceIndex: num(s.serviceIndex, -1),
+          guessID: trim(s.guessID).toUpperCase() || "MAIN",
+          itemCode: trim(s.itemCode),
+        }))
+      : [];
+    const isPartial = partialServices.length > 0;
+
         const session = await verifyAdminToken(
       req.cookies.get(ADMIN_COOKIE)?.value,
     );
@@ -102,7 +115,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         { status: 409 },
       );
     }
-    if (trim(header.Status).toUpperCase() !== "DONE") {
+    if (!isPartial && trim(header.Status).toUpperCase() !== "DONE") {
       return NextResponse.json(
         {
           success: false,
@@ -110,6 +123,44 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         },
         { status: 409 },
       );
+    }
+
+    /* For a partial bill, every selected row must actually be Done, not
+       cancelled, and not already billed — otherwise we would bill work that
+       was never finished or bill the same service twice. */
+    if (isPartial) {
+      const rows = await prisma.$queryRaw<
+        { ScheduleIndex: number; GuessID: string; ServiceItemID: string; ServiceDoneTime: Date | null; ServiceCancelledDate: Date | null; ServiceBilledTime: Date | null; CheckInTime: Date | null }[]
+      >`
+        SELECT ScheduleIndex, RTRIM(GuessID) GuessID, RTRIM(ServiceItemID) ServiceItemID,
+               ServiceDoneTime, ServiceCancelledDate, ServiceBilledTime, CheckInTime
+        FROM tbl_bookingservicedetail
+        WHERE RTRIM(BookingID) = ${bookingID} AND RTRIM(LocCode) = ${locCode}
+      `;
+      const stamp = (v: Date | null) =>
+        v !== null && new Date(v).getTime() > Date.parse("1900-01-02T00:00:00Z");
+      for (const want of partialServices) {
+        const row = rows.find(
+          (r) =>
+            (r.ScheduleIndex ?? -1) === want.serviceIndex &&
+            (trim(r.GuessID).toUpperCase() || "MAIN") === want.guessID,
+        );
+        const ok =
+          row &&
+          stamp(row.ServiceDoneTime) &&
+          !stamp(row.ServiceCancelledDate) &&
+          !stamp(row.ServiceBilledTime);
+        if (!ok) {
+          return NextResponse.json(
+            {
+              success: false,
+              message:
+                "A selected service is not in a billable state (it must be Done, not cancelled, and not already billed).",
+            },
+            { status: 409 },
+          );
+        }
+      }
     }
 
         const preparedLines = await resolveLineCodes(
@@ -197,6 +248,46 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     }
 
     const { billNo, summary, detailRows, taxRows, paymentRows } = written;
+
+    /* Partial bill: stamp the selected rows as billed, then decide whether the
+       booking stays open (more billable services remain) or closes as DONE. */
+    if (isPartial) {
+      try {
+        for (const want of partialServices) {
+          await prisma.$executeRaw`
+            UPDATE tbl_bookingservicedetail
+            SET ServiceBilledTime = NOW(), ServiceBillNo = ${billNo}
+            WHERE RTRIM(BookingID) = ${bookingID} AND RTRIM(LocCode) = ${locCode}
+              AND ScheduleIndex = ${want.serviceIndex}
+              AND (UPPER(RTRIM(GuessID)) = ${want.guessID}
+                   OR (${want.guessID} = 'MAIN' AND RTRIM(GuessID) = ''))
+          `;
+        }
+        const remaining = await prisma.$queryRaw<{ n: number | bigint }[]>`
+          SELECT COUNT(*) AS n FROM tbl_bookingservicedetail
+          WHERE RTRIM(BookingID) = ${bookingID} AND RTRIM(LocCode) = ${locCode}
+            AND ServiceDoneTime > '1900-01-01 00:00:00'
+            AND (ServiceBilledTime IS NULL OR ServiceBilledTime <= '1900-01-01 00:00:00')
+            AND (ServiceCancelledDate IS NULL OR ServiceCancelledDate <= '1900-01-01 00:00:00')
+        `;
+        const left = Number(remaining[0]?.n ?? 0);
+        if (left > 0) {
+          /* Keep the booking on the To-bill list for the remaining services. */
+          await prisma.$executeRaw`
+            UPDATE tbl_bookingheder SET BillingTime = NULL
+            WHERE RTRIM(BookingID) = ${bookingID} AND RTRIM(LocCode) = ${locCode}
+          `;
+        } else {
+          await prisma.$executeRaw`
+            UPDATE tbl_bookingheder SET Status = 'DONE', BillingTime = NOW()
+            WHERE RTRIM(BookingID) = ${bookingID} AND RTRIM(LocCode) = ${locCode}
+          `;
+        }
+      } catch {
+        /* Pre-migration: billed columns absent — keep whole-booking behaviour. */
+      }
+    }
+
     const paidAmount = paymentRows.reduce((sum, row) => sum + row.tenderedAmount, 0);
     const change = paymentRows.reduce((sum, row) => sum + row.change, 0);
 

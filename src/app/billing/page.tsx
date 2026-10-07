@@ -125,7 +125,7 @@ interface ItemOption {
   serviceItem: boolean;
 }
 
-function todayISO() { return new Date().toISOString().split('T')[0]; }
+function todayISO() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); }
 function fmtDateLong(iso: string) {
   if (!iso) return '—';
   return new Date(iso + 'T00:00').toLocaleDateString('en-GB', {
@@ -595,6 +595,21 @@ function BillingContent() {
   const appt      = useMemo(() => getApptFromParams(searchParams), [searchParams]);
   const bookingID = appt.bookingID;
 
+  /* Flexible partial billing: the Billing Dashboard passes the exact service
+     rows the cashier ticked (`sel`). When present, this screen bills ONLY
+     those rows instead of the whole booking. */
+  const selectedSel = useMemo(() => {
+    const raw = (searchParams.get("sel") || "").trim();
+    if (!raw) return [] as { serviceIndex: number; guessID: string; itemCode: string }[];
+    try {
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  }, [searchParams]);
+  const hasSelection = selectedSel.length > 0;
+
     const [booking,         setBooking]         = useState<BookingPayload | null>(null);
   const [services,        setServices]        = useState<ServiceLine[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
@@ -611,8 +626,7 @@ function BillingContent() {
         setBooking(payload);
         // The booking notes belong on the bill unless the cashier typed their own.
         setBillNotes(current => (current.trim() ? current : payload.notes || ''));
-        setServices(
-          (Array.isArray(payload.services) ? payload.services : []).map(svc => ({
+        const all = (Array.isArray(payload.services) ? payload.services : []).map(svc => ({
             key:        svc.key || `${svc.guessID}|${svc.itemCode}`,
             guessID:    svc.guessID || 'MAIN',
             itemCode:   svc.itemCode || '',
@@ -623,7 +637,16 @@ function BillingContent() {
             supporters: Array.isArray(svc.supporters) ? svc.supporters.join(', ') : String(svc.supporters || ''),
             guestCount: Number(svc.guestCount) || 1,
             guessIDs: Array.isArray(svc.guessIDs) ? svc.guessIDs : [],
-          })),
+          }));
+        /* When the dashboard passed a selection, bill ONLY those rows. */
+        setServices(
+          hasSelection
+            ? all.filter(svc =>
+                selectedSel.some(sel =>
+                  (sel.guessID || 'MAIN').toUpperCase() === (svc.guessID || 'MAIN').toUpperCase() &&
+                  (sel.itemCode || '') === svc.itemCode),
+              )
+            : all,
         );
       })
       .catch(() => undefined)
@@ -707,7 +730,10 @@ function BillingContent() {
      anything else. `booking` being null (API unreachable / demo) keeps the old
      behaviour instead of locking the screen. */
   const statusFromDbKnown = Boolean(booking?.status);
-  const bookingIsDone = !statusFromDbKnown || (view.status || '').toLowerCase() === 'done';
+  /* A partial bill (selected done services) does not need the whole booking to
+     be DONE — the strict rule only requires that nothing is on-going, which the
+     Billing Dashboard already enforces before enabling Create Bill. */
+  const bookingIsDone = !statusFromDbKnown || hasSelection || (view.status || '').toLowerCase() === 'done';
 
   /* Services are NEVER editable here. When the booking cannot be read from the
      API (demo data / offline), the single line from the query params is shown
@@ -1136,6 +1162,8 @@ function BillingContent() {
           body: JSON.stringify({
             // Every line on the bill → tbl_billdetail.
             lines: billLines(),
+            // Partial billing: the exact service rows to stamp as billed.
+            services: hasSelection ? selectedSel : undefined,
             // Headline numbers → tbl_billheader.
             gross,
             discountPercent: Number(discountPct) || 0,

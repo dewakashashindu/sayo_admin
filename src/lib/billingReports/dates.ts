@@ -5,7 +5,13 @@ export function pad2(n: number): string {
 }
 
 export function todayISO(d = new Date()): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  /* Sri Lanka calendar date — the server zone may differ (see lib/slDate). */
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Colombo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
 }
 
 export function yearStartISO(d = new Date()): string {

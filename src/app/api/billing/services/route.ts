@@ -189,6 +189,44 @@ export async function GET(req: NextRequest) {
       `;
     }
 
+    /* Billed stamps are read SEPARATELY: they only exist after the rev-10
+       migration (ServiceBilledTime/ServiceBillNo). When absent we simply treat
+       nothing as billed, so done/cancelled info still works on the older
+       schema. This must NOT ride on the main query, or a missing billed column
+       would knock out the done stamps too. */
+    const billedSet = new Set<string>();
+    if (!migrationPending) {
+      try {
+        const billedRows = await prisma.$queryRaw<
+          { BookingID: string; LocCode: string; GuessID: string; ServiceItemID: string; ScheduleIndex: number | null; ServiceBilledTime: Date | null }[]
+        >`
+          SELECT
+            RTRIM(BookingID)     AS BookingID,
+            RTRIM(LocCode)       AS LocCode,
+            RTRIM(GuessID)       AS GuessID,
+            RTRIM(ServiceItemID) AS ServiceItemID,
+            ScheduleIndex        AS ScheduleIndex,
+            ServiceBilledTime    AS ServiceBilledTime
+          FROM tbl_bookingservicedetail
+          WHERE RTRIM(BookingID) IN (${Prisma.join(bookingIDs)})
+            AND RTRIM(LocCode)   IN (${Prisma.join(locCodes)})
+        `;
+        for (const r of billedRows) {
+          if (isSet(r.ServiceBilledTime)) {
+            billedSet.add(
+              `${trim(r.BookingID)}|${trim(r.LocCode)}|${(trim(r.GuessID) || "MAIN").toUpperCase()}|${trim(r.ServiceItemID)}|${r.ScheduleIndex ?? 0}`,
+            );
+          }
+        }
+      } catch {
+        /* Billed columns absent — nothing is billed yet. */
+      }
+    }
+    const isBilled = (d: DetailRow) =>
+      billedSet.has(
+        `${trim(d.BookingID)}|${trim(d.LocCode)}|${(trim(d.GuessID) || "MAIN").toUpperCase()}|${trim(d.ServiceItemID)}|${d.ScheduleIndex ?? 0}`,
+      );
+
     /* Names for services + technicians. */
     const itemCodes = [...new Set(details.map((d) => trim(d.ServiceItemID)).filter(Boolean))];
     const techIDs = [...new Set(details.map((d) => trim(d.TechID)).filter((id) => id && id !== "0"))];
@@ -237,11 +275,16 @@ export async function GET(req: NextRequest) {
       return (Number.isFinite(qty) && qty > 0 ? qty : 1) * (Number.isFinite(price) ? price : 0);
     };
 
-    const bookings = headers.map((header) => {
+    const mappedBookings = headers.map((header) => {
       const bookingID = trim(header.BookingID);
       const locCode = trim(header.LocCode);
+      /* A service that already went onto a bill is finished business — it must
+         not reappear in the To-bill accordion (no double billing). */
       const rows = details.filter(
-        (d) => trim(d.BookingID) === bookingID && trim(d.LocCode) === locCode,
+        (d) =>
+          trim(d.BookingID) === bookingID &&
+          trim(d.LocCode) === locCode &&
+          !isBilled(d),
       );
 
       const guestOrder: string[] = [];
@@ -329,6 +372,16 @@ export async function GET(req: NextRequest) {
         doneCount: allServices.filter((s) => s.status === "done").length,
         totalCount: allServices.length,
       };
+    });
+
+    /* Drop bookings with nothing left to bill and nothing on the floor —
+       e.g. a group whose services are all billed or cancelled. */
+    const bookings = mappedBookings.filter((b) => {
+      const svc = b.guests.flatMap((g) => g.services);
+      return (
+        svc.some((s) => s.status === "done") ||
+        svc.some((s) => s.status === "ongoing" || s.status === "confirmed")
+      );
     });
 
     return NextResponse.json({ success: true, bookings, migrationPending });

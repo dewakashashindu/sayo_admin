@@ -138,8 +138,13 @@ function technicianIsInBranch(
 }
 
 function todayISO(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  /* Sri Lanka calendar date — the server zone may differ (see lib/slDate). */
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Colombo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 function fmtDateNav(iso: string): string {
@@ -3579,12 +3584,28 @@ export default function AppointmentsPage() {
 
   useEffect(() => {
     if (refreshTimer.current) clearInterval(refreshTimer.current);
+    /* Short poll so a check-in done on another screen shows up quickly. */
     refreshTimer.current = setInterval(
       () => void fetchAppointments(date, true),
-      60000,
+      15000,
     );
     return () => {
       if (refreshTimer.current) clearInterval(refreshTimer.current);
+    };
+  }, [date, fetchAppointments]);
+
+  /* Refresh the moment the tab/window regains focus — a check-in completed on
+     another terminal should be visible as soon as the user looks back. */
+  useEffect(() => {
+    const onFocus = () => void fetchAppointments(date, true);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void fetchAppointments(date, true);
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [date, fetchAppointments]);
 

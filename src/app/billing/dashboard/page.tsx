@@ -150,7 +150,7 @@ function fmtDateLong(iso: string): string {
   if (!iso) return "—";
   return new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 }
-function todayISO(): string { return new Date().toISOString().split("T")[0]; }
+function todayISO(): string { return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Colombo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()); }
 
 function StatusBadge({ status }: { status: BillingService["status"] }) {
   const badge = serviceLifecycleBadge(status);
@@ -309,6 +309,14 @@ export default function BillingDashboardPage() {
       location: b.locCode,
       status: b.status,
       mode: b.mode,
+      /* The exact rows to bill — the /billing screen bills ONLY these. */
+      sel: JSON.stringify(
+        chosen.map((s) => ({
+          serviceIndex: s.serviceIndex,
+          guessID: s.guessID,
+          itemCode: s.itemCode,
+        })),
+      ),
     });
     router.push(`/billing?${params.toString()}`);
   }

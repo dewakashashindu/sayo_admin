@@ -482,7 +482,18 @@ export default function TechnicianAppointmentsPage() {
       const sessions = viewAll
         ? sessionRows(appointment)
         : sessionRowsForTechnician(appointment, techName, myUserId);
-      for (const session of sessions) rows.push({ appointment, session });
+      for (const session of sessions) {
+        /* A service that is Done or already billed has left the floor — it
+           lives in Billing now, so it must not linger on the technician
+           dashboard (even after a refresh). Cancelled work is gone too. */
+        if (session.done || session.billed) continue;
+        if (
+          segmentDisplayStatus(appointment, session, appointment.status)
+            .status === "cancelled"
+        )
+          continue;
+        rows.push({ appointment, session });
+      }
     }
     /* Chronological, the way the day actually runs; the booking ID only
        breaks ties between services scheduled for the same minute. */
@@ -528,6 +539,31 @@ export default function TechnicianAppointmentsPage() {
     return s;
   }, [mine, mineRows]);
 
+  /* Group the flattened one-service-per-card rows by Booking ID so the list
+     reads as one accordion per booking, while the cards inside stay
+     one-per-service (with their own Done button). */
+  const grouped = useMemo(() => {
+    const order: string[] = [];
+    const byBooking = new Map<string, typeof mineRows>();
+    for (const row of mineRows) {
+      const id = row.appointment.bookingID;
+      if (!byBooking.has(id)) {
+        byBooking.set(id, []);
+        order.push(id);
+      }
+      byBooking.get(id)!.push(row);
+    }
+    return order.map((bookingID) => ({ bookingID, rows: byBooking.get(bookingID)! }));
+  }, [mineRows]);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  function toggleGroup(id: string) {
+    setCollapsedGroups((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  }
+
   /** Per-guest check-in state for a booking, scoped to this screen's
    *  technician. A group booking's guests arrive at their own times, and the
    *  booking turns ONGOING the moment its FIRST guest is checked in — so the
@@ -572,6 +608,9 @@ export default function TechnicianAppointmentsPage() {
       if (res.ok && json?.success) {
         setDoneKeys((prev) => new Set(prev).add(key));
         showToast(`${session.serviceName} done — sent to billing`, "success");
+        /* Reload so the finished card leaves the floor immediately and the
+           booking's remaining services take its place. */
+        void fetchAppointments(date, true);
       } else {
         showToast(json?.message || "Could not mark the service done", "error");
       }
@@ -876,7 +915,28 @@ export default function TechnicianAppointmentsPage() {
                   )}
                 </div>
               ) : (
-                mineRows.map(({ appointment: a, session }) => {
+                grouped.map((group) => {
+                  const isCollapsed = collapsedGroups.has(group.bookingID);
+                  const first = group.rows[0].appointment;
+                  return (
+                    <div key={group.bookingID} className="fade-up" style={{ border: "1px solid rgba(30,58,64,.14)", borderRadius: 12, overflow: "hidden", background: "rgba(255,255,255,.35)" }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(group.bookingID)}
+                        aria-expanded={!isCollapsed}
+                        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", background: "#1e3a40", border: "none", cursor: "pointer", textAlign: "left" }}
+                      >
+                        <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>Booking: {group.bookingID}</span>
+                        <span style={{ color: "rgba(255,255,255,.75)", fontSize: 12, fontWeight: 600 }}>
+                          · {first.clientName} · {group.rows.length} service{group.rows.length !== 1 ? "s" : ""}
+                        </span>
+                        <span style={{ marginLeft: "auto", color: "rgba(255,255,255,.85)", fontSize: 12, fontWeight: 700 }}>
+                          {isCollapsed ? "▸ open" : "▾ collapse"}
+                        </span>
+                      </button>
+                      {!isCollapsed && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 9, padding: 9 }}>
+                {group.rows.map(({ appointment: a, session }) => {
                   const state = checkInState(a);
                   /* This card is ONE SERVICE of the booking, so its colour and
                      its lock come from its own guest's row — the booking header
@@ -1031,6 +1091,11 @@ export default function TechnicianAppointmentsPage() {
                           </span>
                         )}
                       </div>
+                    </div>
+                  );
+                })}
+                        </div>
+                      )}
                     </div>
                   );
                 })

@@ -293,6 +293,7 @@ export default function TechnicianAppointmentDetailPage() {
 
   const [techName, setTechName] = useState("");
   const [appt, setAppt] = useState<TechAppointment | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
   const [loading, setLoading] = useState(true);
   const [usingSample, setUsingSample] = useState(false);
   const [tab, setTab] = useState<TabKey>("details");
@@ -468,7 +469,7 @@ export default function TechnicianAppointmentDetailPage() {
       }
     }
     if (bookingID) void load();
-  }, [bookingID, locCode, dateParam]);
+  }, [bookingID, locCode, dateParam, reloadTick]);
 
   // Technician directory for the "Add Technician" tab.
   useEffect(() => {
@@ -977,80 +978,81 @@ export default function TechnicianAppointmentDetailPage() {
     }
   }
 
-  /* Per-SERVICE completion: one service of a multi-service booking can be
-     finished on its own and sent to billing, while the rest stays on the
-     floor. `doneKeys` mirrors the server for this session so the button flips
-     to "Done" without a full reload. */
-  const [doneKeys, setDoneKeys] = useState<Set<string>>(new Set());
-  const [busyService, setBusyService] = useState<string | null>(null);
+  const [doneBusy, setDoneBusy] = useState(false);
 
-  async function markServiceDone(
-    service: { guessID?: string; itemCode?: string; serviceName: string },
-    key: string,
-  ) {
-    if (!appt || doneKeys.has(key) || busyService) return;
-    setBusyService(key);
-    try {
-      const res = await fetch(
-        `/api/appointments/${encodeURIComponent(appt.bookingID)}/service`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "done",
-            guessID: service.guessID || "MAIN",
-            itemCode: service.itemCode || "",
-          }),
-        },
-      );
-      const json = await res.json().catch(() => null);
-      if (res.ok && json?.success) {
-        setDoneKeys((prev) => new Set(prev).add(key));
-        showToast(`${service.serviceName} marked done — it is now in Billing`, "success");
-      } else {
-        showToast(json?.message || "Could not mark the service done", "error");
-      }
-    } catch {
-      showToast("Could not reach the server", "error");
-    } finally {
-      setBusyService(null);
-    }
-  }
-
+  /* The big Done now finishes ONLY the services actually on screen (the
+     checked-in guest's rows) — one per-service "done" each — instead of
+     flipping the whole booking. The booking stays open for its remaining
+     guests; the finished services move to Billing on their own. A legacy
+     booking with no schedule still uses the old whole-booking Done. */
   async function handleDone() {
-    if (!appt) return;
-    if (appt.status === "done") return;
-    if (!extras?.checkedIn) {
-      showToast("Client must be checked in before marking the work done", "error");
-      return;
-    }
-    /* Done flips the WHOLE booking, so every guest of a group has to be either
-       checked in or cancelled first — otherwise the guests still on their way
-       would be billed for work nobody did. */
-    if (hasPendingGuests) {
-      showToast(
-        `${guestProgress.total - guestProgress.checkedIn} of ${guestProgress.total} guests are not checked in yet — check them in or cancel them first`,
-        "error",
-      );
-      return;
-    }
-    try {
-      const res = await fetch(
-        `/api/appointments/${encodeURIComponent(appt.bookingID)}/done`,
-        { method: "POST" },
-      );
-      const json = await res.json();
-      if (!json.success) {
-        showToast(json.message || "Failed to mark done", "error");
+    if (!appt || doneBusy) return;
+
+    if ((appt.serviceSchedule ?? []).length === 0) {
+      if (appt.status === "done") return;
+      if (!extras?.checkedIn) {
+        showToast("Client must be checked in before marking the work done", "error");
         return;
       }
-      setAppt({ ...appt, status: "done" });
-      showToast("Work completed — ready to bill", "success");
-      // Done work is billed from the Billing Dashboard (Billing → Billing
-      // Dashboard), never by going back through the appointment screen.
-      setTimeout(() => router.push("/billing/dashboard"), 700);
+      try {
+        const res = await fetch(
+          `/api/appointments/${encodeURIComponent(appt.bookingID)}/done`,
+          { method: "POST" },
+        );
+        const json = await res.json();
+        if (!json.success) {
+          showToast(json.message || "Failed to mark done", "error");
+          return;
+        }
+        setAppt({ ...appt, status: "done" });
+        showToast("Work completed — ready to bill", "success");
+        setTimeout(() => router.push("/billing/dashboard"), 700);
+      } catch {
+        showToast("Network error — please try again", "error");
+      }
+      return;
+    }
+
+    const rows = displaySchedule;
+    if (rows.length === 0) {
+      showToast("No checked-in service on screen to finish", "info");
+      return;
+    }
+    setDoneBusy(true);
+    try {
+      let failed = 0;
+      for (const s of rows) {
+        const res = await fetch(
+          `/api/appointments/${encodeURIComponent(appt.bookingID)}/service`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "done",
+              guessID: s.guessID || "MAIN",
+              itemCode: s.itemCode || "",
+            }),
+          },
+        );
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json?.success) failed += 1;
+      }
+      if (failed === 0) {
+        showToast(
+          rows.length === 1
+            ? `${rows[0].serviceName} done — sent to Billing`
+            : `${rows.length} services done — sent to Billing`,
+          "success",
+        );
+        /* Re-fetch the booking so the finished service leaves the screen. */
+        setReloadTick((t) => t + 1);
+      } else {
+        showToast("Some services could not be marked done", "error");
+      }
     } catch {
       showToast("Network error — please try again", "error");
+    } finally {
+      setDoneBusy(false);
     }
   }
 
@@ -1299,7 +1301,6 @@ export default function TechnicianAppointmentDetailPage() {
                           {(appt?.serviceSchedule ?? []).length > 0
                             ? displaySchedule.map((s, i, arr) => {
                                 const key = `${(s.guessID || "MAIN").trim().toUpperCase()}|${(s.itemCode || s.serviceName).trim()}`;
-                                const isDone = doneKeys.has(key);
                                 return (
                                   <div
                                     key={key}
@@ -1316,25 +1317,9 @@ export default function TechnicianAppointmentDetailPage() {
                                         {s.providerName}
                                       </small>
                                     </span>
-                                    <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                                      <span style={{ whiteSpace: "nowrap", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
-                                        <Ico.Clock /> {s.startTime}
-                                        {s.endTime ? ` – ${s.endTime}` : ""}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        disabled={isDone || busyService === key}
-                                        onClick={() => void markServiceDone(s, key)}
-                                        style={{
-                                          border: "none", borderRadius: 8, padding: "6px 12px",
-                                          fontSize: 12, fontWeight: 700, cursor: isDone ? "default" : "pointer",
-                                          background: isDone ? "#dcfce7" : "#6d28d9",
-                                          color: isDone ? "#15803d" : "#fff",
-                                          opacity: busyService === key ? 0.6 : 1,
-                                        }}
-                                      >
-                                        {isDone ? "Done ✓" : "Done"}
-                                      </button>
+                                    <span style={{ whiteSpace: "nowrap", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                                      <Ico.Clock /> {s.startTime}
+                                      {s.endTime ? ` – ${s.endTime}` : ""}
                                     </span>
                                   </div>
                                 );
@@ -1377,15 +1362,19 @@ export default function TechnicianAppointmentDetailPage() {
                           className="btn-done"
                           type="button"
                           onClick={handleDone}
-                          disabled={appt?.status === "done"}
+                          disabled={appt?.status === "done" || doneBusy}
                           style={
-                            appt?.status === "done"
+                            appt?.status === "done" || doneBusy
                               ? { opacity: 0.65, cursor: "not-allowed" }
                               : undefined
                           }
                         >
                           <Ico.Check />{" "}
-                          {appt?.status === "done" ? "Done — ready to bill" : "Done"}
+                          {doneBusy
+                            ? "Finishing..."
+                            : appt?.status === "done"
+                              ? "Done — ready to bill"
+                              : "Done"}
                         </button>
                       </div>
                     )}

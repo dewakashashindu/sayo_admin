@@ -131,7 +131,13 @@ export interface TechAppointment {
 }
 
 export function todayISO(): string {
-  return new Date().toISOString().split("T")[0];
+  /* Sri Lanka calendar date — the server zone may differ (see lib/slDate). */
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Colombo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 export function shiftDate(iso: string, days: number): string {

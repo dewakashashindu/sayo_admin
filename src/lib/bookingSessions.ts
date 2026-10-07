@@ -29,6 +29,10 @@ export interface SessionServiceInput {
   techID?: string;
   /** This row's own guest is already checked in — per row, never per booking. */
   checkedIn?: boolean;
+  /** The service was marked Done by the technician (per-service stamp). */
+  done?: boolean;
+  /** The service was already billed and must not reappear anywhere. */
+  billed?: boolean;
   startTime: string;
   endTime: string;
 }
@@ -50,6 +54,10 @@ export interface SessionRow extends GuestServiceRow {
   /** True when the payload carried no schedule projection, so this row is a
    *  single stand-in for the whole booking rather than a real service. */
   isFallback: boolean;
+  /** Per-service Done stamp carried from the server. */
+  done?: boolean;
+  /** Per-service Billed stamp carried from the server. */
+  billed?: boolean;
 }
 
 /** How many sessions a booking holds. */
@@ -83,6 +91,8 @@ export function sessionRows(booking: SessionBearingBooking): SessionRow[] {
         endTime: "",
         sessionTotal,
         isFallback: true,
+        done: false,
+        billed: false,
       },
     ];
   }
@@ -96,6 +106,8 @@ export function sessionRows(booking: SessionBearingBooking): SessionRow[] {
     providerName: service.providerName,
     techID: service.techID,
     checkedIn: service.checkedIn,
+    done: service.done === true,
+    billed: service.billed === true,
     startTime: service.startTime,
     endTime: service.endTime,
     sessionTotal,

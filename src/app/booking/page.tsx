@@ -534,7 +534,7 @@ interface InlineCalendarProps {
 
 function InlineCalendar({ value, minDate, onChange, onClose, dropUp, lang, locCode }: InlineCalendarProps) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const todayISO = new Date().toISOString().split('T')[0];
+  const todayISO = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Colombo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
   const initD = value ? new Date(value + 'T00:00') : new Date();
   const [vYear,  setVYear]  = useState(initD.getFullYear());

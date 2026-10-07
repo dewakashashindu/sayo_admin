@@ -904,6 +904,40 @@ export async function GET(req: NextRequest) {
 
         const details = dedupeBookingDetailRows(rawDetails);
 
+    /* Per-service Done / Billed / Cancelled stamps (tbl_bookingservicedetail).
+       These columns only exist after migrate-add-service-status-mysql.sql, so
+       the read is wrapped: pre-migration the sets stay empty and every service
+       behaves exactly as before. Used to hide finished services from the
+       technician floor once they move to billing. */
+    const svcDoneSet = new Set<string>();
+    const svcBilledSet = new Set<string>();
+    const stampIsSet = (v: Date | null | undefined) =>
+      v !== null && v !== undefined &&
+      new Date(v).getTime() > Date.parse("1900-01-02T00:00:00Z");
+    try {
+      const statusRows = await prisma.$queryRaw<
+        { BookingID: string; GuessID: string; ServiceItemID: string; ScheduleIndex: number | null; ServiceDoneTime: Date | null; ServiceCancelledDate: Date | null; ServiceBilledTime: Date | null }[]
+      >`
+        SELECT
+          RTRIM(BookingID)     AS BookingID,
+          RTRIM(GuessID)       AS GuessID,
+          RTRIM(ServiceItemID) AS ServiceItemID,
+          ScheduleIndex        AS ScheduleIndex,
+          ServiceDoneTime      AS ServiceDoneTime,
+          ServiceCancelledDate AS ServiceCancelledDate,
+          ServiceBilledTime    AS ServiceBilledTime
+        FROM tbl_bookingservicedetail
+        WHERE RTRIM(BookingID) IN (${Prisma.join(bookingIDList)})
+      `;
+      for (const r of statusRows) {
+        const key = `${trimValue(r.BookingID)}|${(trimValue(r.GuessID) || "MAIN").toUpperCase()}|${trimValue(r.ServiceItemID)}|${r.ScheduleIndex ?? 0}`;
+        if (stampIsSet(r.ServiceDoneTime) || stampIsSet(r.ServiceCancelledDate)) svcDoneSet.add(key);
+        if (stampIsSet(r.ServiceBilledTime)) svcBilledSet.add(key);
+      }
+    } catch {
+      /* Pre-migration: columns absent — leave the sets empty. */
+    }
+
     const cusCodeList = [
       ...new Set(filtered.map((header) => trimValue(header.CusCode))),
     ];
@@ -1076,11 +1110,16 @@ export async function GET(req: NextRequest) {
       const serviceSchedule = orderedPairs.map(({ detail, entry }) => {
         const itemCode = trimValue(detail.ServiceItemID);
         const detailTechID = trimValue(detail.TechID);
+        const statusKey = `${bookingID}|${(trimValue(detail.GuessID) || "MAIN").toUpperCase()}|${itemCode}|${entry.serviceIndex}`;
         return {
           serviceIndex: entry.serviceIndex,
           itemCode,
           guessID: trimValue(detail.GuessID),
           techID: detailTechID,
+          /* Per-service lifecycle stamps so the technician floor can hide
+             services that already moved to billing. */
+          done: svcDoneSet.has(statusKey),
+          billed: svcBilledSet.has(statusKey),
           checkedIn:
             detail.CheckInTime !== null &&
             detail.CheckInTime !== undefined &&
