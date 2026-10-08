@@ -2345,6 +2345,11 @@ function ItemMasterPageContent() {
 
   const [activeTab, setActiveTab] = useState<"details" | "recipe">("details");
   const [allRecipes, setAllRecipes] = useState<RecipeRow[]>([]);
+  /** True once the recipe master finished loading — saving before that (or
+      after a failed load) would wipe a branch's recipe with a partial grid. */
+  const [recipeMasterLoaded, setRecipeMasterLoaded] = useState(false);
+  /** Which item|location the visible grid was loaded for. */
+  const [rowsLoadedKey, setRowsLoadedKey] = useState("");
   const [allRawItems, setAllRawItems] = useState<RawItem[]>([]);
   const [recipeRows, setRecipeRows] = useState<RecipeRow[]>([]);
   const [subUnits, setSubUnits] = useState<SubUnit[]>([]);
@@ -2547,8 +2552,11 @@ function ItemMasterPageContent() {
           };
         }),
       );
+      setRecipeMasterLoaded(true);
     } catch {
-      // Recipe master is optional; keep the screen usable.
+      // Recipe master is optional; keep the screen usable — but saving stays
+      // blocked so a failed load can never wipe a branch's recipe.
+      setRecipeMasterLoaded(false);
     }
   }, []);
 
@@ -2573,6 +2581,9 @@ function ItemMasterPageContent() {
                 locCode.trim().toUpperCase(),
           )
           .map((recipe) => ({ ...recipe })),
+      );
+      setRowsLoadedKey(
+        `${menuItemID.trim().toUpperCase()}|${locCode.trim().toUpperCase()}`,
       );
     },
     [allRecipes],
@@ -2872,6 +2883,24 @@ function ItemMasterPageContent() {
   const handleSaveRecipes = useCallback(async () => {
     if (!current.itemCode || isNew) {
       showToast("Save item first", true);
+      return;
+    }
+
+    /* Data-loss guard: saving replaces each ticked branch's recipe with
+       EXACTLY what the grid shows. A stale / still-loading grid would delete
+       rows that are not on screen — block until the visible grid was loaded
+       from a finished recipe-master read for this item + location. */
+    if (!recipeMasterLoaded) {
+      showToast(
+        "Recipe list is still loading (or failed to load) — save is blocked to protect existing recipes",
+        true,
+      );
+      return;
+    }
+    const wantKey =
+      `${current.itemCode.trim().toUpperCase()}|${primaryLocCode.trim().toUpperCase()}`;
+    if (rowsLoadedKey !== wantKey) {
+      showToast("Recipes for the selected location are still loading — try again", true);
       return;
     }
 

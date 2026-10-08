@@ -63,6 +63,9 @@ interface ServiceRecipe {
   guessID: string;
   /** Rows came from Tbl_BookingServiceRecipe (what was actually used). */
   fromBooking: boolean;
+  /** The recipe API answered for this card — master saves are blocked while
+      the load failed, so a broken fetch can never wipe the branch recipe. */
+  loaded: boolean;
 }
 
 interface ExtrasAddTech {
@@ -531,6 +534,7 @@ export default function TechnicianAppointmentDetailPage() {
       const out: ServiceRecipe[] = [];
       for (const svc of uniqueServices) {
         const sample = svc.itemCode ? SAMPLE_RECIPES[svc.itemCode] : undefined;
+        let apiOk = false;
         // Try the real API first (needs a real ItemCode + locCode).
         if (svc.itemCode && current.locCode) {
           try {
@@ -538,6 +542,7 @@ export default function TechnicianAppointmentDetailPage() {
               `/api/recipes/${encodeURIComponent(svc.itemCode)}?locCode=${encodeURIComponent(current.locCode)}`,
             );
             const json = await res.json();
+            apiOk = Boolean(json.success);
             if (Array.isArray(json.subUnits) && json.subUnits.length > 0) {
               setSubUnits(
                 (json.subUnits as Array<Record<string, unknown>>).map((u) => ({
@@ -558,6 +563,7 @@ export default function TechnicianAppointmentDetailPage() {
                 count: svc.count,
                 guessID: (svc as { guessID?: string }).guessID?.trim() || "MAIN",
                 fromBooking: false,
+                loaded: true,
               });
               continue;
             }
@@ -577,6 +583,7 @@ export default function TechnicianAppointmentDetailPage() {
           count: svc.count,
           guessID: (svc as { guessID?: string }).guessID?.trim() || "MAIN",
           fromBooking: false,
+          loaded: apiOk,
         });
       }
       // Overlay what was actually used for THIS booking (saved by the
@@ -598,6 +605,7 @@ export default function TechnicianAppointmentDetailPage() {
             }));
             card.isSample = false;
             card.fromBooking = true;
+            card.loaded = true;
           }
         }
       }
@@ -901,6 +909,14 @@ export default function TechnicianAppointmentDetailPage() {
       } finally {
         setSavingRecipe(false);
       }
+      return;
+    }
+
+    /* Master-recipe protection: never overwrite tbl_recipes from a card whose
+       load failed — a network/DB hiccup would otherwise wipe the branch's
+       recipe with a sample/empty grid. */
+    if (!svc.loaded) {
+      showToast("Recipe did not load from the database — master recipe is protected", "error");
       return;
     }
 
