@@ -62,6 +62,10 @@ interface ItemRow {
   ItemDes: string | null;
   ItemPrintDes: string | null;
   Retailprice: number | null;
+  Category1: string;
+  Category2: string;
+  Category3: string;
+  Category4: string;
 }
 
 async function loadContext(bookingID: string) {
@@ -140,7 +144,9 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         `
       : [];
     const itemRows = await prisma.$queryRaw<ItemRow[]>`
-      SELECT ItemCode, ItemDes, ItemPrintDes, Retailprice
+      SELECT ItemCode, ItemDes, ItemPrintDes, Retailprice,
+             RTRIM(Category1) AS Category1, RTRIM(Category2) AS Category2,
+             RTRIM(Category3) AS Category3, RTRIM(Category4) AS Category4
       FROM tbl_itemmaster
       WHERE RTRIM(LocCode) = ${locCode}
     `;
@@ -156,6 +162,12 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         code: i.ItemCode.trim(),
         des: (i.ItemPrintDes || i.ItemDes || "").trim(),
         retail: Number(i.Retailprice ?? 0),
+        cat: [
+          String(i.Category1 ?? "").trim(),
+          String(i.Category2 ?? "").trim(),
+          String(i.Category3 ?? "").trim(),
+          String(i.Category4 ?? "").trim(),
+        ] as [string, string, string, string],
       })),
       (i) => i.code,
     );
@@ -185,6 +197,12 @@ export async function GET(req: NextRequest, { params }: Ctx) {
           qty: Number(r.QTY ?? 0),
           itemCost: Number(r.ItemCost ?? 0),
           retailPrice: item?.retail ?? 0,
+          /* Category chain so the workstation can scope the ingredient
+             search even for booking-saved recipe rows (rev 26b). */
+          category1: item?.cat[0] ?? "",
+          category2: item?.cat[1] ?? "",
+          category3: item?.cat[2] ?? "",
+          category4: item?.cat[3] ?? "",
         };
       }),
     });

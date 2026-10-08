@@ -104,6 +104,10 @@ interface ExtrasRecipeRow {
   qty: number;
   itemCost: number;
   retailPrice: number;
+  category1?: string;
+  category2?: string;
+  category3?: string;
+  category4?: string;
 }
 
 interface ExtrasState {
@@ -456,8 +460,16 @@ export default function TechnicianAppointmentDetailPage() {
   const [itemQuery, setItemQuery] = useState("");
   const [itemOptions, setItemOptions] = useState<ItemOption[]>([]);
   /* Selected ingredient row (rev 26): click a recipe row to highlight it;
-     the add-ingredient search is then limited to that item's categories. */
+     the add-ingredient search is then limited to that item's categories.
+     `selectedScope` carries the category chain separately so it SURVIVES
+     row removal (rev 26b): removing a line auto-scopes the search to the
+     removed item's categories, ready to add its replacement. */
   const [selectedRowCode, setSelectedRowCode] = useState<string | null>(null);
+  const [selectedScope, setSelectedScope] = useState<{
+    des: string;
+    cat: [string, string, string, string];
+    removed?: boolean;
+  } | null>(null);
   const [itemSearching, setItemSearching] = useState(false);
 
   // Technician name suggest dropdown
@@ -659,6 +671,10 @@ export default function TechnicianAppointmentDetailPage() {
               subUnitID: r.subUnitID,
               qty: r.qty,
               itemCost: r.itemCost,
+              category1: r.category1 || "",
+              category2: r.category2 || "",
+              category3: r.category3 || "",
+              category4: r.category4 || "",
             }));
             card.isSample = false;
             card.fromBooking = true;
@@ -708,16 +724,11 @@ export default function TechnicianAppointmentDetailPage() {
     };
   }, [tab, appt, usingSample]);
 
-  // Drop the row selection when the editor closes or the row disappears.
+  // Reset selection + scope whenever the recipe editor opens / switches / closes.
   useEffect(() => {
-    if (!editingRecipe) {
-      setSelectedRowCode(null);
-      return;
-    }
-    setSelectedRowCode((cur) =>
-      cur && editRows.some((r) => r.rowItemCode === cur) ? cur : null,
-    );
-  }, [editingRecipe, editRows]);
+    setSelectedRowCode(null);
+    setSelectedScope(null);
+  }, [editingRecipe]);
 
   // Debounced stock-item search for the recipe "add ingredient" picker.
   // When a row is selected the search is scoped to that item's category
@@ -731,15 +742,14 @@ export default function TechnicianAppointmentDetailPage() {
       return;
     }
     const loc = (appt?.locCode || "").trim();
-    const sel = editRows.find((r) => r.rowItemCode === selectedRowCode) ?? null;
+    const sel = selectedScope;
     const t = setTimeout(async () => {
       setItemSearching(true);
       try {
         const p = new URLSearchParams({ q });
         if (loc) p.set("locCode", loc);
         if (sel) {
-          const chain = [sel.category1, sel.category2, sel.category3, sel.category4];
-          chain.forEach((c, idx) => {
+          sel.cat.forEach((c, idx) => {
             const v = String(c || "").trim();
             if (v) p.set(`c${idx + 1}`, v);
           });
@@ -760,7 +770,7 @@ export default function TechnicianAppointmentDetailPage() {
       }
     }, 300);
     return () => clearTimeout(t);
-  }, [itemQuery, editingRecipe, appt, selectedRowCode]);
+  }, [itemQuery, editingRecipe, appt, selectedScope]);
 
   const assignedTechs = useMemo(() => {
     if (!appt) return [];
@@ -901,7 +911,24 @@ export default function TechnicianAppointmentDetailPage() {
   }
 
   function removeEditRow(index: number) {
+    const removed = editRows[index];
     setEditRows((prev) => prev.filter((_, i) => i !== index));
+    /* rev 26b: removing a line auto-scopes the add-ingredient search to
+       the removed item's categories, so its replacement can be found
+       immediately ("Replacing: <des> — removed"). */
+    if (removed) {
+      setSelectedRowCode(null);
+      setSelectedScope({
+        des: removed.rowItemDes || removed.rowItemCode,
+        cat: [
+          removed.category1 ?? "",
+          removed.category2 ?? "",
+          removed.category3 ?? "",
+          removed.category4 ?? "",
+        ],
+        removed: true,
+      });
+    }
   }
 
   function addIngredientRow(item: ItemOption) {
@@ -913,21 +940,35 @@ export default function TechnicianAppointmentDetailPage() {
       showToast("That item is already in the recipe", "info");
       return;
     }
-    setEditRows((prev) => [
-      ...prev,
-      {
-        rowItemCode: item.code,
-        rowItemDes: item.des,
-        masterUnitID: item.masterUnitID,
-        subUnitID: "",
-        qty: 1,
-        itemCost: 0,
-        category1: item.category1 || "",
-        category2: item.category2 || "",
-        category3: item.category3 || "",
-        category4: item.category4 || "",
-      },
-    ]);
+    const newRow: RecipeRow = {
+      rowItemCode: item.code,
+      rowItemDes: item.des,
+      masterUnitID: item.masterUnitID,
+      subUnitID: "",
+      qty: 1,
+      itemCost: 0,
+      category1: item.category1 || "",
+      category2: item.category2 || "",
+      category3: item.category3 || "",
+      category4: item.category4 || "",
+    };
+    /* rev 26c: when a row is highlighted, the added item REPLACES it in
+       place — the highlighted line is removed and the new item takes its
+       position. Without a selection the item is appended as before. */
+    const selIdx = editRows.findIndex(
+      (r) => r.rowItemCode === selectedRowCode,
+    );
+    if (selIdx >= 0) {
+      setEditRows((prev) => prev.map((r, i) => (i === selIdx ? newRow : r)));
+      showToast(
+        `Replaced ${editRows[selIdx].rowItemDes || editRows[selIdx].rowItemCode} with ${item.des || item.code}`,
+        "success",
+      );
+    } else {
+      setEditRows((prev) => [...prev, newRow]);
+    }
+    setSelectedRowCode(null);
+    setSelectedScope(null);
     setItemQuery("");
     setItemOptions([]);
   }
@@ -1599,15 +1640,27 @@ export default function TechnicianAppointmentDetailPage() {
                                             return (
                                               <tr
                                                 key={`${row.rowItemCode}-${i}`}
-                                                onClick={() =>
-                                                  setSelectedRowCode((cur) =>
-                                                    cur === row.rowItemCode ? null : row.rowItemCode,
-                                                  )
-                                                }
+                                                onClick={() => {
+                                                  const isSel = selectedRowCode === row.rowItemCode;
+                                                  setSelectedRowCode(isSel ? null : row.rowItemCode);
+                                                  setSelectedScope(
+                                                    isSel
+                                                      ? null
+                                                      : {
+                                                          des: row.rowItemDes || row.rowItemCode,
+                                                          cat: [
+                                                            row.category1 ?? "",
+                                                            row.category2 ?? "",
+                                                            row.category3 ?? "",
+                                                            row.category4 ?? "",
+                                                          ],
+                                                        },
+                                                  );
+                                                }}
                                                 title={
                                                   selectedRowCode === row.rowItemCode
-                                                    ? "Selected — ingredient search is limited to this item's categories. Click to deselect."
-                                                    : "Click to select — ingredient search will only show this item's categories"
+                                                    ? "Selected — search shows this item's categories and the next added item REPLACES this row. Click to deselect."
+                                                    : "Click to select — search will only show this item's categories, and adding an item will replace this row"
                                                 }
                                                 style={{
                                                   cursor: "pointer",
@@ -1700,28 +1753,25 @@ export default function TechnicianAppointmentDetailPage() {
                                     <p style={{ color: "#6b7280", fontSize: 10, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
                                       Add ingredient
                                     </p>
-                                    {(() => {
-                                      const sel = editRows.find(
-                                        (r) => r.rowItemCode === selectedRowCode,
-                                      );
-                                      if (!sel) return null;
-                                      return (
-                                        <p
-                                          style={{
-                                            display: "flex", alignItems: "center", gap: 6,
-                                            margin: "0 0 8px", padding: "7px 10px",
-                                            background: "#eff6ff", border: "1.5px solid #3b82f6",
-                                            borderRadius: 8, color: "#1d4ed8",
-                                            fontSize: 12, fontWeight: 700,
-                                          }}
-                                        >
-                                          ➕ Adding for: {sel.rowItemDes || sel.rowItemCode}
-                                          <span style={{ fontWeight: 600, color: "#3b82f6" }}>
-                                            — search limited to its categories
-                                          </span>
-                                        </p>
-                                      );
-                                    })()}
+                                    {selectedScope && (
+                                      <p
+                                        style={{
+                                          display: "flex", alignItems: "center", gap: 6,
+                                          flexWrap: "wrap",
+                                          margin: "0 0 8px", padding: "7px 10px",
+                                          background: "#eff6ff", border: "1.5px solid #3b82f6",
+                                          borderRadius: 8, color: "#1d4ed8",
+                                          fontSize: 12, fontWeight: 700,
+                                        }}
+                                      >
+                                        {selectedScope.removed
+                                          ? `♻️ Replacing: ${selectedScope.des} (removed)`
+                                          : `🔄 Will replace: ${selectedScope.des} — the item you add takes its place`}
+                                        <span style={{ fontWeight: 600, color: "#3b82f6" }}>
+                                          — search limited to its categories
+                                        </span>
+                                      </p>
+                                    )}
                                     <div className="suggest-wrap" ref={itemSuggestAnchor}>
                                       <input
                                         className="f-inp"
