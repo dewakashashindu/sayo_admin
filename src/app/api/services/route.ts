@@ -236,14 +236,16 @@ export async function GET() {
         return {
           locCode,
           locName: location.LocDes,
-          /* Sub-locations must not carry their own margin / retail / WS price —
-             those are main-location only (#29). The screen disables them. */
+          /* Sub-locations never carry pricing (#29 + latest): margin / retail /
+             WS are main-location only and sub rows must read zero, so the
+             screen can only ever show/edit them on main branches. */
           sub: Boolean(location.SubLoc),
+          mainLocCode: String(location.MainLocCode ?? "").trim(),
           enable: row?.Enable ?? false,
           locStockBalance: batchSum ?? num(row?.StockBalance),
-          salesMargin: num(row?.SalesMargin ?? item.SalesMargin),
-          retailPrice: num(row?.Retailprice ?? item.Retailprice),
-          wsPrice: num(row?.WSPrice ?? item.WSPrice),
+          salesMargin: Boolean(location.SubLoc) ? 0 : num(row?.SalesMargin ?? item.SalesMargin),
+          retailPrice: Boolean(location.SubLoc) ? 0 : num(row?.Retailprice ?? item.Retailprice),
+          wsPrice: Boolean(location.SubLoc) ? 0 : num(row?.WSPrice ?? item.WSPrice),
         };
       });
 
@@ -311,6 +313,7 @@ export async function GET() {
         code: location.LocCode.trim(),
         name: location.LocDes,
         sub: Boolean(location.SubLoc),
+        mainLocCode: String(location.MainLocCode ?? "").trim(),
       })),
       units: units.map((unit) => ({
         id: unit.MasterUnitID.trim(),
@@ -414,7 +417,7 @@ export async function POST(req: NextRequest) {
 
     const locations = await prisma.tbl_LocationMaster.findMany({
       where: { Enable: true },
-      select: { LocCode: true, LocDes: true },
+      select: { LocCode: true, LocDes: true, SubLoc: true, MainLocCode: true },
       orderBy: { LocCode: "asc" },
     });
 

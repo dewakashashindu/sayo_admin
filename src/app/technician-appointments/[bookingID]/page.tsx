@@ -41,6 +41,15 @@ interface SubUnit {
   des: string;
 }
 
+/** "PACK 1M FROM 10" → 10. When tbl_unitconversion has no row for a
+    (master, sub) pair, the sub unit's description carries the pack factor. */
+function parseNoOfUnitsFromDes(des: string): number {
+  const from = /FROM\s*([0-9]+(?:\.[0-9]+)?)/i.exec(des || "");
+  if (from) return Number(from[1]) || 0;
+  const last = /([0-9]+(?:\.[0-9]+)?)\s*$/.exec((des || "").trim());
+  return last ? Number(last[1]) || 0 : 0;
+}
+
 interface ItemOption {
   code: string;
   locCode: string;
@@ -149,17 +158,17 @@ const CSS = `
   .txt-area { width: 100%; border: 1.5px solid #c8d6d8; border-radius: 10px; padding: 10px 12px; font-family: 'Inter',sans-serif; font-size: 13px; color: #1f2937; outline: none; background: #fff; resize: vertical; line-height: 1.6; }
   .txt-area:focus { border-color: #1e3a40; }
 
-  .recipe-tbl { width: 100%; border-collapse: collapse; }
+  .recipe-tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
   .recipe-tbl thead th { background: #1e3a40; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 8px 10px; text-align: left; white-space: nowrap; }
   .recipe-tbl tbody tr { border-bottom: 1px solid #e5eaeb; }
   .recipe-tbl tbody tr:last-child { border-bottom: none; }
-  .recipe-tbl td { font-size: 12px; color: #1f2937; padding: 8px 10px; vertical-align: middle; }
+  .recipe-tbl td { font-size: 12px; color: #1f2937; padding: 8px 10px; vertical-align: middle; word-break: break-word; overflow-wrap: anywhere; }
 
   .f-inp { width: 100%; height: 42px; padding: 7px 12px; border: 1.5px solid #c8d6d8; border-radius: 10px; outline: none; background: #fff; color: #1f2937; font-family: 'Inter',sans-serif; font-size: 13px; font-weight: 600; }
   .f-inp:focus { border-color: #1e3a40; }
-  .qty-inp { width: 72px; height: 34px; padding: 4px 8px; border: 1.5px solid #c8d6d8; border-radius: 8px; outline: none; background: #fff; color: #1f2937; font-family: 'Inter',sans-serif; font-size: 13px; font-weight: 600; }
+  .qty-inp { width: 100%; max-width: 72px; height: 34px; padding: 4px 8px; border: 1.5px solid #c8d6d8; border-radius: 8px; outline: none; background: #fff; color: #1f2937; font-family: 'Inter',sans-serif; font-size: 13px; font-weight: 600; }
   .qty-inp:focus { border-color: #1e3a40; }
-  .mini-sel { height: 34px; padding: 4px 6px; border: 1.5px solid #c8d6d8; border-radius: 8px; outline: none; background: #fff; color: #1f2937; font-family: 'Inter',sans-serif; font-size: 12px; font-weight: 600; max-width: 140px; }
+  .mini-sel { width: 100%; max-width: 140px; height: 34px; padding: 4px 6px; border: 1.5px solid #c8d6d8; border-radius: 8px; outline: none; background: #fff; color: #1f2937; font-family: 'Inter',sans-serif; font-size: 12px; font-weight: 600; }
   .mini-sel:focus { border-color: #1e3a40; }
   .btn-edit { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border: 1.5px solid #1e3a40; border-radius: 8px; background: #fff; color: #1e3a40; font-family: 'Inter',sans-serif; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
   .btn-edit:hover { background: #f0f8f9; }
@@ -405,6 +414,28 @@ export default function TechnicianAppointmentDetailPage() {
 
   // Recipe editing state
   const [subUnits, setSubUnits] = useState<SubUnit[]>([]);
+  const [conversions, setConversions] = useState<
+    { masterUnitID: string; subUnitID: string; noOfUnits: number }[]
+  >([]);
+
+  /** Line total — the SAME rule Item Master uses:
+      (Unit Cost / No Of Units) * Qty. When tbl_unitconversion has no row,
+      the factor comes from the sub unit description ("PACK 1M FROM 10" → 10)
+      so every row divides; plain cost × qty only when nothing can be parsed. */
+  function recipeLineTotal(row: RecipeRow): number {
+    const c = conversions.find(
+      (x) =>
+        x.masterUnitID === String(row.masterUnitID || "").trim() &&
+        x.subUnitID === String(row.subUnitID || "").trim(),
+    );
+    let noUnits = c && c.noOfUnits > 0 ? c.noOfUnits : 0;
+    if (noUnits <= 0) {
+      const su = subUnits.find((u) => u.id === String(row.subUnitID || "").trim());
+      noUnits = su ? parseNoOfUnitsFromDes(su.des) : 0;
+    }
+    if (noUnits <= 0) noUnits = 1;
+    return (Number(row.itemCost) / noUnits) * Number(row.qty);
+  }
   const [editingRecipe, setEditingRecipe] = useState<string | null>(null);
   const [editRows, setEditRows] = useState<RecipeRow[]>([]);
   const [savingRecipe, setSavingRecipe] = useState(false);
@@ -548,6 +579,15 @@ export default function TechnicianAppointmentDetailPage() {
                 (json.subUnits as Array<Record<string, unknown>>).map((u) => ({
                   id: String(u.id || ""),
                   des: String(u.des || ""),
+                })),
+              );
+            }
+            if (Array.isArray(json.conversions)) {
+              setConversions(
+                (json.conversions as Array<Record<string, unknown>>).map((c) => ({
+                  masterUnitID: String(c.masterUnitID || ""),
+                  subUnitID: String(c.subUnitID || ""),
+                  noOfUnits: Number(c.noOfUnits) || 0,
                 })),
               );
             }
@@ -1484,14 +1524,19 @@ export default function TechnicianAppointmentDetailPage() {
                                       No ingredients yet — add the first one below.
                                     </p>
                                   ) : (
-                                    <div style={{ overflowX: "auto" }}>
+                                    /* Same columns as Item Master -> Recipe
+                                       Management, so both screens read alike. */
+                                    <div style={{ width: "100%" }}>
                                       <table className="recipe-tbl">
                                         <thead>
                                           <tr>
-                                            <th>Ingredient</th>
-                                            <th>Qty</th>
-                                            <th>Unit</th>
-                                            <th style={{ textAlign: "right" }}>Cost</th>
+                                            <th style={{ width: 34 }}>#</th>
+                                            <th style={{ width: 96 }}>Item Code</th>
+                                            <th>Description</th>
+                                            <th style={{ width: 120 }}>Sub Unit</th>
+                                            <th style={{ width: 64 }}>Qty</th>
+                                            <th style={{ width: 84 }}>Unit Cost</th>
+                                            <th style={{ width: 90, textAlign: "right" }}>Line Total</th>
                                             <th style={{ width: 40 }} />
                                           </tr>
                                         </thead>
@@ -1504,14 +1549,29 @@ export default function TechnicianAppointmentDetailPage() {
                                                 : subUnits;
                                             return (
                                               <tr key={`${row.rowItemCode}-${i}`}>
+                                                <td style={{ fontWeight: 700, color: "#6b7280" }}>{i + 1}</td>
+                                                <td style={{ fontWeight: 700, color: "#1e3a40" }}>
+                                                  {row.rowItemCode}
+                                                  {row.masterUnitID && (
+                                                    <small style={{ display: "block", color: "#6b7280", fontSize: 10 }}>
+                                                      master unit {row.masterUnitID}
+                                                    </small>
+                                                  )}
+                                                </td>
+                                                <td>{row.rowItemDes || "—"}</td>
                                                 <td>
-                                                  <span style={{ fontWeight: 700, color: "#1e3a40" }}>
-                                                    {row.rowItemDes || row.rowItemCode}
-                                                  </span>
-                                                  <small style={{ display: "block", color: "#6b7280", fontSize: 10 }}>
-                                                    {row.rowItemCode}
-                                                    {row.masterUnitID ? ` · master unit ${row.masterUnitID}` : ""}
-                                                  </small>
+                                                  <select
+                                                    className="mini-sel"
+                                                    value={row.subUnitID}
+                                                    onChange={(e) => updateEditRow(i, { subUnitID: e.target.value })}
+                                                  >
+                                                    <option value="">— Select —</option>
+                                                    {unitOpts.map((u) => (
+                                                      <option key={u.id} value={u.id}>
+                                                        {u.des || u.id}
+                                                      </option>
+                                                    ))}
+                                                  </select>
                                                 </td>
                                                 <td>
                                                   <input
@@ -1526,30 +1586,24 @@ export default function TechnicianAppointmentDetailPage() {
                                                   />
                                                 </td>
                                                 <td>
-                                                  <select
-                                                    className="mini-sel"
-                                                    value={row.subUnitID}
-                                                    onChange={(e) => updateEditRow(i, { subUnitID: e.target.value })}
-                                                  >
-                                                    <option value="">— Unit —</option>
-                                                    {unitOpts.map((u) => (
-                                                      <option key={u.id} value={u.id}>
-                                                        {u.des || u.id}
-                                                      </option>
-                                                    ))}
-                                                  </select>
-                                                </td>
-                                                <td style={{ textAlign: "right" }}>
                                                   <input
                                                     className="qty-inp"
                                                     type="number"
-                                                    min={0}
-                                                    step="any"
                                                     value={row.itemCost}
-                                                    onChange={(e) =>
-                                                      updateEditRow(i, { itemCost: Number(e.target.value) || 0 })
-                                                    }
+                                                    readOnly
+                                                    title="Unit Cost is fixed here — change Qty only"
+                                                    style={{ background: "#f3f6f6", color: "#64748b", cursor: "not-allowed" }}
                                                   />
+                                                </td>
+                                                <td
+                                                  style={{
+                                                    textAlign: "right",
+                                                    fontWeight: 700,
+                                                    color: "#0369a1",
+                                                    background: "#f0f9ff",
+                                                  }}
+                                                >
+                                                  {recipeLineTotal(row).toFixed(2)}
                                                 </td>
                                                 <td>
                                                   <button
@@ -1630,25 +1684,38 @@ export default function TechnicianAppointmentDetailPage() {
                                   No recipe lines found for this service.
                                 </p>
                               ) : (
-                                <div style={{ overflowX: "auto" }}>
+                                <div style={{ width: "100%" }}>
                                   <table className="recipe-tbl">
                                     <thead>
                                       <tr>
-                                        <th>Item Code</th>
-                                        <th>Ingredient</th>
-                                        <th>Qty</th>
-                                        <th>Unit</th>
-                                        <th style={{ textAlign: "right" }}>Cost</th>
+                                        <th style={{ width: 34 }}>#</th>
+                                        <th style={{ width: 96 }}>Item Code</th>
+                                        <th>Description</th>
+                                        <th style={{ width: 120 }}>Sub Unit</th>
+                                        <th style={{ width: 64 }}>Qty</th>
+                                        <th style={{ width: 84 }}>Unit Cost</th>
+                                        <th style={{ width: 90, textAlign: "right" }}>Line Total</th>
                                       </tr>
                                     </thead>
                                     <tbody>
                                       {r.rows.map((row, i) => (
                                         <tr key={`${row.rowItemCode}-${i}`}>
+                                          <td style={{ fontWeight: 700, color: "#6b7280" }}>{i + 1}</td>
                                           <td style={{ fontWeight: 700, color: "#1e3a40" }}>{row.rowItemCode}</td>
                                           <td>{row.rowItemDes || "—"}</td>
-                                          <td>{row.qty}</td>
                                           <td>{row.subUnitID || "—"}</td>
-                                          <td style={{ textAlign: "right" }}>{row.itemCost.toLocaleString()}</td>
+                                          <td>{row.qty}</td>
+                                          <td style={{ textAlign: "right" }}>{Number(row.itemCost).toLocaleString()}</td>
+                                          <td
+                                            style={{
+                                              textAlign: "right",
+                                              fontWeight: 700,
+                                              color: "#0369a1",
+                                              background: "#f0f9ff",
+                                            }}
+                                          >
+                                            {recipeLineTotal(row).toFixed(2)}
+                                          </td>
                                         </tr>
                                       ))}
                                     </tbody>

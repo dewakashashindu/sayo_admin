@@ -93,6 +93,12 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       orderBy: { SubUnitID: 'asc' },
     });
 
+    /* master→sub conversion factors so every consumer can compute
+       (Unit Cost / No Of Units) * Qty the same way Item Master does. */
+    const conversions = await prisma.tbl_UnitConversion.findMany({
+      where: { Enable: true },
+    }).catch(() => []);
+
     const formattedRows = rows.map((r: any) => {
       const info = itemMap.get(r.RowItemCode.trim());
       return {
@@ -113,6 +119,11 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       subUnits: subUnits.map((u: any) => ({
         id:  u.SubUnitID.trim(),
         des: u.SubUnitDes,
+      })),
+      conversions: (conversions as any[]).map((c) => ({
+        masterUnitID: String(c.MasterUnitID ?? '').trim(),
+        subUnitID:    String(c.SubUnitID ?? '').trim(),
+        noOfUnits:    Number(c.NoOfUnits) || 0,
       })),
     });
   } catch (err) {

@@ -29,6 +29,8 @@ interface LocationDetail {
   locName: string;
   /** True for sub-locations — margin/retail/WS are main-location only (#29). */
   sub?: boolean;
+  /** Main branch whose margin/retail/WS a sub row displays. */
+  mainLocCode?: string;
   enable: boolean;
   locStockBalance: number;
   salesMargin: number;
@@ -88,11 +90,23 @@ interface MasterOpt {
   id?: string;
   /** Sub-location flag carried from tbl_locationmaster (#29). */
   sub?: boolean;
+  /** The main branch this sub-location hangs off (tbl_locationmaster). */
+  mainLocCode?: string;
 }
 
 interface SubUnit {
   id: string;
   des: string;
+}
+
+/** "PACK 1M FROM 10" → 10. When tbl_unitconversion has no row for a
+    (master, sub) pair, the sub unit's own description carries the pack
+    factor; the line total must divide by it instead of falling back to 1. */
+function parseNoOfUnitsFromDes(des: string): number {
+  const from = /FROM\s*([0-9]+(?:\.[0-9]+)?)/i.exec(des || "");
+  if (from) return Number(from[1]) || 0;
+  const last = /([0-9]+(?:\.[0-9]+)?)\s*$/.exec((des || "").trim());
+  return last ? Number(last[1]) || 0 : 0;
 }
 
 /** tbl_unitconversion row: how many sub units make one master unit. */
@@ -1541,7 +1555,7 @@ function LocationGrid({
                     disabled={row.sub}
                     title={
                       row.sub
-                        ? "Main locations only — not applicable to sub locations"
+                        ? "Main locations only — sub locations stay zero"
                         : "Retail auto = Overall Cost × (1 + margin%)"
                     }
                     style={row.sub ? { background: "#f3f6f6", color: "#9ca3af", cursor: "not-allowed" } : undefined}
@@ -1564,7 +1578,7 @@ function LocationGrid({
                     }
                     title={
                       row.sub
-                        ? "Main locations only — not applicable to sub locations"
+                        ? "Main locations only — sub locations stay zero"
                         : "Editable — margin % is re-calculated from this price"
                     }
                   />
@@ -1579,11 +1593,7 @@ function LocationGrid({
                     }
                     min={0}
                     disabled={row.sub}
-                    title={
-                      row.sub
-                        ? "Main locations only — not applicable to sub locations"
-                        : undefined
-                    }
+                    title={row.sub ? "Main locations only — sub locations stay zero" : undefined}
                     style={row.sub ? { background: "#f3f6f6", color: "#9ca3af", cursor: "not-allowed" } : undefined}
                   />
                 </td>
@@ -1618,7 +1628,13 @@ function RecipeGrid({
     const c = conversions.find(
       (x) => x.masterUnitID === row.masterUnitID && x.subUnitID === row.subUnitID,
     );
-    return c && c.noOfUnits > 0 ? c.noOfUnits : 1;
+    if (c && c.noOfUnits > 0) return c.noOfUnits;
+    /* No conversion row — fall back to the factor written in the sub unit's
+       description ("PACK 1M FROM 10" → 10). Every row must divide; only
+       when nothing can be parsed do we use 1. */
+    const su = subUnits.find((u) => u.id === row.subUnitID);
+    const parsed = su ? parseNoOfUnitsFromDes(su.des) : 0;
+    return parsed > 0 ? parsed : 1;
   };
   /** Recipe line cost = (Unit Cost / No Of Units) * Qty. */
   const rowCost = (row: RecipeRow): number =>
@@ -1788,7 +1804,8 @@ function RecipeGrid({
                       updateRow(index, "subUnitID", event.target.value)
                     }
                   >
-                    <option value="">-- Unit --</option>
+                    {/* Never a silent blank — an unset sub unit reads as a prompt. */}
+                    <option value="">— Select —</option>
                     {subUnits.map((unit) => (
                       <option key={unit.id} value={unit.id}>
                         {unit.des}
@@ -2643,6 +2660,7 @@ function ItemMasterPageContent() {
         locCode: location.code,
         locName: location.name ?? location.code,
         sub: Boolean(location.sub),
+        mainLocCode: location.mainLocCode ?? "",
         enable: true,
         locStockBalance: 0,
         salesMargin: 0,
@@ -2694,6 +2712,8 @@ function ItemMasterPageContent() {
     fresh.locationDetails = locations.map((location) => ({
       locCode: location.code,
       locName: location.name ?? location.code,
+      sub: Boolean(location.sub),
+      mainLocCode: location.mainLocCode ?? "",
       enable: true,
       locStockBalance: 0,
       salesMargin: 0,
@@ -3915,6 +3935,9 @@ function ItemMasterPageContent() {
                               updateItem("masterUnitID", event.target.value)
                             }
                           >
+                            {/* Never show a silent blank — an unset master unit
+                                must read as "please pick one". */}
+                            <option value="">— Select —</option>
                             {units.map((unit) => (
                               <option key={unit.id} value={unit.id}>
                                 {unit.des}
