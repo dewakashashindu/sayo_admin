@@ -129,16 +129,34 @@ export async function POST(req: NextRequest, { params }: Ctx) {
        cancelled, and not already billed — otherwise we would bill work that
        was never finished or bill the same service twice. */
     if (isPartial) {
+      const stamp = (v: Date | null) =>
+        v !== null && new Date(v).getTime() > Date.parse("1900-01-02T00:00:00Z");
+      /* CheckInTime lives on tbl_bookingtxndetail, NOT on the service-detail
+         table — it must not be selected here. ServiceBilledTime is read in a
+         separate safe query because it only exists after the rev-10 migration. */
       const rows = await prisma.$queryRaw<
-        { ScheduleIndex: number; GuessID: string; ServiceItemID: string; ServiceDoneTime: Date | null; ServiceCancelledDate: Date | null; ServiceBilledTime: Date | null; CheckInTime: Date | null }[]
+        { ScheduleIndex: number; GuessID: string; ServiceItemID: string; ServiceDoneTime: Date | null; ServiceCancelledDate: Date | null }[]
       >`
         SELECT ScheduleIndex, RTRIM(GuessID) GuessID, RTRIM(ServiceItemID) ServiceItemID,
-               ServiceDoneTime, ServiceCancelledDate, ServiceBilledTime, CheckInTime
+               ServiceDoneTime, ServiceCancelledDate
         FROM tbl_bookingservicedetail
         WHERE RTRIM(BookingID) = ${bookingID} AND RTRIM(LocCode) = ${locCode}
       `;
-      const stamp = (v: Date | null) =>
-        v !== null && new Date(v).getTime() > Date.parse("1900-01-02T00:00:00Z");
+      const billedSet = new Set<number>();
+      try {
+        const billedRows = await prisma.$queryRaw<
+          { ScheduleIndex: number; ServiceBilledTime: Date | null }[]
+        >`
+          SELECT ScheduleIndex, ServiceBilledTime
+          FROM tbl_bookingservicedetail
+          WHERE RTRIM(BookingID) = ${bookingID} AND RTRIM(LocCode) = ${locCode}
+        `;
+        for (const b of billedRows) {
+          if (stamp(b.ServiceBilledTime)) billedSet.add(b.ScheduleIndex ?? -1);
+        }
+      } catch {
+        /* Billed columns absent — nothing is billed yet. */
+      }
       for (const want of partialServices) {
         const row = rows.find(
           (r) =>
@@ -149,7 +167,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
           row &&
           stamp(row.ServiceDoneTime) &&
           !stamp(row.ServiceCancelledDate) &&
-          !stamp(row.ServiceBilledTime);
+          !billedSet.has(row.ScheduleIndex ?? -1);
         if (!ok) {
           return NextResponse.json(
             {

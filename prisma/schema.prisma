@@ -108,8 +108,10 @@ model Tbl_ItemMaster {
   ItemCode         String   @db.Char(15)
   ServiceItem      Boolean  @default(false)
   MOF              String   @default("O") @db.Char(1)
-  ItemDes          String   @db.VarChar(50)
-  ItemPrintDes     String   @default(" ") @db.VarChar(50)
+  // Descriptions widened to 100 chars (#31) — see
+  // scripts/migrate-itemmaster-des-length-mysql.sql.
+  ItemDes          String   @db.VarChar(100)
+  ItemPrintDes     String   @default(" ") @db.VarChar(100)
   MasterUnitID     String   @db.Char(10)
   Category1        String   @default("") @db.Char(10)
   Category2        String   @default("") @db.Char(10)
@@ -412,6 +414,14 @@ model tbl_bookingservicedetail {
   ScheduleIndex    Int?
   ScheduleStartMin Int?
   ScheduleEndMin   Int?
+  // Per-service lifecycle stamps (scripts/migrate-add-service-status-mysql.sql).
+  // Read/written via raw SQL; mirrored here so the schema matches the DB.
+  ServiceDoneTime      DateTime? @db.DateTime(0)
+  ServiceDoneBy        String?   @db.VarChar(50)
+  ServiceCancelledDate DateTime? @db.DateTime(0)
+  ServiceCancelledBy   String?   @db.VarChar(50)
+  ServiceBilledTime    DateTime? @db.DateTime(0)
+  ServiceBillNo        String?   @db.VarChar(30)
 
   @@id([LocCode, BookingID, GuessID, ServiceItemID])
   @@map("tbl_bookingservicedetail")

@@ -236,6 +236,9 @@ export async function GET() {
         return {
           locCode,
           locName: location.LocDes,
+          /* Sub-locations must not carry their own margin / retail / WS price —
+             those are main-location only (#29). The screen disables them. */
+          sub: Boolean(location.SubLoc),
           enable: row?.Enable ?? false,
           locStockBalance: batchSum ?? num(row?.StockBalance),
           salesMargin: num(row?.SalesMargin ?? item.SalesMargin),
@@ -307,6 +310,7 @@ export async function GET() {
       locations: locations.map((location) => ({
         code: location.LocCode.trim(),
         name: location.LocDes,
+        sub: Boolean(location.SubLoc),
       })),
       units: units.map((unit) => ({
         id: unit.MasterUnitID.trim(),

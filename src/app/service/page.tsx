@@ -27,6 +27,8 @@ const MOF_OPTIONS: { value: MofValue; label: string }[] = [
 interface LocationDetail {
   locCode: string;
   locName: string;
+  /** True for sub-locations — margin/retail/WS are main-location only (#29). */
+  sub?: boolean;
   enable: boolean;
   locStockBalance: number;
   salesMargin: number;
@@ -84,6 +86,8 @@ interface MasterOpt {
   name?: string;
   des?: string;
   id?: string;
+  /** Sub-location flag carried from tbl_locationmaster (#29). */
+  sub?: boolean;
 }
 
 interface SubUnit {
@@ -1367,6 +1371,22 @@ function LocationGrid({
     );
   }
 
+  /* #30 — the retail (sales) price is directly editable; the margin is then
+     re-derived from it relative to the overall cost. */
+  function updateRetailPrice(index: number, newRetailRaw: number) {
+    const base = Number.isFinite(overallCost) ? overallCost : 0;
+    const newRetail = Number.isFinite(newRetailRaw) ? newRetailRaw : 0;
+    const newMargin =
+      base > 0 ? Number((((newRetail - base) / base) * 100).toFixed(2)) : 0;
+    onChange(
+      rows.map((row, rowIndex) =>
+        rowIndex === index
+          ? { ...row, retailPrice: newRetail, salesMargin: newMargin }
+          : row,
+      ),
+    );
+  }
+
   function toggleEnable(index: number) {
     const row = rows[index];
     if (!row) return;
@@ -1511,27 +1531,35 @@ function LocationGrid({
                       updateSalesMargin(index, Number(event.target.value))
                     }
                     min={0}
-                    title="Retail auto = Overall Cost × (1 + margin%)"
+                    disabled={row.sub}
+                    title={
+                      row.sub
+                        ? "Main locations only — not applicable to sub locations"
+                        : "Retail auto = Overall Cost × (1 + margin%)"
+                    }
+                    style={row.sub ? { background: "#f3f6f6", color: "#9ca3af", cursor: "not-allowed" } : undefined}
                   />
                 </td>
                 <td>
                   <input
                     className="loc-grid-input"
                     type="number"
-                    value={(() => {
-                      const base = Number.isFinite(overallCost)
-                        ? overallCost
-                        : 0;
-                      const m = Number(row.salesMargin) || 0;
-                      return Number((base * (1 + m / 100)).toFixed(2));
-                    })()}
-                    readOnly
-                    style={{
-                      background: "#f0fdf4",
-                      color: "#15803d",
-                      fontWeight: 700,
-                    }}
-                    title="Auto from Overall Cost + Sales Margin"
+                    value={row.retailPrice}
+                    onChange={(event) =>
+                      updateRetailPrice(index, Number(event.target.value))
+                    }
+                    min={0}
+                    disabled={row.sub}
+                    style={
+                      row.sub
+                        ? { background: "#f3f6f6", color: "#9ca3af", cursor: "not-allowed" }
+                        : { background: "#f0fdf4", color: "#15803d", fontWeight: 700 }
+                    }
+                    title={
+                      row.sub
+                        ? "Main locations only — not applicable to sub locations"
+                        : "Editable — margin % is re-calculated from this price"
+                    }
                   />
                 </td>
                 <td>
@@ -1543,6 +1571,13 @@ function LocationGrid({
                       updateRow(index, "wsPrice", Number(event.target.value))
                     }
                     min={0}
+                    disabled={row.sub}
+                    title={
+                      row.sub
+                        ? "Main locations only — not applicable to sub locations"
+                        : undefined
+                    }
+                    style={row.sub ? { background: "#f3f6f6", color: "#9ca3af", cursor: "not-allowed" } : undefined}
                   />
                 </td>
               </tr>
@@ -2577,6 +2612,7 @@ function ItemMasterPageContent() {
       locationDetails: locations.map((location) => ({
         locCode: location.code,
         locName: location.name ?? location.code,
+        sub: Boolean(location.sub),
         enable: true,
         locStockBalance: 0,
         salesMargin: 0,
@@ -3795,7 +3831,7 @@ function ItemMasterPageContent() {
                             }
                             onKeyDown={enterNext}
                             placeholder="e.g. Shampoo & Conditioner"
-                            maxLength={50}
+                            maxLength={100}
                           />
                         </FieldRow>
                       </div>
@@ -3818,7 +3854,7 @@ function ItemMasterPageContent() {
                               updateItem("itemPrintDes", event.target.value)
                             }
                             onKeyDown={enterNext}
-                            maxLength={50}
+                            maxLength={100}
                           />
                         </FieldRow>
                         <FieldRow label="Master Unit" htmlFor="itm-unit">
