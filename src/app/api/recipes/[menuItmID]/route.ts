@@ -19,12 +19,34 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const menuItmID = decodeURIComponent(resolvedParams.menuItmID).trim();
     const locCode   = req.nextUrl.searchParams.get('locCode')?.trim() ?? '';
 
-    const rows = await prisma.tbl_Recipes.findMany({
+    const rows0 = await prisma.tbl_Recipes.findMany({
       where: {
         MenuItmID: menuItmID,
         ...(locCode ? { LocCode: locCode } : {}),
       },
     });
+
+    /* A recipe is the service's material definition; branches share it unless
+       they keep their own override. When the requested branch has no rows of
+       its own (the screenshot case: booking at LOCO0000001, recipe stored for
+       LOC07), fall back to the fullest recipe stored for this service so the
+       technician still sees the real ingredients instead of an empty sample. */
+    let rows = rows0;
+    if (locCode && rows0.length === 0) {
+      const all = await prisma.tbl_Recipes.findMany({
+        where: { MenuItmID: menuItmID },
+      });
+      const groups = new Map<string, typeof all>();
+      for (const r of all as any[]) {
+        const k = String(r.LocCode ?? '').trim();
+        const g = groups.get(k) ?? [];
+        g.push(r);
+        groups.set(k, g);
+      }
+      rows = [...groups.values()].sort(
+        (a, b) => b.length - a.length || String(a[0].LocCode).localeCompare(String(b[0].LocCode)),
+      )[0] ?? [];
+    }
 
     const itemCodes = [
       ...new Set(rows.map((r: any) => r.RowItemCode.trim())),
