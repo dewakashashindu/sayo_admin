@@ -131,6 +131,35 @@ async function loadDoneHeaders(billed: boolean): Promise<HeaderRow[]> {
   `;
 }
 
+/** Load headers for explicit (BookingID, LocCode) keys — used to surface
+    partially-billed / partially-done bookings that the DONE-only lists miss. */
+async function loadHeadersByKeys(
+  keys: { BookingID: string; LocCode: string }[],
+): Promise<HeaderRow[]> {
+  if (keys.length === 0) return [];
+  const conds = keys.map((k) => Prisma.sql`(UPPER(RTRIM(h.BookingID)) = ${k.BookingID} AND UPPER(RTRIM(h.LocCode)) = ${k.LocCode})`);
+  return prisma.$queryRaw<HeaderRow[]>`
+    SELECT
+      RTRIM(h.BookingID)        AS BookingID,
+      RTRIM(h.LocCode)          AS LocCode,
+      RTRIM(h.CusCode)          AS CusCode,
+      DATE_FORMAT(h.BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
+      h.Remarks                 AS Remarks,
+      RTRIM(h.Status)           AS Status,
+      RTRIM(h.ConfirmationType) AS ConfirmationType,
+      DATE_FORMAT(h.TxnDateTime, '%Y-%m-%d %H:%i:%s') AS TxnDateTime,
+      DATE_FORMAT(h.BillingTime, '%Y-%m-%d %H:%i:%s') AS BillingTime,
+      h.Pax                     AS Pax,
+      RTRIM(c.CusName)          AS CusName,
+      RTRIM(c.RegTel)           AS RegTel
+    FROM tbl_bookingheder h
+    LEFT JOIN tbl_customermaster c
+      ON RTRIM(c.CusCode) = RTRIM(h.CusCode)
+    WHERE ${Prisma.join(conds, " OR ")}
+    LIMIT 200
+  `;
+}
+
 export async function GET(req: NextRequest) {
   try {
     /* branch scope — the billing dashboard lists the branches this person was
@@ -146,6 +175,87 @@ export async function GET(req: NextRequest) {
       loadDoneHeaders(false),
       loadDoneHeaders(true),
     ]);
+
+    /* Option B — per-guest billing on the dashboard:
+       · a booking whose guest share has been billed appears under Completed
+         even though the header is not (fully) closed;
+       · the same booking stays under To-bill while done-unbilled services
+         remain for the other guests.
+       Both lists degrade to the header-only behaviour on pre-migration
+       databases (no ServiceBilledTime / ServiceDoneTime columns). */
+    const keyOf = (r: { BookingID: string; LocCode: string }) =>
+      `${trim(r.LocCode).toUpperCase()}|${trim(r.BookingID).toUpperCase()}`;
+    const partialBilled = new Map<
+      string,
+      { billedLines: number; billedAmount: number; billNos: string[] }
+    >();
+    let openRemaining: { BookingID: string; LocCode: string }[] = [];
+    try {
+      const pbRows = await prisma.$queryRaw<
+        { BookingID: string; LocCode: string; billedLines: number; billedAmount: number | null; billNos: string | null }[]
+      >`
+        SELECT RTRIM(BookingID) AS BookingID, RTRIM(LocCode) AS LocCode,
+               COUNT(*) AS billedLines,
+               SUM(IFNULL(ItemPrice, 0) * IFNULL(Qty, 1)) AS billedAmount,
+               GROUP_CONCAT(DISTINCT RTRIM(ServiceBillNo) SEPARATOR ',') AS billNos
+        FROM tbl_bookingservicedetail
+        WHERE ServiceBilledTime IS NOT NULL AND ServiceBilledTime > '1900-01-01 00:00:00'
+        GROUP BY RTRIM(BookingID), RTRIM(LocCode)
+      `;
+      for (const r of pbRows) {
+        partialBilled.set(keyOf(r), {
+          billedLines: Number(r.billedLines) || 0,
+          billedAmount: Number(r.billedAmount) || 0,
+          billNos: String(r.billNos ?? "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        });
+      }
+      openRemaining = await prisma.$queryRaw<{ BookingID: string; LocCode: string }[]>`
+        SELECT DISTINCT RTRIM(BookingID) AS BookingID, RTRIM(LocCode) AS LocCode
+        FROM tbl_bookingservicedetail
+        WHERE ServiceDoneTime IS NOT NULL AND ServiceDoneTime > '1900-01-01 00:00:00'
+          AND (ServiceBilledTime IS NULL OR ServiceBilledTime <= '1900-01-01 00:00:00')
+          AND (ServiceCancelledDate IS NULL OR ServiceCancelledDate <= '1900-01-01 00:00:00')
+      `;
+    } catch {
+      /* billed/done columns absent — keep the header-only lists */
+    }
+
+    const pendingKeys = new Set(pendingHeaders.map(keyOf));
+    const completedKeys = new Set(completedHeaders.map(keyOf));
+    const openSet = new Set(openRemaining.map(keyOf));
+
+    const extraKeys = new Map<string, { BookingID: string; LocCode: string }>();
+    for (const k of openRemaining) {
+      const key = keyOf(k);
+      if (!pendingKeys.has(key) && !extraKeys.has(key)) {
+        extraKeys.set(key, {
+          BookingID: trim(k.BookingID).toUpperCase(),
+          LocCode: trim(k.LocCode).toUpperCase(),
+        });
+      }
+    }
+    for (const key of partialBilled.keys()) {
+      if (!completedKeys.has(key) && !extraKeys.has(key)) {
+        const [loc, id] = key.split("|");
+        extraKeys.set(key, { BookingID: id, LocCode: loc });
+      }
+    }
+    for (const h of await loadHeadersByKeys([...extraKeys.values()])) {
+      const key = keyOf(h);
+      const fullyBilled = isBilledAt(h.BillingTime);
+      if (!fullyBilled && openSet.has(key) && !pendingKeys.has(key)) {
+        pendingHeaders.push(h);
+        pendingKeys.add(key);
+      }
+      if (partialBilled.has(key) && !completedKeys.has(key)) {
+        completedHeaders.push(h);
+        completedKeys.add(key);
+      }
+    }
+
     const pendingScoped = pendingHeaders.filter((r) => mayUse(r.LocCode));
     const completedScoped = completedHeaders.filter((r) => mayUse(r.LocCode));
     const headers = [...pendingScoped, ...completedScoped];
@@ -343,6 +453,13 @@ export async function GET(req: NextRequest) {
       const billed = isBilledAt(header.BillingTime);
       const billedAt = billed ? trim(header.BillingTime) : "";
       const bill = billed ? matchBill(locCode, cusCode, billedAt || null) : { billNo: "", netTotal: null };
+      /* Option B: per-guest billed share (from the stamped service rows). */
+      const pb = partialBilled.get(
+        `${locCode.toUpperCase()}|${bookingID.toUpperCase()}`,
+      );
+      const hasRemaining = openSet.has(
+        `${locCode.toUpperCase()}|${bookingID.toUpperCase()}`,
+      );
 
       return {
         bookingID,
@@ -357,10 +474,18 @@ export async function GET(req: NextRequest) {
         pax: Number(header.Pax ?? 0) || 0,
         services: agg?.services ?? [],
         techNames: agg?.techs ?? [],
-        total: bill.netTotal != null ? bill.netTotal : Number(agg?.total ?? 0) || 0,
-        billed,
+        /* A partially-billed booking shows what has actually been billed. */
+        total: pb
+          ? pb.billedAmount
+          : bill.netTotal != null
+            ? bill.netTotal
+            : Number(agg?.total ?? 0) || 0,
+        billed: billed || Boolean(pb),
         billedAt,
-        billNo: bill.billNo,
+        billNo: bill.billNo || (pb?.billNos[0] ?? ""),
+        billNos: pb ? pb.billNos : bill.billNo ? [bill.billNo] : [],
+        billedAmount: pb?.billedAmount ?? (bill.netTotal != null ? bill.netTotal : 0),
+        hasRemaining,
       };
     };
 

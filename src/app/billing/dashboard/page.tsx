@@ -68,6 +68,9 @@ interface DoneBooking {
   billed?: boolean;
   billedAt?: string;
   billNo?: string;
+  billNos?: string[];
+  billedAmount?: number;
+  hasRemaining?: boolean;
 }
 
 type DashTab = "pending" | "completed";
@@ -88,6 +91,7 @@ const CSS = `
 
   .badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 99px; font-weight: 700; white-space: nowrap; text-transform: uppercase; padding: 3px 9px; font-size: 10px; letter-spacing: .05em; }
   .b-green { background: rgba(34,197,94,.12); color: #15803d; }
+  .b-pnd { background: rgba(245,158,11,.15); color: #b45309; }
   .b-blue { background: rgba(59,130,246,.12); color: #1d4ed8; }
   .b-violet { background: rgba(139,92,246,.14); color: #6d28d9; }
   .b-red { background: rgba(239,68,68,.12); color: #b91c1c; }
@@ -527,8 +531,9 @@ export default function BillingDashboardPage() {
                       <button type="button" className="acc-hdr" onClick={() => router.push(`/billing?appointmentId=${encodeURIComponent(c.bookingID)}&locCode=${encodeURIComponent(c.locCode)}&billed=1`)}>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ color: "#1e3a40", fontSize: 14, fontWeight: 700 }}>{c.clientName}<span style={{ color: "#9ca3af", fontWeight: 500 }}> · {c.clientPhone || "—"}</span></p>
-                          <p style={{ marginTop: 1, color: "#6b7280", fontSize: 11.5 }}>Booking: {c.bookingID} · {fmtDateLong(c.date)}</p>
+                          <p style={{ marginTop: 1, color: "#6b7280", fontSize: 11.5 }}>Booking: {c.bookingID} · {fmtDateLong(c.date)}{Array.isArray(c.billNos) && c.billNos.length > 0 ? ` · Bills: ${c.billNos.join(", ")}` : ""}</p>
                         </div>
+                        {c.hasRemaining && <span className="badge b-pnd" title="Other done services on this booking are still to bill">Remaining open</span>}
                         <span className="badge b-green">Billed</span>
                         <span style={{ color: "#1e3a40", fontSize: 13.5, fontWeight: 800 }}>{fmtMoney(Number(c.total) || 0)}</span>
                       </button>

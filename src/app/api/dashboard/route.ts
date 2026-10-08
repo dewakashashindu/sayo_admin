@@ -75,6 +75,7 @@ interface RawRow {
   ItemDes: string | null;
   SerDuration: number | string | null;
   Category1: string | null;
+  SpecAreaID: string | null;
   TechName: string | null;
 }
 
@@ -129,11 +130,16 @@ export async function GET(req: NextRequest) {
     /* The same table is written `tbl_LocationMaster` in one place and
        `tbl_locationmaster` in another — MySQL on Linux treats those as two
        different tables. Ask the database for the real names once. */
-    const [locationTable, categoryTable, bookingTypeTable] = await Promise.all([
+    const [locationTable, bookingTypeTable] = await Promise.all([
       resolveLegacyTable('tbl_locationmaster'),
-      resolveLegacyTable('tbl_itemcategory1'),
       resolveLegacyTable('tbl_bookingtypes'),
     ]);
+
+    /* The "serviced" box lists technician SPECIALITIES — the table the service
+       master points at via tbl_itemmaster.SpecAreaID. Older databases may not
+       carry that column yet; resolve it once and fall back to no spec. */
+    const specCol =
+      (await resolveLegacyColumn('tbl_itemmaster', ['SpecAreaID'])) ?? '';
 
         const rows = await prisma.$queryRaw<RawRow[]>`
       SELECT
@@ -154,6 +160,9 @@ export async function GET(req: NextRequest) {
         RTRIM(i.ItemDes)          AS ItemDes,
         i.SerDuration             AS SerDuration,
         RTRIM(i.Category1)        AS Category1,
+        ${specCol
+          ? Prisma.raw('RTRIM(i.' + specCol.replace(/[^A-Za-z0-9_]/g, '') + ')')
+          : Prisma.raw("''")}      AS SpecAreaID,
         RTRIM(u.UserName)         AS TechName
       ${BOOKING_SERVICE_DETAIL_FROM}
       WHERE DATE(h.BookingDate) >= ${fromDate}
@@ -191,12 +200,13 @@ export async function GET(req: NextRequest) {
         .catch(() => [] as { LocCode: string; LocDes: string }[]),
       prisma
         /* Code / Des, the same shape as the booking-type list below, so the
-           screen can render both boxes with one piece of code. */
+           screen can render both boxes with one piece of code. The serviced
+           box is fed by tbl_technicianspecilities (requirement: the dropdown
+           must come from the technician specialities table). */
         .$queryRaw<{ Code: string; Des: string }[]>`
-          SELECT RTRIM(CatCode) AS Code, RTRIM(CatDes) AS Des
-          FROM ${Prisma.raw('`' + categoryTable.replace(/[^A-Za-z0-9_]/g, '') + '`')}
-          WHERE Enable = 1
-          ORDER BY CatDes
+          SELECT RTRIM(SpecAreaID) AS Code, RTRIM(Specilities) AS Des
+          FROM tbl_technicianspecilities
+          ORDER BY Specilities
         `
         .catch(() => [] as { Code: string; Des: string }[]),
       prisma
@@ -218,7 +228,8 @@ export async function GET(req: NextRequest) {
       BookingTypeID: string;
       Categories: string; SpecialNotes: string | null; CreatedAt: string;
       TotalPrice: number; TotalDuration: number;
-      services: { name: string; price: string; duration: string; category: string }[];
+      services: { name: string; price: string; duration: string; category: string; spec: string }[];
+      Specs: string;
       providers: { name: string; role: string }[];
       startMin: number;
     };
@@ -260,6 +271,7 @@ export async function GET(req: NextRequest) {
           TotalPrice: 0,
           TotalDuration: 0,
           services: [],
+          Specs: '',
           providers: [],
           startMin: startFromHeader,
         };
@@ -280,6 +292,7 @@ export async function GET(req: NextRequest) {
         price: `LKR ${price.toLocaleString()}`,
         duration: `${dur}min`,
         category: (r.Category1 || '').trim(),
+        spec: (r.SpecAreaID || '').trim(),
       });
       const tech = (r.TechID || '').trim();
       if (tech && tech !== '0') {
@@ -293,6 +306,7 @@ export async function GET(req: NextRequest) {
     for (const b of byKey.values()) {
       b.TimeSlot = b.startMin >= 0 ? slotLabelFromMinutes(b.startMin) : '';
       b.Categories = [...new Set(b.services.map(s => s.category).filter(Boolean))].join(', ');
+      b.Specs = [...new Set(b.services.map(s => s.spec).filter(Boolean))].join(', ');
     }
 
     /* The service box filters on the service's CATEGORY (tbl_itemcategory1 —
@@ -300,8 +314,11 @@ export async function GET(req: NextRequest) {
        on the booking's type (tbl_bookingtypes). A booking survives when ANY of
        its services carries the chosen category, which is what a person expects
        when they pick “HAIR” and the guest also had a manicure. */
-    const matchesFilters = (b: { Categories: string; BookingTypeID: string }) => {
-      if (wantCat && !b.Categories.split(',')
+    /* The serviced box now holds specialities: a booking survives when ANY of
+       its services carries the chosen SpecAreaID. Databases without the
+       SpecAreaID column fall back to the old category match. */
+    const matchesFilters = (b: { Categories: string; Specs: string; BookingTypeID: string }) => {
+      if (wantCat && !(specCol ? b.Specs : b.Categories).split(',')
         .map((c) => c.trim().toUpperCase())
         .includes(wantCat.toUpperCase())) return false;
       if (wantMode && b.BookingTypeID.trim().toUpperCase() !== wantMode.toUpperCase()) return false;
@@ -353,6 +370,86 @@ export async function GET(req: NextRequest) {
     const providerSet = new Set<string>();
     for (const b of active) for (const p of b.providers) providerSet.add(p.name);
 
+    /* Real money figures — today's cut bills (tbl_billheader.NetTotal) and
+       today's payment transactions (tbl_billpaytxn.ActAmt), scope-limited the
+       same way everything else on this screen is. Legacy databases without
+       the bill tables simply report zeros. */
+    let revenueBilled = 0;
+    let paymentsToday = 0;
+    let billsToday = 0;
+    try {
+      const billRows = await prisma.$queryRaw<{ LocCode: string; NetTotal: number | null }[]>`
+        SELECT RTRIM(LocCode) AS LocCode, NetTotal
+        FROM tbl_billheader
+        WHERE Txndate >= CURDATE() AND Txndate < CURDATE() + INTERVAL 1 DAY`;
+      const billedInScope = billRows.filter((r) => mayUse(r.LocCode));
+      billsToday = billedInScope.length;
+      revenueBilled = billedInScope.reduce((s, r) => s + (Number(r.NetTotal) || 0), 0);
+      const payRows = await prisma.$queryRaw<{ LocCode: string; ActAmt: number | null }[]>`
+        SELECT RTRIM(p.LocCode) AS LocCode, p.ActAmt
+        FROM tbl_billpaytxn p
+        JOIN tbl_billheader h
+          ON RTRIM(h.LocCode) = RTRIM(p.LocCode) AND RTRIM(h.BillNo) = RTRIM(p.BillNo)
+        WHERE h.Txndate >= CURDATE() AND h.Txndate < CURDATE() + INTERVAL 1 DAY`;
+      paymentsToday = payRows
+        .filter((r) => mayUse(r.LocCode))
+        .reduce((s, r) => s + (Number(r.ActAmt) || 0), 0);
+    } catch {
+      /* bill tables absent — keep the zeros */
+    }
+
+    /* Products Running Low — NON-service items whose current stock has fallen
+       to their reorder level (StockBalance <= ROL). Service items never
+       appear here. */
+    type LowRow = {
+      LocCode: string; ItemCode: string; ItemDes: string | null;
+      StockBalance: number | null; ROL: number | null; UnitID: string | null;
+      Category1: string | null; SupName: string | null; ContactNO: string | null;
+    };
+    let lowStock: LowRow[] = [];
+    try {
+      lowStock = (await prisma.$queryRaw<LowRow[]>`
+        SELECT RTRIM(i.LocCode) AS LocCode, RTRIM(i.ItemCode) AS ItemCode,
+               RTRIM(i.ItemDes) AS ItemDes,
+               i.StockBalance AS StockBalance, i.ROL AS ROL,
+               RTRIM(i.MasterUnitID) AS UnitID, RTRIM(i.Category1) AS Category1,
+               RTRIM(s.SupName) AS SupName, RTRIM(s.ContactNO) AS ContactNO
+        FROM tbl_itemmaster i
+        LEFT JOIN tbl_suppliermaster s ON RTRIM(s.SupID) = RTRIM(i.SupID)
+        WHERE i.Enable = 1 AND i.ServiceItem = 0
+          AND i.ROL > 0 AND i.StockBalance <= i.ROL
+        ORDER BY i.StockBalance / i.ROL ASC
+        LIMIT 60`).filter((r) => mayUse(r.LocCode));
+    } catch {
+      /* item master unreadable — leave the panel empty */
+    }
+
+    /* Waiting Orders — purchase orders that have not been fully GRN'ed yet. */
+    type PoRow = {
+      LocCode: string; PONO: string; PODate: Date | string; DueDate: Date | string | null;
+      NetTotal: number | null; Confirmed: string | null; Lines: number | null;
+      Qty: number | null; SupName: string | null;
+    };
+    let waitingOrders: PoRow[] = [];
+    try {
+      waitingOrders = (await prisma.$queryRaw<PoRow[]>`
+        SELECT RTRIM(h.LocCode) AS LocCode, RTRIM(h.PONO) AS PONO,
+               h.PODate AS PODate, h.DueDate AS DueDate, h.NetTotal AS NetTotal,
+               RTRIM(h.Confirmed) AS Confirmed,
+               (SELECT COUNT(*) FROM tbl_podetails d
+                 WHERE RTRIM(d.LocCode) = RTRIM(h.LocCode) AND RTRIM(d.PONo) = RTRIM(h.PONO)) AS Lines,
+               (SELECT COALESCE(SUM(d.POQty), 0) FROM tbl_podetails d
+                 WHERE RTRIM(d.LocCode) = RTRIM(h.LocCode) AND RTRIM(d.PONo) = RTRIM(h.PONO)) AS Qty,
+               RTRIM(s.SupName) AS SupName
+        FROM tbl_poheader h
+        LEFT JOIN tbl_suppliermaster s ON RTRIM(s.SupID) = RTRIM(h.SupID)
+        WHERE (h.GRNed IS NULL OR RTRIM(h.GRNed) <> 'Y')
+        ORDER BY h.PODate DESC
+        LIMIT 30`).filter((r) => mayUse(r.LocCode));
+    } catch {
+      /* PO tables absent — leave the panel empty */
+    }
+
         const activities = await prisma.adminactivitylog
       .findMany({ orderBy: { timestamp: 'desc' }, take: 12 })
       .then(list =>
@@ -369,10 +466,33 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       success: true,
       date,
-      stats,
+      stats: { ...stats, revenueBilled, paymentsToday, billsToday },
       providers: [...providerSet].slice(0, 8),
       timeSlots: buildTimeSlots(),
       bookings: dayBookings,
+      /* real-table feeds for the two stock panels */
+      lowStock: lowStock.map((r) => ({
+        locCode:  r.LocCode,
+        itemCode: r.ItemCode,
+        name:     (r.ItemDes || r.ItemCode).trim(),
+        category: (r.Category1 || '').trim(),
+        stock:    Number(r.StockBalance) || 0,
+        threshold:Number(r.ROL) || 0,
+        unit:     (r.UnitID || '').trim(),
+        supplier: (r.SupName || '—').trim(),
+        supplierPhone: (r.ContactNO || '').trim(),
+      })),
+      waitingOrders: waitingOrders.map((r) => ({
+        locCode:  r.LocCode,
+        poNo:     r.PONO,
+        supplier: (r.SupName || '—').trim(),
+        lines:    Number(r.Lines) || 0,
+        qty:      Number(r.Qty) || 0,
+        netTotal: Number(r.NetTotal) || 0,
+        orderedAt: dateOnly(r.PODate as never),
+        dueAt:     dateOnly(r.DueDate as never),
+        status:    (r.Confirmed || '').trim().toUpperCase() === 'Y' ? 'confirmed' : 'pending',
+      })),
       activities,
       /* the boxes above the schedule: what may be picked, and what is picked */
       filters: {

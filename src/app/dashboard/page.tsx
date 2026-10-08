@@ -30,6 +30,7 @@ interface DashboardStats {
   revenueOnline: number; revenueWalkin: number;
   onlineBookings: number; walkinBookings: number;
   emailCount: number; callCount: number; whatsappCount: number;
+  revenueBilled: number; paymentsToday: number; billsToday: number;
 }
 interface ActivityEntry {
   id: number; actor: string; section: string; action: string; timestamp: string;
@@ -40,12 +41,13 @@ interface DashboardData {
   filters?: DashboardFilters;
 }
 interface ProductStock {
-  id: number; name: string; category: string; stock: number;
-  threshold: number; unit: string; supplier: string; supplierPhone: string;
+  id: string; locCode: string; itemCode: string; name: string; category: string;
+  stock: number; threshold: number; unit: string; supplier: string; supplierPhone: string;
 }
 interface WaitingOrder {
-  id: number; productName: string; supplier: string; qty: number;
-  orderedAt: string; status: 'pending' | 'confirmed' | 'shipped';
+  id: string; locCode: string; poNo: string; supplier: string; lines: number;
+  qty: number; netTotal: number; orderedAt: string; dueAt: string;
+  status: 'pending' | 'confirmed';
 }
 
 const SLOT_H     = 72;
@@ -60,21 +62,6 @@ for (let m = DAY_START; m < DAY_START + 6 * 60; m += SLOT_MIN) {
   TIME_SLOTS.push(`${h12}:${String(mn).padStart(2, '0')} ${ap}`);
 }
 
-const LOW_STOCK: ProductStock[] = [
-  { id:1, name:'Argan Hair Oil 250ml',        category:'Hair Care', stock:4,  threshold:15, unit:'bottles', supplier:'Beauty Essentials Lanka', supplierPhone:'011 234 5678' },
-  { id:2, name:'Keratin Shampoo 1L',          category:'Hair Care', stock:2,  threshold:10, unit:'bottles', supplier:'ProHair Distributors',     supplierPhone:'077 345 6789' },
-  { id:3, name:'Gel Nail Polish – Red',       category:'Nails',     stock:5,  threshold:20, unit:'units',   supplier:'Nailart Supplies PVT',     supplierPhone:'071 456 7890' },
-  { id:4, name:'Aromatherapy Massage Oil',    category:'Wellness',  stock:3,  threshold:12, unit:'bottles', supplier:'Wellness World SL',        supplierPhone:'076 567 8901' },
-  { id:5, name:'Facial Clay Mask 500g',       category:'Skin',      stock:6,  threshold:15, unit:'jars',    supplier:'SkinCare Imports',         supplierPhone:'070 678 9012' },
-  { id:6, name:'Acetone Nail Polish Remover', category:'Nails',     stock:4,  threshold:18, unit:'bottles', supplier:'Nailart Supplies PVT',     supplierPhone:'071 456 7890' },
-];
-
-const WAITING_ORDERS: WaitingOrder[] = [
-  { id:101, productName:'Tea Tree Shampoo 1L',  supplier:'ProHair Distributors', qty:20, orderedAt:'2025-08-18', status:'shipped'   },
-  { id:102, productName:'Lavender Massage Oil', supplier:'Wellness World SL',    qty:15, orderedAt:'2025-08-19', status:'confirmed' },
-  { id:103, productName:'UV Gel Nail Kit',      supplier:'Nailart Supplies PVT', qty:30, orderedAt:'2025-08-20', status:'pending'   },
-];
-
 function emptyData(d: string): DashboardData {
   return {
     date: d,
@@ -82,6 +69,7 @@ function emptyData(d: string): DashboardData {
       totalToday: 0, totalPending: 0, totalConfirmed: 0, totalWalkin: 0, totalCancelled: 0,
       revenueOnline: 0, revenueWalkin: 0, onlineBookings: 0, walkinBookings: 0,
       emailCount: 0, callCount: 0, whatsappCount: 0,
+      revenueBilled: 0, paymentsToday: 0, billsToday: 0,
     },
     providers: [], timeSlots: [], bookings: [], activities: [],
   };
@@ -328,7 +316,6 @@ function StatusBadge({ status }: { status: string }) {
   return <span className="badge b-pnd"><span style={{width:5,height:5,borderRadius:'50%',background:'#f59e0b',display:'inline-block'}}/> Pending</span>;
 }
 function WaitingStatusBadge({ status }: { status: WaitingOrder['status'] }) {
-  if (status === 'shipped')   return <span className="badge b-ship"><ITruck s={9}/> Shipped</span>;
   if (status === 'confirmed') return <span className="badge b-ok">Confirmed</span>;
   return <span className="badge b-pnd">Pending</span>;
 }
@@ -602,20 +589,22 @@ function RangeScheduleGrid({ dates, providers, counts, onCellClick }: {
 }
 
 function LowStockPanel({ products }: { products: ProductStock[] }) {
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  function toggleOne(id: number) {
+  const router = useRouter();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  function toggleOne(id: string) {
     setSelected(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
   function toggleAll() {
     setSelected(prev => prev.size === products.length ? new Set() : new Set(products.map(p => p.id)));
   }
   const selectedProducts = products.filter(p => selected.has(p.id));
-  function handleOrderSelected() {
-    alert(`Ordering ${selectedProducts.length} items:\n${selectedProducts.map(p=>`• ${p.name} (${p.supplier})`).join('\n')}`);
+  /* Order Now goes straight to the Purchase Order screen (requirement). */
+  function goPurchaseOrder(codes: string[]) {
+    const qs = codes.length ? `?items=${encodeURIComponent(codes.join(','))}` : '';
+    router.push(`/inventory/po${qs}`);
   }
-  function handleOrderOne(p: ProductStock) {
-    alert(`Order Now:\n${p.name}\nSupplier: ${p.supplier}\nPhone: ${p.supplierPhone}`);
-  }
+  function handleOrderSelected() { goPurchaseOrder(selectedProducts.map(p => p.itemCode)); }
+  function handleOrderOne(p: ProductStock) { goPurchaseOrder([p.itemCode]); }
 
   return (
     <div id="products-panel" style={{background:'#deeaea',borderRadius:12,boxShadow:'0 1px 5px rgba(0,0,0,0.08)',padding:15,display:'flex',flexDirection:'column',gap:10}}>
@@ -671,12 +660,12 @@ function WaitingOrdersPanel({ orders }: { orders: WaitingOrder[] }) {
       </div>
       <div style={{display:'flex',flexDirection:'column',gap:7}}>
         {orders.map(o => (
-          <div key={o.id} className="waiting-item">
+          <div key={`${o.locCode}|${o.poNo}`} className="waiting-item">
             <div style={{width:38,height:38,borderRadius:9,background:'linear-gradient(135deg,#e0f2fe,#bae6fd)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:'#0369a1'}}><IBox s={17}/></div>
             <div style={{flex:1,minWidth:0}}>
-              <p style={{fontSize:13,fontWeight:600,color:'#1f2937',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.productName}</p>
-              <p style={{fontSize:11,color:'#6b7280',marginTop:1}}>Supplier: {o.supplier} · Qty: {o.qty}</p>
-              <p style={{fontSize:10,color:'#9ca3af',marginTop:1}}>Ordered: {o.orderedAt}</p>
+              <p style={{fontSize:13,fontWeight:600,color:'#1f2937',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>PO {o.poNo} · {o.supplier}</p>
+              <p style={{fontSize:11,color:'#6b7280',marginTop:1}}>{o.lines} line{o.lines === 1 ? '' : 's'} · Qty {o.qty} · LKR {o.netTotal.toLocaleString()}</p>
+              <p style={{fontSize:10,color:'#9ca3af',marginTop:1}}>Ordered: {o.orderedAt}{o.dueAt ? ` · Due: ${o.dueAt}` : ''} · {o.locCode}</p>
             </div>
             <WaitingStatusBadge status={o.status}/>
           </div>
@@ -888,7 +877,7 @@ function DateNav({ date, onChange }: { date:string; onChange:(d:string)=>void })
   );
 }
 
-function NotifDropdown({ onScrollToLow, onClose }: { onScrollToLow:()=>void; onClose:()=>void }) {
+function NotifDropdown({ products, onScrollToLow, onClose }: { products: ProductStock[]; onScrollToLow:()=>void; onClose:()=>void }) {
   return (
     <div className="notif-drop pop-in" onClick={e => e.stopPropagation()}>
       <div style={{background:'#1e3a40',padding:'12px 16px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
@@ -904,10 +893,10 @@ function NotifDropdown({ onScrollToLow, onClose }: { onScrollToLow:()=>void; onC
         <div style={{width:36,height:36,borderRadius:9,background:'rgba(239,68,68,0.1)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}><IBox s={17}/></div>
         <div style={{flex:1,minWidth:0}}>
           <p style={{fontSize:13,fontWeight:700,color:'#1f2937'}}>Products Running Low</p>
-          <p style={{fontSize:12,color:'#6b7280',marginTop:2,lineHeight:1.45}}><span style={{fontWeight:700,color:'#b91c1c'}}>{LOW_STOCK.length} products</span> below threshold.</p>
+          <p style={{fontSize:12,color:'#6b7280',marginTop:2,lineHeight:1.45}}><span style={{fontWeight:700,color:'#b91c1c'}}>{products.length} products</span> below threshold.</p>
           <div style={{display:'flex',flexWrap:'wrap',gap:4,marginTop:6}}>
-            {LOW_STOCK.slice(0,3).map(p => <span key={p.id} style={{background:'rgba(239,68,68,0.08)',borderRadius:99,padding:'2px 7px',fontSize:10,fontWeight:600,color:'#b91c1c'}}>{p.name}</span>)}
-            {LOW_STOCK.length > 3 && <span style={{fontSize:10,color:'#9ca3af',fontWeight:600,alignSelf:'center'}}>+{LOW_STOCK.length-3} more</span>}
+            {products.slice(0,3).map(p => <span key={p.id} style={{background:'rgba(239,68,68,0.08)',borderRadius:99,padding:'2px 7px',fontSize:10,fontWeight:600,color:'#b91c1c'}}>{p.name}</span>)}
+            {products.length > 3 && <span style={{fontSize:10,color:'#9ca3af',fontWeight:600,alignSelf:'center'}}>+{products.length-3} more</span>}
           </div>
           <p style={{fontSize:11,color:'#1e3a40',fontWeight:600,marginTop:5}}>Click to view →</p>
         </div>
@@ -947,6 +936,8 @@ function DashboardInner() {
   const [filterCat,  setFilterCat]  = useState('ALL');
   const [filterMode, setFilterMode] = useState('ALL');
   const [filters,    setFilters]    = useState<DashboardFilters>({ locations: [], categories: [], bookingTypes: [] });
+  const [lowStock,   setLowStock]   = useState<ProductStock[]>([]);
+  const [waitingOrders, setWaitingOrders] = useState<WaitingOrder[]>([]);
 
   const searchWrapRef = useRef<HTMLDivElement>(null);
   const notifRef      = useRef<HTMLDivElement>(null);
@@ -965,7 +956,28 @@ function DashboardInner() {
       .then(j => {
         if (!active) return;
         if (j?.success) {
-          setData({ ...emptyData(date), ...j, activities: j.activities || [] });
+          setData({
+            ...emptyData(date),
+            ...j,
+            stats: { ...emptyData(date).stats, ...(j.stats ?? {}) },
+            activities: j.activities || [],
+          });
+          setLowStock(
+            Array.isArray(j.lowStock)
+              ? (j.lowStock as Omit<ProductStock, 'id'>[]).map((r, i) => ({
+                  ...r,
+                  id: `${r.locCode}|${r.itemCode}` || String(i),
+                }))
+              : [],
+          );
+          setWaitingOrders(
+            Array.isArray(j.waitingOrders)
+              ? (j.waitingOrders as Omit<WaitingOrder, 'id'>[]).map((r) => ({
+                  ...r,
+                  id: `${r.locCode}|${r.poNo}`,
+                }))
+              : [],
+          );
           /* Remember the lists; keep the last good ones if a response has none
              (an older server, or a shop without the category table). */
           if (j.filters) {
@@ -1084,15 +1096,14 @@ function DashboardInner() {
     data.providers.filter(p => p.toLowerCase().includes(q)).forEach(p => {
       results.push({ id:`pv-${p}`, title:p, subtitle:'Service Provider', tag:'Provider', icon:<IUsers2/>, onSelect:() => { setViewTab('schedule'); scrollToId('schedule-panel'); } });
     });
-    LOW_STOCK.filter(p => p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)).forEach(p => {
+    lowStock.filter(p => p.name.toLowerCase().includes(q) || p.category.toLowerCase().includes(q)).forEach(p => {
       results.push({ id:`pd-${p.id}`, title:p.name, subtitle:`${p.category} · ${p.stock} ${p.unit} left`, tag:'Product', icon:<IBox/>, onSelect:() => scrollToLowStock() });
     });
     return results.slice(0, 9);
-  }, [search, data]);
+  }, [search, data, lowStock]);
 
   const name    = (admin?.name || 'Admin').toUpperCase();
   const initial = (access.initial || name.charAt(0) || 'A').toUpperCase();
-  const revenue = data.stats.revenueOnline + data.stats.revenueWalkin;
 
   const PAGE  = '#c2d4d4';
   const PANEL = '#deeaea';
@@ -1158,10 +1169,10 @@ function DashboardInner() {
               >
                 <IBell/>
                 <span style={{position:'absolute',top:0,right:0,minWidth:16,height:16,borderRadius:99,background:'#ef4444',color:'#fff',fontSize:9,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',padding:'0 4px',lineHeight:1,border:'2px solid '+HDR,pointerEvents:'none'}}>
-                  {LOW_STOCK.length}
+                  {lowStock.length}
                 </span>
               </button>
-              {notifOpen && <NotifDropdown onScrollToLow={scrollToLowStock} onClose={() => setNotifOpen(false)}/>}
+              {notifOpen && <NotifDropdown products={lowStock} onScrollToLow={scrollToLowStock} onClose={() => setNotifOpen(false)}/>}
             </div>
             {/* Admin name */}
             <div className="hdr-name" style={{display:'flex',alignItems:'center',gap:4,cursor:'pointer'}}>
@@ -1189,12 +1200,13 @@ function DashboardInner() {
                   {/* Revenue */}
                   <div className="stat-card rev">
                     <div style={{flex:1,minWidth:0}}>
-                      <p style={{fontSize:12,color:'#4b5563',fontWeight:400}}>Today Revenue</p>
+                      <p style={{fontSize:12,color:'#4b5563',fontWeight:400}}>Today Revenue (Billed)</p>
                       <p style={{fontSize:11,color:'#6b7280',marginTop:5}}>LKR</p>
-                      <p style={{fontSize:28,fontWeight:700,color:'#1f2937',lineHeight:1.1,marginTop:2}}>{revenue.toLocaleString()}</p>
+                      <p style={{fontSize:28,fontWeight:700,color:'#1f2937',lineHeight:1.1,marginTop:2}}>{(data.stats.revenueBilled || 0).toLocaleString()}</p>
                       <div style={{display:'flex',gap:14,marginTop:8,paddingTop:8,borderTop:'1px dashed rgba(0,0,0,0.12)',flexWrap:'wrap'}}>
-                        <MiniStat label="Online"  value={data.stats.revenueOnline.toLocaleString()}/>
-                        <MiniStat label="Walk-in" value={data.stats.revenueWalkin.toLocaleString()}/>
+                        <MiniStat label="Payments" value={(data.stats.paymentsToday || 0).toLocaleString()}/>
+                        <MiniStat label="Booked Online"  value={data.stats.revenueOnline.toLocaleString()}/>
+                        <MiniStat label="Booked Walk-in" value={data.stats.revenueWalkin.toLocaleString()}/>
                       </div>
                     </div>
                     <div className="stat-icon" style={{color:'#4a7a82',opacity:0.7,flexShrink:0}}><IReceipt s={26}/></div>
@@ -1246,8 +1258,8 @@ function DashboardInner() {
                 >
                   {/* Filters */}
                   <div className="filters-row" style={{display:'flex',gap:9,padding:'13px 15px 0',flexWrap:'wrap',flexShrink:0}}>
-                    <select className="f-sel" value={filterCat} onChange={e => setFilterCat(e.target.value)} title="Service category">
-                      <option value="ALL">All Services</option>
+                    <select className="f-sel" value={filterCat} onChange={e => setFilterCat(e.target.value)} title="Speciality (from tbl_technicianspecilities)">
+                      <option value="ALL">All Specialities</option>
                       {filters.categories.map(c => <option key={c.Code} value={c.Code}>{c.Des}</option>)}
                     </select>
                     <select className="f-sel" value={filterLoc} onChange={e => setFilterLoc(e.target.value)} title="Branch">
@@ -1334,7 +1346,7 @@ function DashboardInner() {
                   className={highlightId==='products-panel'?'search-highlight-ring':''}
                   style={{transition:'box-shadow 0.3s',borderRadius:12}}
                 >
-                  <LowStockPanel products={LOW_STOCK}/>
+                  <LowStockPanel products={lowStock}/>
                 </div>
 
                 {/* WAITING ORDERS */}
@@ -1343,7 +1355,7 @@ function DashboardInner() {
                   className={highlightId==='waiting-orders-panel'?'search-highlight-ring':''}
                   style={{transition:'box-shadow 0.3s',borderRadius:12}}
                 >
-                  <WaitingOrdersPanel orders={WAITING_ORDERS}/>
+                  <WaitingOrdersPanel orders={waitingOrders}/>
                 </div>
               </div>
 
