@@ -26,19 +26,35 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       },
     });
 
-    /* A recipe is the service's material definition; branches share it unless
-       they keep their own override. When the requested branch has no rows of
-       its own (the screenshot case: booking at LOCO0000001, recipe stored for
-       LOC07), fall back to the fullest recipe stored for this service so the
-       technician still sees the real ingredients instead of an empty sample. */
+    /* A recipe is the service's material definition, shared inside a branch
+       FAMILY (a main branch + the sub-locations hanging off it) unless the
+       branch keeps its own override. When the requested branch has no rows of
+       its own, fall back to the fullest recipe stored WITHIN THE SAME FAMILY
+       — never to another, unrelated branch's recipe. */
     let rows = rows0;
     if (locCode && rows0.length === 0) {
+      const locs = await prisma.tbl_LocationMaster.findMany({
+        select: { LocCode: true, MainLocCode: true, SubLoc: true },
+      });
+      const norm = (v: string) => (v ?? '').trim().toUpperCase();
+      const self = locs.find((l) => norm(l.LocCode) === norm(locCode));
+      const parent = self && self.SubLoc ? norm(self.MainLocCode) : norm(locCode);
+      const family = new Set<string>([norm(locCode)]);
+      if (parent) family.add(parent);
+      for (const l of locs) {
+        const p = norm(l.MainLocCode);
+        if (p && (p === parent || p === norm(locCode))) {
+          family.add(norm(l.LocCode));
+          family.add(p);
+        }
+      }
       const all = await prisma.tbl_Recipes.findMany({
         where: { MenuItmID: menuItmID },
       });
       const groups = new Map<string, typeof all>();
       for (const r of all as any[]) {
-        const k = String(r.LocCode ?? '').trim();
+        const k = String(r.LocCode ?? '').trim().toUpperCase();
+        if (!family.has(k)) continue; // other branches stay private
         const g = groups.get(k) ?? [];
         g.push(r);
         groups.set(k, g);

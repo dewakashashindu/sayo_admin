@@ -2,7 +2,7 @@
 // Lightweight item picker for the technician recipe editor ("add ingredient").
 // GET /api/items/search?q=shampoo&locCode=LOC0000004&limit=20
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { newRobustPrisma } from "@/lib/prismaRobust";
 
 const globalForPrisma = global as unknown as { prisma: PrismaClient };
@@ -21,33 +21,35 @@ export async function GET(req: NextRequest) {
 
     if (!q) return NextResponse.json({ success: true, items: [] });
 
-    const rows = await prisma.tbl_ItemMaster.findMany({
-      where: {
-        Enable: true,
-        ...(locCode ? { LocCode: locCode } : {}),
-        OR: [
-          { ItemCode: { contains: q } },
-          { ItemDes: { contains: q } },
-          { ItemPrintDes: { contains: q } },
-        ],
-      },
-      select: {
-        LocCode: true,
-        ItemCode: true,
-        ItemDes: true,
-        ItemPrintDes: true,
-        MasterUnitID: true,
-        Retailprice: true,
-        ServiceItem: true,
-        // Cost fields — the PO / GRN lines need the cost price. Additive:
-        // the bill screen and the recipe editor simply ignore it.
-        RawCost: true,
-        OverallCost: true,
-      },
-      // Stock items (ingredients) first, then services.
-      orderBy: [{ ServiceItem: "asc" }, { ItemDes: "asc" }],
-      take: limit,
-    });
+    /* Item code AND item name must work the same way. The code match covers
+       the full CHAR(15) code and the legacy 10-character prefix, so typing
+       either style finds the item. Branch-first: try the booking's branch,
+       then widen to all branches when nothing matched there. */
+    type Row = {
+      LocCode: string; ItemCode: string; ItemDes: string; ItemPrintDes: string;
+      MasterUnitID: string; Retailprice: number | null; ServiceItem: number | null;
+      RawCost: number | null; OverallCost: number | null;
+    };
+    const run = (loc: string | null) =>
+      prisma.$queryRaw<Row[]>`
+        SELECT RTRIM(LocCode) AS LocCode, RTRIM(ItemCode) AS ItemCode,
+               RTRIM(ItemDes) AS ItemDes, RTRIM(ItemPrintDes) AS ItemPrintDes,
+               RTRIM(MasterUnitID) AS MasterUnitID, Retailprice, ServiceItem,
+               RawCost, OverallCost
+        FROM tbl_itemmaster
+        WHERE Enable = 1
+          AND (
+            ItemCode LIKE ${'%' + q + '%'}
+            OR LEFT(ItemCode, 10) LIKE ${'%' + q + '%'}
+            OR ItemDes LIKE ${'%' + q + '%'}
+            OR ItemPrintDes LIKE ${'%' + q + '%'}
+          )
+          ${loc ? Prisma.sql`AND RTRIM(LocCode) = ${loc}` : Prisma.sql``}
+        ORDER BY ServiceItem ASC, ItemDes ASC
+        LIMIT ${limit}
+      `;
+    let rows: Row[] = locCode ? await run(locCode) : [];
+    if (rows.length === 0) rows = await run(null);
 
     return NextResponse.json({
       success: true,
