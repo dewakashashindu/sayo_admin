@@ -2,7 +2,14 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { minutesFromValue, timeLabelFromValue } from "@/lib/legacyTime";
 import { round2 } from "./format";
-import type { CreditTxn, MockBill, MockItemLine, MockLocation, MockPayMode } from "./types";
+import type {
+  CreditTxn,
+  MockBill,
+  MockItemLine,
+  MockLocation,
+  MockPayMode,
+  MockPayment,
+} from "./types";
 import type { ReportId } from "./types";
 
 const trim = (v: unknown) => String(v ?? "").trim();
@@ -11,7 +18,11 @@ const num = (v: unknown) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const CREDIT_IDS = new Set<ReportId>([
+/* rev 30: reports whose legacy sources (Vw_DailyPerformance, credit
+   settlement tables / SPs) do not exist in this database yet — the screen
+   shows "Coming soon" until they are added. */
+const COMING_SOON_IDS = new Set<ReportId>([
+  "transaction-summary",
   "credit-history",
   "credit-pay-history",
   "credit-account-detail",
@@ -30,6 +41,8 @@ export interface LiveReportData {
   unusedItems: LiveUnusedItem[];
   locations: MockLocation[];
   payModes: MockPayMode[];
+  /** rev 30: the report's legacy sources are missing from the database. */
+  comingSoon?: boolean;
 }
 
 async function safe<T>(label: string, run: () => Promise<T>, fallback: T): Promise<T> {
@@ -221,159 +234,6 @@ interface IssueRow {
   UserName: string | null;
 }
 
-function matchPay(
-  raw: string,
-  modes: MockPayMode[],
-): { payCode: string; payDes: string } {
-  const t = raw.trim();
-  if (!t) return { payCode: "UNKNOWN", payDes: "Unknown" };
-  const up = t.toUpperCase();
-  const hit = modes.find(
-    (m) => m.payCode.toUpperCase() === up || m.payDes.toUpperCase() === up,
-  );
-  if (hit) return hit;
-  return { payCode: t, payDes: t };
-}
-
-function buildBill(
-  h: HeaderRow,
-  lines: LineRow[],
-  cats: Map<string, ItemCatRow>,
-  modes: MockPayMode[],
-  sc: number,
-): MockBill {
-  const locCode = trim(h.LocCode);
-  const items: MockItemLine[] = lines.map((ln) => {
-    const itemId = trim(ln.ServiceItemID) || "—";
-    const cat = cats.get(`${locCode.toUpperCase()}::${itemId.toUpperCase()}`)
-      || cats.get(itemId.toUpperCase());
-    const qtyRaw = num(ln.Qty);
-    const qty = qtyRaw === 0 ? 1 : qtyRaw;
-    const price = num(ln.ItemPrice);
-    const name = trim(ln.ItemDes) || trim(cat?.ItemDes) || itemId;
-    const catL1 = trim(cat?.Cat1Des) || (Number(cat?.ServiceItem) === 0 ? "Retail" : "Service");
-    const catL2 = trim(cat?.Cat2Des) || "";
-    return {
-      itemId,
-      name,
-      catL1,
-      catL2,
-      qty,
-      price,
-      total: round2(qty * price),
-      techId: trim(ln.TechID),
-      techName: trim(ln.UserName) || trim(ln.TechID) || "—",
-    };
-  });
-  const gross = round2(items.reduce((s, i) => s + i.total, 0));
-  const pay = matchPay(trim(h.AdvBookingPayMode), modes);
-  const billedAt = h.BillingTime || h.TxnDateTime || h.BookingDate;
-  return {
-    locCode,
-    locName: trim(h.LocDes) || locCode,
-    billNo: trim(h.BookingID),
-    date: dateOnly(billedAt) || dateOnly(h.BookingDate),
-    time: time12(billedAt),
-    time24: time24(billedAt),
-    cashierId: trim(h.UserID),
-    cashierName: trim(h.UserName) || trim(h.UserID) || "—",
-    cusId: trim(h.CusCode),
-    cusName: trim(h.CusName) || trim(h.CusCode) || "Walk-in",
-    pax: Math.max(1, Math.round(num(h.Pax)) || 1),
-    gross,
-    disPre: 0,
-    disVal: 0,
-    serviceCharge: round2(sc),
-    otherServiceCharge: 0,
-    totalTax: 0,
-    advAmount: round2(num(h.AdvBookingAmount)),
-    netTotal: gross,
-    items,
-    payments: [{ payCode: pay.payCode, payDes: pay.payDes, amount: gross, remarks: "" }],
-    taxes: [],
-  };
-}
-
-async function loadBilledHeaders(from: string, to: string): Promise<HeaderRow[]> {
-  return safe(
-    "vw_bookingheader",
-    () =>
-      prisma.$queryRaw<HeaderRow[]>`
-        SELECT
-          RTRIM(h.BookingID) AS BookingID,
-          RTRIM(h.LocCode) AS LocCode,
-          RTRIM(IFNULL(h.LocDes, '')) AS LocDes,
-          RTRIM(IFNULL(h.CusCode, '')) AS CusCode,
-          RTRIM(IFNULL(h.CusName, '')) AS CusName,
-          DATE_FORMAT(h.BookingDate, '%Y-%m-%d %H:%i:%s') AS BookingDate,
-          RTRIM(IFNULL(h.Status, '')) AS Status,
-          RTRIM(IFNULL(h.AdvBookingPayMode, '')) AS AdvBookingPayMode,
-          h.AdvBookingAmount AS AdvBookingAmount,
-          RTRIM(IFNULL(h.UserID, '')) AS UserID,
-          RTRIM(IFNULL(h.UserName, '')) AS UserName,
-          DATE_FORMAT(h.TxnDateTime, '%Y-%m-%d %H:%i:%s') AS TxnDateTime,
-          h.Pax AS Pax,
-          DATE_FORMAT(h.BillingTime, '%Y-%m-%d %H:%i:%s') AS BillingTime
-        FROM vw_bookingheader h
-        WHERE h.BillingTime IS NOT NULL
-          AND h.BillingTime > '1900-01-01 00:00:00'
-          AND DATE(h.BillingTime) BETWEEN ${from} AND ${to}
-          AND UPPER(RTRIM(IFNULL(h.Status, ''))) <> 'CANCELLED'
-        ORDER BY h.BillingTime DESC
-        LIMIT 3000
-      `,
-    [],
-  );
-}
-
-async function loadServiceLines(bookingIDs: string[]): Promise<LineRow[]> {
-  if (!bookingIDs.length) return [];
-  const fromService = await safe(
-    "vw_bookingservicedetail",
-    () =>
-      inChunks(bookingIDs, 400, (part) =>
-        prisma.$queryRaw<LineRow[]>`
-          SELECT
-            RTRIM(d.BookingID) AS BookingID,
-            RTRIM(d.LocCode) AS LocCode,
-            RTRIM(IFNULL(d.ServiceItemID, '')) AS ServiceItemID,
-            RTRIM(IFNULL(d.ItemDes, '')) AS ItemDes,
-            d.Qty AS Qty,
-            d.ItemPrice AS ItemPrice,
-            RTRIM(IFNULL(d.TechID, '')) AS TechID,
-            RTRIM(IFNULL(d.UserName, '')) AS UserName
-          FROM vw_bookingservicedetail d
-          WHERE RTRIM(d.BookingID) IN (${Prisma.join(part)})
-        `,
-      ),
-    [],
-  );
-  const have = new Set(fromService.map((r) => trim(r.BookingID).toUpperCase()));
-  const missing = bookingIDs.filter((id) => !have.has(id.toUpperCase()));
-  if (!missing.length) return fromService;
-  const fromDetail = await safe(
-    "vw_bookingdetail",
-    () =>
-      inChunks(missing, 400, (part) =>
-        prisma.$queryRaw<LineRow[]>`
-          SELECT
-            RTRIM(d.BookingID) AS BookingID,
-            RTRIM(d.LocCode) AS LocCode,
-            RTRIM(IFNULL(d.ServiceItemID, '')) AS ServiceItemID,
-            RTRIM(IFNULL(d.ItemDes, '')) AS ItemDes,
-            d.Qty AS Qty,
-            d.ItemPrice AS ItemPrice,
-            RTRIM(IFNULL(d.TechID, '')) AS TechID,
-            RTRIM(IFNULL(d.Technician, '')) AS UserName
-          FROM vw_bookingdetail d
-          WHERE RTRIM(d.BookingID) IN (${Prisma.join(part)})
-        `,
-      ),
-    [],
-  );
-  return fromService.concat(fromDetail);
-}
-
 async function loadItemCats(keys: { loc: string; item: string }[]): Promise<Map<string, ItemCatRow>> {
   const map = new Map<string, ItemCatRow>();
   const items = [...new Set(keys.map((k) => k.item).filter(Boolean))];
@@ -405,28 +265,229 @@ async function loadItemCats(keys: { loc: string; item: string }[]): Promise<Map<
   return map;
 }
 
-async function loadCommissions(billNos: string[]): Promise<CommRow[]> {
-  if (!billNos.length) return [];
+/* ---------------------------------------------------------------- */
+/* rev 30 — bill-based data layer (legacy views).                    */
+/* The old booking-derived pseudo bills are gone: sales reports now  */
+/* read real bills from vw_salessummery / vw_salesdetail /           */
+/* vw_paymodes.                                                      */
+/* ---------------------------------------------------------------- */
+
+interface BillHeaderRow {
+  LocCode: string;
+  LocDes: string | null;
+  BillNo: string;
+  Txndate: string | null;
+  Gross: unknown;
+  DisPre: unknown;
+  DisVal: unknown;
+  ServiceCharge: unknown;
+  OtherServiceCharge: unknown;
+  TotalTaxAmount: unknown;
+  AdvAmount: unknown;
+  NetTotal: unknown;
+  CusID: string | null;
+  CusName: string | null;
+  TxnTime: string | null;
+  CashierID: string | null;
+  UserName: string | null;
+}
+
+interface BillLineRow {
+  LocCode: string;
+  BillNo: string;
+  ItemID: string | null;
+  ServiceItem: unknown;
+  ItemDes: string | null;
+  Qty: unknown;
+  SalesPrice: unknown;
+  TotalItmPrice: unknown;
+}
+
+interface BillPayRow {
+  LocCode: string;
+  BillNo: string;
+  PayCode: string | null;
+  PayDes: string | null;
+  ActAmt: unknown;
+  Rmks: string | null;
+}
+
+function billKey(loc: string, billNo: string): string {
+  return `${trim(loc).toUpperCase()}::${trim(billNo).toUpperCase()}`;
+}
+
+async function loadBillHeaders(from: string, to: string): Promise<BillHeaderRow[]> {
   return safe(
-    "vw_billtechcommissions",
+    "vw_salessummery",
     () =>
-      inChunks(billNos, 400, (part) =>
-        prisma.$queryRaw<CommRow[]>`
-          SELECT
-            RTRIM(LocCode) AS LocCode,
-            RTRIM(BillNo) AS BillNo,
-            SplitedAmount AS SplitedAmount,
-            RTRIM(IFNULL(UserName, '')) AS UserName,
-            RTRIM(IFNULL(ItemDes, '')) AS ItemDes,
-            RTRIM(IFNULL(TechID, '')) AS TechID,
-            RTRIM(IFNULL(ItemID, '')) AS ItemID
-          FROM vw_billtechcommissions
-          WHERE RTRIM(BillNo) IN (${Prisma.join(part)})
-        `,
-      ),
+      prisma.$queryRaw<BillHeaderRow[]>`
+        SELECT
+          RTRIM(h.LocCode) AS LocCode,
+          RTRIM(IFNULL(h.LocDes, '')) AS LocDes,
+          RTRIM(h.BillNo) AS BillNo,
+          DATE_FORMAT(h.Txndate, '%Y-%m-%d') AS Txndate,
+          h.Gross, h.DisPre, h.DisVal,
+          h.ServiceCharge, h.OtherServiceCharge, h.TotalTaxAmount,
+          h.AdvAmount, h.NetTotal,
+          RTRIM(IFNULL(h.CusID, '')) AS CusID,
+          RTRIM(IFNULL(h.CusName, '')) AS CusName,
+          DATE_FORMAT(h.TxnTime, '%Y-%m-%d %H:%i:%s') AS TxnTime,
+          RTRIM(IFNULL(h.CashierID, '')) AS CashierID,
+          RTRIM(IFNULL(h.UserName, '')) AS UserName
+        FROM vw_salessummery h
+        WHERE DATE(h.Txndate) BETWEEN ${from} AND ${to}
+        ORDER BY h.Txndate DESC, h.BillNo DESC
+        LIMIT 5000
+      `,
     [],
   );
 }
+
+async function loadBillLines(from: string, to: string): Promise<BillLineRow[]> {
+  return safe(
+    "vw_salesdetail",
+    () =>
+      prisma.$queryRaw<BillLineRow[]>`
+        SELECT
+          RTRIM(d.LocCode) AS LocCode,
+          RTRIM(d.BillNo) AS BillNo,
+          RTRIM(IFNULL(d.ItemID, '')) AS ItemID,
+          d.ServiceItem,
+          RTRIM(IFNULL(d.ItemDes, '')) AS ItemDes,
+          d.Qty, d.SalesPrice, d.TotalItmPrice
+        FROM vw_salesdetail d
+        WHERE DATE(d.Txndate) BETWEEN ${from} AND ${to}
+        LIMIT 20000
+      `,
+    [],
+  );
+}
+
+async function loadBillPays(from: string, to: string): Promise<BillPayRow[]> {
+  return safe(
+    "vw_paymodes",
+    () =>
+      prisma.$queryRaw<BillPayRow[]>`
+        SELECT
+          RTRIM(p.LocCode) AS LocCode,
+          RTRIM(p.BillNo) AS BillNo,
+          RTRIM(IFNULL(p.PayCode, '')) AS PayCode,
+          RTRIM(IFNULL(p.PayDes, '')) AS PayDes,
+          p.ActAmt,
+          RTRIM(IFNULL(p.Rmks, '')) AS Rmks
+        FROM vw_paymodes p
+        WHERE DATE(p.Txndate) BETWEEN ${from} AND ${to}
+        LIMIT 20000
+      `,
+    [],
+  );
+}
+
+/* rev 29 added tbl_billheader.Pax — on a pre-migration database the
+   column is missing, so pax stays 0 instead of breaking the report. */
+async function loadBillPax(from: string, to: string): Promise<Map<string, number>> {
+  const rows = await safe(
+    "tbl_billheader.Pax",
+    () =>
+      prisma.$queryRaw<{ LocCode: string; BillNo: string; Pax: unknown }[]>`
+        SELECT RTRIM(LocCode) AS LocCode, RTRIM(BillNo) AS BillNo, Pax
+        FROM tbl_billheader
+        WHERE DATE(Txndate) BETWEEN ${from} AND ${to}
+        LIMIT 5000
+      `,
+    [],
+  );
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    out.set(billKey(r.LocCode, r.BillNo), Math.max(0, Math.round(num(r.Pax))));
+  }
+  return out;
+}
+
+/* Payment modes hidden from sales (tbl_paymentmodes.DoNotShowInSales). */
+async function loadHiddenPayCodes(): Promise<Set<string>> {
+  const rows = await safe(
+    "vw_paymentmodes.DoNotShowInSales",
+    () =>
+      prisma.$queryRaw<{ PayCode: string }[]>`
+        SELECT RTRIM(PayCode) AS PayCode FROM vw_paymentmodes
+        WHERE DoNotShowInSales = '1'
+      `,
+    [],
+  );
+  return new Set(rows.map((r) => r.PayCode.toUpperCase()));
+}
+
+function buildBillFromView(
+  h: BillHeaderRow,
+  lines: BillLineRow[],
+  pays: BillPayRow[],
+  cats: Map<string, ItemCatRow>,
+  hidden: Set<string>,
+  pax: number,
+): MockBill {
+  const locCode = trim(h.LocCode);
+  const items: MockItemLine[] = lines.map((ln) => {
+    const itemId = trim(ln.ItemID) || "—";
+    const cat =
+      cats.get(`${locCode.toUpperCase()}::${itemId.toUpperCase()}`) ||
+      cats.get(itemId.toUpperCase());
+    const qtyRaw = num(ln.Qty);
+    const qty = qtyRaw === 0 ? 1 : qtyRaw;
+    const price = num(ln.SalesPrice);
+    const totalItm = num(ln.TotalItmPrice);
+    return {
+      itemId,
+      name: trim(ln.ItemDes) || trim(cat?.ItemDes) || itemId,
+      catL1: trim(cat?.Cat1Des) || (Number(ln.ServiceItem) === 0 ? "Retail" : "Service"),
+      catL2: trim(cat?.Cat2Des) || "",
+      qty,
+      price,
+      total: round2(totalItm || qty * price),
+      techId: "—",
+      techName: "—",
+    };
+  });
+  const gross = round2(num(h.Gross) || items.reduce((s, i) => s + i.total, 0));
+  const payments: MockPayment[] = pays
+    .filter((p) => !hidden.has(trim(p.PayCode).toUpperCase()))
+    .map((p) => ({
+      payCode: trim(p.PayCode) || "UNKNOWN",
+      payDes: trim(p.PayDes) || "Unknown",
+      amount: round2(num(p.ActAmt)),
+      remarks: trim(p.Rmks),
+    }));
+  const totalTax = round2(num(h.TotalTaxAmount));
+  const billedAt = h.TxnTime || h.Txndate || "";
+  return {
+    locCode,
+    locName: trim(h.LocDes) || locCode,
+    billNo: trim(h.BillNo),
+    date: dateOnly(billedAt) || trim(h.Txndate),
+    time: time12(billedAt),
+    time24: time24(billedAt),
+    cashierId: trim(h.CashierID),
+    cashierName: trim(h.UserName) || trim(h.CashierID) || "—",
+    cusId: trim(h.CusID),
+    cusName: trim(h.CusName) || trim(h.CusID) || "Walk-in",
+    pax,
+    gross,
+    disPre: round2(num(h.DisPre)),
+    disVal: round2(num(h.DisVal)),
+    serviceCharge: round2(num(h.ServiceCharge)),
+    otherServiceCharge: round2(num(h.OtherServiceCharge)),
+    totalTax,
+    advAmount: round2(num(h.AdvAmount)),
+    netTotal: round2(num(h.NetTotal)),
+    items,
+    payments,
+    taxes:
+      totalTax !== 0
+        ? [{ taxCode: "TAX", label: "Total Tax", amount: totalTax }]
+        : [],
+  };
+}
+
 
 async function loadIssueNotes(from: string, to: string): Promise<IssueRow[]> {
   return safe(
@@ -593,7 +654,9 @@ export async function loadLiveReport(opts: {
     payModes,
   };
 
-  if (CREDIT_IDS.has(opts.reportId)) return empty;
+  if (COMING_SOON_IDS.has(opts.reportId)) {
+    return { ...empty, comingSoon: true };
+  }
 
   const locFilter = trim(opts.loc);
   const pmFilter = trim(opts.pm);
@@ -615,43 +678,56 @@ export async function loadLiveReport(opts: {
     return { ...empty, bills: issueBills(rows, cats) };
   }
 
-  const headers = (await loadBilledHeaders(opts.from, opts.to)).filter((h) => {
+  /* rev 30 — real bills from the legacy views (vw_salessummery /
+     vw_salesdetail / vw_paymodes) instead of the old booking-derived
+     pseudo bills. */
+  const [headers, billLines, billPays, paxMap, hiddenPay] = await Promise.all([
+    loadBillHeaders(opts.from, opts.to),
+    loadBillLines(opts.from, opts.to),
+    loadBillPays(opts.from, opts.to),
+    loadBillPax(opts.from, opts.to),
+    loadHiddenPayCodes(),
+  ]);
+  const okHeaders = headers.filter((h) => {
     const code = trim(h.LocCode);
     if (!locOk(code, allow, opts.unlimited)) return false;
     if (locFilter && code.toUpperCase() !== locFilter.toUpperCase()) return false;
     return true;
   });
-  if (!headers.length) {
+  if (!okHeaders.length) {
     const unused = opts.reportId === "item-movement" ? await loadUnused(new Set()) : [];
     return { ...empty, unusedItems: unused };
   }
 
-  const bookingIDs = [...new Set(headers.map((h) => trim(h.BookingID)).filter(Boolean))];
-  const [lines, comms] = await Promise.all([
-    loadServiceLines(bookingIDs),
-    loadCommissions(bookingIDs),
-  ]);
-
-  const lineMap = new Map<string, LineRow[]>();
-  for (const ln of lines) {
-    const k = `${trim(ln.LocCode).toUpperCase()}::${trim(ln.BookingID).toUpperCase()}`;
+  const lineMap = new Map<string, BillLineRow[]>();
+  for (const ln of billLines) {
+    const k = billKey(ln.LocCode, ln.BillNo);
     const list = lineMap.get(k) || [];
     list.push(ln);
     lineMap.set(k, list);
   }
-  const scMap = new Map<string, number>();
-  for (const c of comms) {
-    const k = `${trim(c.LocCode).toUpperCase()}::${trim(c.BillNo).toUpperCase()}`;
-    scMap.set(k, round2((scMap.get(k) || 0) + num(c.SplitedAmount)));
+  const payMap = new Map<string, BillPayRow[]>();
+  for (const p of billPays) {
+    const k = billKey(p.LocCode, p.BillNo);
+    const list = payMap.get(k) || [];
+    list.push(p);
+    payMap.set(k, list);
   }
 
   const catKeys: { loc: string; item: string }[] = [];
-  for (const ln of lines) catKeys.push({ loc: trim(ln.LocCode), item: trim(ln.ServiceItemID) });
+  for (const ln of billLines) catKeys.push({ loc: trim(ln.LocCode), item: trim(ln.ItemID) });
   const cats = await loadItemCats(catKeys);
 
-  let bills = headers.map((h) => {
-    const k = `${trim(h.LocCode).toUpperCase()}::${trim(h.BookingID).toUpperCase()}`;
-    return buildBill(h, lineMap.get(k) || [], cats, payModes, scMap.get(k) || 0);
+  let bills = okHeaders.map((h) => {
+    const k = billKey(h.LocCode, h.BillNo);
+    return buildBillFromView(
+      h,
+      lineMap.get(k) || [],
+      payMap.get(k) || [],
+      cats,
+      hiddenPay,
+      paxMap.get(k) || 0,
+    );
   });
 
   if (pmFilter) {

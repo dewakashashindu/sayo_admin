@@ -6,6 +6,11 @@ import { usePathname } from 'next/navigation';
 import { useMyAccess } from '@/lib/useMyAccess';
 import { logoutAdmin } from '@/lib/logout';
 import Image from 'next/image';
+import DateRangeModal, { type AppliedRange } from '@/components/billing-reports/DateRangeModal';
+import { reportById } from '@/lib/billingReports/config';
+import { presetRange } from '@/lib/billingReports/dates';
+import { REPORT_CSS } from '@/components/billing-reports/reportCss';
+import type { MockLocation, MockPayMode, ReportDef } from '@/lib/billingReports/types';
 
 export interface AdminSidebarProps {
   active: string;
@@ -854,6 +859,48 @@ function MobileNav({
 
 export default function AdminSidebar(props: AdminSidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [pendingRep, setPendingRep] = useState<{
+    key: string;
+    path: string;
+    def: ReportDef;
+  } | null>(null);
+  const [repMeta, setRepMeta] = useState<{
+    locations: MockLocation[];
+    payModes: MockPayMode[];
+  }>({ locations: [], payModes: [] });
+
+  /* rev 31: a report entry in the sidebar no longer jumps straight to the
+     report — it first opens the date-range pop-up (same flow as the legacy
+     POS), then the report opens with the chosen filters. */
+  function handleNav(key: string, path: string) {
+    const m = /^\/billing\/reports\/([^/?]+)$/.exec(path);
+    const def = m ? reportById(m[1]) : undefined;
+    if (!def) {
+      props.onNav(key, path);
+      return;
+    }
+    setPendingRep({ key, path, def });
+    void fetch('/api/billing/reports?meta=1')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j) return;
+        setRepMeta({
+          locations: Array.isArray(j.locations) ? j.locations : [],
+          payModes: Array.isArray(j.payModes) ? j.payModes : [],
+        });
+      })
+      .catch(() => undefined);
+  }
+
+  function applyRange(r: AppliedRange) {
+    if (!pendingRep) return;
+    const q = new URLSearchParams({ from: r.from, to: r.to });
+    if (r.loc) q.set('loc', r.loc);
+    if (r.pm) q.set('pm', r.pm);
+    const { key, path } = pendingRep;
+    setPendingRep(null);
+    props.onNav(key, `${path}?${q.toString()}`);
+  }
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -880,6 +927,7 @@ export default function AdminSidebar(props: AdminSidebarProps) {
       <div className="sb-slot">
         <DesktopSidebar
           {...props}
+          onNav={handleNav}
           mobileOpen={mobileOpen}
           onMobileClose={() => setMobileOpen(false)}
         />
@@ -888,6 +936,25 @@ export default function AdminSidebar(props: AdminSidebarProps) {
         mobileOpen={mobileOpen}
         onToggle={() => setMobileOpen((o) => !o)}
       />
+      {pendingRep && (
+        <>
+          <style>{REPORT_CSS}</style>
+          <DateRangeModal
+            open
+            report={pendingRep.def}
+            initial={{
+              from: presetRange('month').from,
+              to: presetRange('month').to,
+              loc: '',
+              pm: '',
+            }}
+            locations={repMeta.locations}
+            payModes={repMeta.payModes}
+            onClose={() => setPendingRep(null)}
+            onApply={applyRange}
+          />
+        </>
+      )}
     </>
   );
 }
