@@ -124,6 +124,9 @@ model Tbl_ItemMaster {
   MaxQty           Float    @default(0)
   RawCost          Float    @default(0)
   CostMarkup       Float    @default(0)
+  // rev 28: technician commission percentage — see
+  // scripts/migrate-itemmaster-commission-rate-mysql.sql
+  CommissionRate   Float    @default(0)
   OverallCost      Float    @default(0)
   SalesMargin      Float    @default(0)
   StockBalance     Float    @default(0)
@@ -379,6 +382,9 @@ model tbl_billheader {
   RewardPoints       Float    @default(0)
   CashierID          String   @db.Char(10)
   Rmks               String   @default(" ") @db.VarChar(200)
+  // rev 29: booking link + pax count written when the bill completes
+  BookingID          String   @default("") @db.Char(15)
+  Pax                Int      @default(0) @db.Int
 
   @@id([LocCode, BillNo])
 }

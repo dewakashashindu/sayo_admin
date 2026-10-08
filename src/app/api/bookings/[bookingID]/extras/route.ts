@@ -172,6 +172,31 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       (i) => i.code,
     );
 
+    /* Conversion factors so the bill screen can price a material line the
+       way the recipe does: (Unit Cost / NoOfUnits) * Qty. Falls back to the
+       factor written in the sub-unit description ("PACK 1M FROM 10" → 10). */
+    const [convRows, subRows] = await Promise.all([
+      prisma.$queryRaw<{ M: string; S: string; N: number | null }[]>`
+        SELECT RTRIM(MasterUnitID) AS M, RTRIM(SubUnitID) AS S, NoOfUnits AS N
+        FROM tbl_unitconversion WHERE Enable = 1
+      `,
+      prisma.$queryRaw<{ ID: string; DES: string | null }[]>`
+        SELECT RTRIM(SubUnitID) AS ID, SubUnitDes AS DES
+        FROM tbl_unitsub WHERE Enable = 1
+      `,
+    ]);
+    const subDes = new Map(subRows.map((s) => [s.ID, String(s.DES ?? "")]));
+    const noUnitsFor = (master: string, sub: string): number => {
+      const c = convRows.find(
+        (x) => x.M === master && x.S === sub,
+      );
+      if (c && Number(c.N) > 0) return Number(c.N);
+      const from = /FROM\s*([0-9]+(?:\.[0-9]+)?)/i.exec(subDes.get(sub) ?? "");
+      if (from) return Number(from[1]) || 1;
+      const last = /([0-9]+(?:\.[0-9]+)?)\s*$/.exec((subDes.get(sub) ?? "").trim());
+      return last ? Number(last[1]) || 1 : 1;
+    };
+
     return NextResponse.json({
       success: true,
       locCode,
@@ -187,16 +212,22 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       recipe: recipeRows.map((r) => {
         const raw = r.RawItemCode.trim();
         const item = itemIndex.get(raw);
+        const master = r.MasterUnitID.trim();
+        const sub = r.SubUnitID.trim();
+        const noUnits = noUnitsFor(master, sub);
         return {
           guessID: r.GuessID.trim(),
           serviceItemID: r.ServiceItemID.trim(),
           rawItemCode: raw,
           rawItemDes: item?.des || raw,
-          masterUnitID: r.MasterUnitID.trim(),
-          subUnitID: r.SubUnitID.trim(),
+          masterUnitID: master,
+          subUnitID: sub,
           qty: Number(r.QTY ?? 0),
           itemCost: Number(r.ItemCost ?? 0),
           retailPrice: item?.retail ?? 0,
+          /* How many sub units make one master unit — the bill prices a
+             material line at itemCost / noOfUnits (rev 27). */
+          noOfUnits: noUnits,
           /* Category chain so the workstation can scope the ingredient
              search even for booking-saved recipe rows (rev 26b). */
           category1: item?.cat[0] ?? "",

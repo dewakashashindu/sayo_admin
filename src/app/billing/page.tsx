@@ -612,6 +612,14 @@ function BillingContent() {
   const remainingAfter = Number(searchParams.get("remainingAfter")) || 0;
 
     const [booking,         setBooking]         = useState<BookingPayload | null>(null);
+  /* rev 28: the pax on the bill header = how many guests THIS bill covers.
+     A per-guest selection counts the distinct guests picked; a whole-booking
+     bill uses the booking's full pax. */
+  const paxThisBill = hasSelection
+    ? new Set(
+        selectedSel.map((s) => String((s as { guessID?: string }).guessID || "MAIN").trim().toUpperCase()),
+      ).size
+    : Number(booking?.pax ?? 0) || 0;
   const [services,        setServices]        = useState<ServiceLine[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
 
@@ -691,7 +699,9 @@ function BillingContent() {
             id:         i + 1,
             name:       String(row.rawItemDes || row.rawItemCode || 'Material'),
             qty:        Number(row.qty) || 1,
-            price:      Number(row.retailPrice) || 0,
+            /* rev 27: a material line is priced at what it COST per used
+               sub-unit — (Unit Cost / NoOfUnits) — not at retail. */
+            price:      Math.round(((Number(row.itemCost) || 0) / (Number(row.noOfUnits) || 1)) * 100) / 100,
             salesBy:    defaultSalesBy,
             supporters: '',
             material:   true,
@@ -1146,6 +1156,10 @@ function BillingContent() {
     /* Everything that has to be written to the four bill tables:
      the item lines (services + items), the tax breakdown, the split payments
      and the “Gross ▸ Discount” headline numbers. */
+  /* rev 29: every line carries its technician names (main + supporters) so
+     the server can split the line's commission equally between them. */
+  const splitNames = (value: string) =>
+    value.split(',').map((t) => t.trim()).filter(Boolean);
   const billLines = () => [
     ...shownServices.map(s => ({
       itemId:    s.itemCode,
@@ -1153,6 +1167,7 @@ function BillingContent() {
       qty:       s.qty,
       price:     s.price,
       costPrice: 0,
+      techs:     [String(s.mainTech || '').trim(), ...splitNames(String(s.supporters || ''))].filter(Boolean),
     })),
     ...items.map(i => ({
       itemId:    i.itemCode || '',
@@ -1160,6 +1175,7 @@ function BillingContent() {
       qty:       i.qty,
       price:     i.price,
       costPrice: Number(i.costPrice) || 0,
+      techs:     [String(i.salesBy || '').trim(), ...splitNames(String(i.supporters || ''))].filter(Boolean),
     })),
   ];
 
@@ -1190,6 +1206,8 @@ function BillingContent() {
             gross,
             discountPercent: Number(discountPct) || 0,
             discountValue: discAmt,
+            // rev 29: booking link + pax for this bill → tbl_billheader.
+            pax: paxThisBill,
             // Full split: one entry per method used on this bill.
             payments: payments
               .filter(p => (Number(p.amount) || 0) > 0)
@@ -1427,7 +1445,14 @@ function BillingContent() {
                         <p className="bill-sec-title">Appointment</p>
                         <p style={{display:'flex',alignItems:'center',gap:6,fontSize:13,color:'#374151',fontWeight:600}}><IClock/>{fmtDateLong(view.date)} · {view.timeSlot}</p>
                         <p style={{display:'flex',alignItems:'center',gap:6,fontSize:12.5,color:'#6b7280',marginTop:4}}><ILoc/>{view.location}{view.provider?` · ${view.provider}`:''}</p>
-                        <p style={{fontSize:11.5,color:'#9ca3af',marginTop:4}}>Booking: {bookingID || '—'}</p>
+                        {/* rev 27: the bill header must carry the booking id and pax count. */}
+                        {/* rev 28: explicit Booking ID + Pax columns on the bill header */}
+                        <p style={{fontSize:11.5,color:'#9ca3af',marginTop:4}}>
+                          Booking ID: <strong style={{color:'#1e3a40'}}>{bookingID || '—'}</strong>
+                        </p>
+                        <p style={{fontSize:11.5,color:'#9ca3af',marginTop:2}}>
+                          Pax (this bill): <strong style={{color:'#1e3a40'}}>{paxThisBill}</strong>
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -1903,7 +1928,7 @@ function BillingContent() {
                   time={view.timeSlot || paidAt}
                   status={booking?.billed || paid ? 'PAID' : statusLabel(view.status)}
                   mode={view.mode}
-                  pax={booking?.pax}
+                  pax={paxThisBill}
                   cashier={access.displayName || ''}
                   technician={[...new Set(shownServices.map(s => s.mainTech).filter(Boolean))].join(', ')}
                   clientName={view.clientName}

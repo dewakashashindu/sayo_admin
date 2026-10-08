@@ -110,6 +110,15 @@ export async function POST(req: NextRequest, { params }: Ctx) {
             409,
           );
         }
+        /* rev 28: the bill screen's floor is CHECKED-IN. Reverting a Done
+           booking brings it back to Ongoing so the technician can correct
+           the work; it must NEVER undo the check-in itself from here. */
+        if (next === "CONFIRMED") {
+          throw new RevertError(
+            "This booking is already checked in (Ongoing) — reverting from the bill screen stops at Checked-In so the technician can correct the work. Undoing the check-in itself is not available here.",
+            409,
+          );
+        }
 
         const locCode = trim(header.LocCode);
 

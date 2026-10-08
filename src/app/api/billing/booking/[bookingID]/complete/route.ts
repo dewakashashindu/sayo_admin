@@ -243,6 +243,10 @@ export async function POST(req: NextRequest, { params }: Ctx) {
             cusCode: trim(header.CusCode),
             cashierId,
             remark,
+            /* rev 29: pax + per-line technician commission split. The
+               UN-merged lines carry the technician names. */
+            pax: num(body.pax, 0),
+            commissionLines: preparedLines,
           }),
         BILL_TX_OPTIONS,
       );

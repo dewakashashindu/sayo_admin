@@ -40,6 +40,9 @@ interface RecipeRow {
   category2?: string;
   category3?: string;
   category4?: string;
+  /* rev 27b: true only for lines the technician added THIS session —
+     loaded recipe lines keep their sub unit locked. */
+  isNew?: boolean;
 }
 
 interface SubUnit {
@@ -63,6 +66,7 @@ interface ItemOption {
   masterUnitID: string;
   retailPrice: number;
   serviceItem: boolean;
+  costPrice?: number;
   category1?: string;
   category2?: string;
   category3?: string;
@@ -553,8 +557,22 @@ export default function TechnicianAppointmentDetailPage() {
     /* Only the guests already in the chair get a recipe card here — the rest of
        the group appears when they are checked in at their own time. */
     const bookingSchedule = current.serviceSchedule ?? [];
+    /* rev 27: a service that already has technician-recorded materials stays
+       visible even after a bill revert un-checkes the guest — the recorded
+       lines must never "disappear" from this board. */
+    const savedItemCodes = new Set(
+      (extras?.recipe ?? []).map((r) =>
+        String(r.serviceItemID || "").trim().toUpperCase(),
+      ),
+    );
     const services = bookingSchedule.length > 0
-      ? bookingSchedule.filter((service) => service.checkedIn)
+      ? bookingSchedule.filter(
+          (service) =>
+            service.checkedIn ||
+            savedItemCodes.has(
+              String(service.itemCode || "").trim().toUpperCase(),
+            ),
+        )
       : current.serviceNames.map((name, i) => ({
           serviceIndex: i,
           itemCode: "",
@@ -722,7 +740,7 @@ export default function TechnicianAppointmentDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [tab, appt, usingSample]);
+  }, [tab, appt, usingSample, extras]);
 
   // Reset selection + scope whenever the recipe editor opens / switches / closes.
   useEffect(() => {
@@ -946,11 +964,15 @@ export default function TechnicianAppointmentDetailPage() {
       masterUnitID: item.masterUnitID,
       subUnitID: "",
       qty: 1,
-      itemCost: 0,
+      /* rev 27: a freshly added ingredient arrives WITH its unit cost from
+         the item master (OverallCost / RawCost) — never zero. The field
+         stays read-only; the Line Total divides by the sub-unit factor. */
+      itemCost: Number(item.costPrice) || 0,
       category1: item.category1 || "",
       category2: item.category2 || "",
       category3: item.category3 || "",
       category4: item.category4 || "",
+      isNew: true,
     };
     /* rev 26c: when a row is highlighted, the added item REPLACES it in
        place — the highlighted line is removed and the new item takes its
@@ -1686,7 +1708,19 @@ export default function TechnicianAppointmentDetailPage() {
                                                   <select
                                                     className="mini-sel"
                                                     value={row.subUnitID}
+                                                    disabled={!row.isNew}
+                                                    onClick={(e) => e.stopPropagation()}
                                                     onChange={(e) => updateEditRow(i, { subUnitID: e.target.value })}
+                                                    title={
+                                                      row.isNew
+                                                        ? "Sub unit — changeable on newly added lines"
+                                                        : "Loaded recipe lines keep their sub unit — only new lines can change it"
+                                                    }
+                                                    style={
+                                                      !row.isNew
+                                                        ? { background: "#f3f6f6", color: "#64748b", cursor: "not-allowed" }
+                                                        : undefined
+                                                    }
                                                   >
                                                     <option value="">— Select —</option>
                                                     {unitOpts.map((u) => (
@@ -1703,6 +1737,7 @@ export default function TechnicianAppointmentDetailPage() {
                                                     min={0}
                                                     step="any"
                                                     value={row.qty}
+                                                    onClick={(e) => e.stopPropagation()}
                                                     onChange={(e) =>
                                                       updateEditRow(i, { qty: Number(e.target.value) || 0 })
                                                     }
@@ -1714,7 +1749,8 @@ export default function TechnicianAppointmentDetailPage() {
                                                     type="number"
                                                     value={row.itemCost}
                                                     readOnly
-                                                    title="Unit Cost is fixed here — change Qty only"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    title="Unit Cost comes from the item master — change Qty / Sub Unit only"
                                                     style={{ background: "#f3f6f6", color: "#64748b", cursor: "not-allowed" }}
                                                   />
                                                 </td>

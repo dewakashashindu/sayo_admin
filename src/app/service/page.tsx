@@ -61,6 +61,8 @@ interface Item {
   maxQty: number;
   rawCost: number;
   costMarkup: number;
+  /** rev 28: technician commission % — stored on tbl_itemmaster.CommissionRate. */
+  commissionRate: number;
   salesMargin: number;
   stockBalance: number;
   expiryItem: boolean;
@@ -191,6 +193,7 @@ function emptyItem(): Item {
     maxQty: 0,
     rawCost: 0,
     costMarkup: 0,
+    commissionRate: 0,
     salesMargin: 0,
     stockBalance: 0,
     expiryItem: false,
@@ -4273,6 +4276,23 @@ function ItemMasterPageContent() {
                               )
                             }
                             min={0}
+                          />
+                        </FieldRow>
+                        {/* rev 28: commission percentage, saved on the item master. */}
+                        <FieldRow label="Commission Rate %">
+                          <input
+                            className="frm-input"
+                            type="number"
+                            value={current.commissionRate}
+                            onChange={(event) =>
+                              updateItem(
+                                "commissionRate",
+                                Number(event.target.value),
+                              )
+                            }
+                            min={0}
+                            step="any"
+                            title="Saved to tbl_itemmaster.CommissionRate — run scripts/migrate-itemmaster-commission-rate-mysql.sql first"
                           />
                         </FieldRow>
                         <FieldRow label="Overall Cost (Auto)">

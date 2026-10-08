@@ -257,6 +257,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
           MaxQty: num(body.maxQty),
           RawCost: num(body.rawCost),
           CostMarkup: num(body.costMarkup),
+          CommissionRate: num(body.commissionRate),
           OverallCost: num(body.rawCost) * (1 + num(body.costMarkup) / 100),
           ExpiryItem: bool(body.expiryItem),
           WSApp: bool(body.wsApp),

@@ -118,6 +118,7 @@ export async function GET() {
             MaxQty: true,
             RawCost: true,
             CostMarkup: true,
+            CommissionRate: true,
             OverallCost: true,
             SalesMargin: true,
             Retailprice: true,
@@ -272,6 +273,7 @@ export async function GET() {
         maxQty: num(item.MaxQty),
         rawCost: num(item.RawCost),
         costMarkup: num(item.CostMarkup),
+        commissionRate: num(item.CommissionRate),
         overallCost: num(item.OverallCost),
         salesMargin: num(item.SalesMargin),
         stockBalance: num(item.StockBalance),
@@ -501,6 +503,7 @@ export async function POST(req: NextRequest) {
               MaxQty: num(body.maxQty),
               RawCost: num(body.rawCost),
               CostMarkup: num(body.costMarkup),
+              CommissionRate: num(body.commissionRate),
               OverallCost: num(body.rawCost) * (1 + num(body.costMarkup) / 100),
 
               // New items can have location-specific prices and margins.

@@ -240,6 +240,10 @@ export interface BillWriteRequest {
   cusCode: string;
   cashierId: string;
   remark: string;
+  /** rev 29: pax count stored on tbl_billheader. */
+  pax?: number;
+  /** rev 29: UN-merged lines (with technician names) for the commission split. */
+  commissionLines?: BillLineInput[];
 }
 
 export interface BillWriteResult {
@@ -286,18 +290,19 @@ export async function writeBillTx(
     nextSerialTx(tx, SERIAL_CODES.invoice),
   );
 
-  /* 2. tbl_billheader */
+  /* 2. tbl_billheader — rev 29 also stores the booking link + pax count. */
+  const headerPax = Math.max(0, Math.round(Number(req.pax ?? 0) || 0));
   await at("tbl_billheader", () =>
     tx.$executeRaw`
       INSERT INTO tbl_billheader (
         LocCode, BillNo, Txndate, Gross, DisPre, DisVal, ServiceCharge,
         OtherServiceCharge, TotalTaxAmount, AdvAmount, NetTotal, CusID,
-        TxnTime, ReferalCusID, RewardPoints, CashierID, Rmks
+        TxnTime, ReferalCusID, RewardPoints, CashierID, Rmks, BookingID, Pax
       ) VALUES (
         ${locCode}, ${billNo}, NOW(), ${summary.gross}, ${summary.discountPercent},
         ${summary.discountValue}, ${summary.serviceCharge}, ${summary.otherServiceCharge},
         ${summary.totalTaxAmount}, ${summary.advAmount}, ${summary.netTotal}, ${cusCode},
-        NOW(), ${" "}, ${0}, ${cashierId}, ${remark}
+        NOW(), ${" "}, ${0}, ${cashierId}, ${remark}, ${req.bookingID}, ${headerPax}
       )
     `,
   );
@@ -351,6 +356,85 @@ export async function writeBillTx(
         )}
       `,
     );
+  }
+
+  /* 5b. tbl_billtechcommissions — rev 29 commission split.
+     Total commission of a line = line amount (qty × price) × CommissionRate%.
+     It is divided EQUALLY between the technicians attached to the line
+     (main technician + supporters, resolved by name → tbl_userdetails). */
+  const commissionLines = req.commissionLines ?? [];
+  if (commissionLines.length > 0) {
+    await at("tbl_billtechcommissions", async () => {
+      const codes = Array.from(
+        new Set(commissionLines.map((l) => itemCode(l.itemId)).filter(Boolean)),
+      );
+      if (codes.length === 0) return;
+      const legacy = Array.from(
+        new Set(codes.map((c) => c.substring(0, 10))),
+      );
+      const rateRows = await tx.$queryRaw<
+        { ItemCode: string; Rate: number | null }[]
+      >`
+        SELECT RTRIM(ItemCode) AS ItemCode, CommissionRate AS Rate
+        FROM tbl_itemmaster
+        WHERE RTRIM(LocCode) = ${locCode}
+          AND (RTRIM(ItemCode) IN (${Prisma.join(codes)})
+            OR LEFT(ItemCode, 10) IN (${Prisma.join(legacy)}))
+      `;
+      const rateByCode = new Map<string, number>();
+      rateRows.forEach((r) => {
+        const key = String(r.ItemCode ?? "").trim();
+        if (key && !rateByCode.has(key)) {
+          rateByCode.set(key, Number(r.Rate ?? 0) || 0);
+        }
+      });
+
+      const names = Array.from(
+        new Set(commissionLines.flatMap((l) => l.techs ?? [])),
+      );
+      const idByName = new Map<string, string>();
+      if (names.length > 0) {
+        const users = await tx.$queryRaw<{ UserId: string; UserName: string }[]>`
+          SELECT RTRIM(UserId) AS UserId, RTRIM(UserName) AS UserName
+          FROM tbl_userdetails
+          WHERE UPPER(RTRIM(UserName)) IN (${Prisma.join(
+            names.map((n) => n.toUpperCase()),
+          )})
+        `;
+        users.forEach((u) => {
+          const key = u.UserName.trim().toUpperCase();
+          if (key && !idByName.has(key)) idByName.set(key, u.UserId.trim());
+        });
+      }
+
+      const valueRows: Prisma.Sql[] = [];
+      for (const line of commissionLines) {
+        const code = itemCode(line.itemId);
+        if (!code) continue;
+        const rate =
+          rateByCode.get(code) ?? rateByCode.get(code.substring(0, 10)) ?? 0;
+        if (rate <= 0) continue;
+        const techIds = Array.from(
+          new Set(
+            (line.techs ?? [])
+              .map((n) => idByName.get(n.trim().toUpperCase()))
+              .filter((v): v is string => Boolean(v)),
+          ),
+        );
+        if (techIds.length === 0) continue;
+        const total = (Number(line.qty) * Number(line.price) * rate) / 100;
+        const each = Math.round((total / techIds.length) * 100) / 100;
+        for (const tech of techIds) {
+          valueRows.push(Prisma.sql`(${locCode}, ${billNo}, ${code}, ${tech}, ${each})`);
+        }
+      }
+      if (valueRows.length === 0) return;
+      await tx.$executeRaw`
+        INSERT INTO tbl_billtechcommissions (
+          LocCode, BillNo, ItemID, TechID, SplitedAmount
+        ) VALUES ${Prisma.join(valueRows)}
+      `;
+    });
   }
 
   /* 6. The booking is billed from now on → leaves the Billing Dashboard. */

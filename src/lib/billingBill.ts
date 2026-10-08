@@ -21,6 +21,9 @@ export interface BillLineInput {
   qty: number;
   price: number;
   costPrice: number;
+  /** rev 29: technician NAMES attached to this line (main + supporters) —
+      used to split the line's commission equally between them. */
+  techs?: string[];
 }
 
 /** One ready-to-insert tbl_billdetail row. */
@@ -63,6 +66,15 @@ export function normaliseBillLines(input: unknown): BillLineInput[] {
       qty,
       price: money(Math.max(0, price)),
       costPrice: Number.isFinite(costPrice) ? money(Math.max(0, costPrice)) : 0,
+      techs: Array.isArray(row.techs)
+        ? Array.from(
+            new Set(
+              (row.techs as unknown[])
+                .map((t) => String(t ?? "").trim())
+                .filter(Boolean),
+            ),
+          )
+        : undefined,
     });
   }
   return lines;

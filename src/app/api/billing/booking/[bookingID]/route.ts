@@ -321,6 +321,50 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         ? new Date(header.BillingTime as never).toISOString()
         : "";
       try {
+        /* rev 29: the bill header itself now stores the booking id — the
+           direct link (when the migration has been applied). */
+        try {
+          const byBooking = await prisma.$queryRaw<
+            { BillNo: string | null; N: number | null }[]
+          >`
+            SELECT RTRIM(BillNo) AS BillNo, NetTotal AS N
+            FROM tbl_billheader
+            WHERE RTRIM(BookingID) = ${trim(header.BookingID)}
+              AND RTRIM(LocCode) = ${locCode}
+            ORDER BY TxnTime DESC
+            LIMIT 1
+          `;
+          if (byBooking[0]?.BillNo) {
+            billNo = trim(byBooking[0].BillNo);
+            billedNet = Number(byBooking[0]?.N ?? 0) || 0;
+          }
+        } catch {
+          /* BookingID column absent — pre-migration database, fall through. */
+        }
+        /* rev 27: the complete step stamps ServiceBillNo onto the billed
+           service rows — that is the reliable booking → invoice link (the
+           old CusID + time-window match failed for walk-ins). */
+        if (!billNo) {
+          const stamped = await prisma.$queryRaw<{ BillNo: string | null }[]>`
+          SELECT RTRIM(ServiceBillNo) AS BillNo
+          FROM tbl_bookingservicedetail
+          WHERE RTRIM(BookingID) = ${trim(header.BookingID)}
+            AND RTRIM(LocCode) = ${locCode}
+            AND ServiceBillNo IS NOT NULL
+            AND RTRIM(ServiceBillNo) <> ''
+          ORDER BY ServiceBilledTime DESC
+          LIMIT 1
+        `;
+          if (stamped[0]?.BillNo) {
+            billNo = trim(stamped[0].BillNo);
+            const net = await prisma.$queryRaw<{ N: number | null }[]>`
+              SELECT NetTotal AS N FROM tbl_billheader
+              WHERE RTRIM(LocCode) = ${locCode} AND RTRIM(BillNo) = ${billNo}
+              LIMIT 1
+            `;
+            billedNet = Number(net[0]?.N ?? 0) || 0;
+          }
+        }
         const bills = await prisma.$queryRaw<
           { BillNo: string; NetTotal: number | null; TxnTime: string | null }[]
         >`
@@ -334,29 +378,33 @@ export async function GET(req: NextRequest, { params }: Ctx) {
           ORDER BY TxnTime DESC
           LIMIT 20
         `;
-        const billedMs = header.BillingTime
-          ? new Date(header.BillingTime as never).getTime()
-          : NaN;
-        let best: { BillNo: string; NetTotal: number; diff: number } | null = null;
-        for (const row of bills) {
-          const txnMs = new Date(String(row.TxnTime ?? "").replace(" ", "T")).getTime();
-          if (Number.isNaN(txnMs) || Number.isNaN(billedMs)) continue;
-          const diff = Math.abs(txnMs - billedMs);
-          if (diff > 20 * 60 * 1000) continue;
-          if (!best || diff < best.diff) {
-            best = {
-              BillNo: trim(row.BillNo),
-              NetTotal: Number(row.NetTotal ?? 0) || 0,
-              diff,
-            };
+        /* Fall back to the customer + time-window match only when no
+           ServiceBillNo stamp was found. */
+        if (!billNo) {
+          const billedMs = header.BillingTime
+            ? new Date(header.BillingTime as never).getTime()
+            : NaN;
+          let best: { BillNo: string; NetTotal: number; diff: number } | null = null;
+          for (const row of bills) {
+            const txnMs = new Date(String(row.TxnTime ?? "").replace(" ", "T")).getTime();
+            if (Number.isNaN(txnMs) || Number.isNaN(billedMs)) continue;
+            const diff = Math.abs(txnMs - billedMs);
+            if (diff > 20 * 60 * 1000) continue;
+            if (!best || diff < best.diff) {
+              best = {
+                BillNo: trim(row.BillNo),
+                NetTotal: Number(row.NetTotal ?? 0) || 0,
+                diff,
+              };
+            }
           }
-        }
-        if (best) {
-          billNo = best.BillNo;
-          billedNet = best.NetTotal;
-        } else if (bills[0]) {
-          billNo = trim(bills[0].BillNo);
-          billedNet = Number(bills[0].NetTotal ?? 0) || 0;
+          if (best) {
+            billNo = best.BillNo;
+            billedNet = best.NetTotal;
+          } else if (bills[0]) {
+            billNo = trim(bills[0].BillNo);
+            billedNet = Number(bills[0].NetTotal ?? 0) || 0;
+          }
         }
       } catch {
         /* bill header optional — the receipt still opens from the booking */
