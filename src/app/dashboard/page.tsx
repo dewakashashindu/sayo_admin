@@ -426,8 +426,11 @@ function DayScheduleGrid({ bookings, providers, onCardClick, date, locCode }: {
         if (!live) return;
         const row = Array.isArray(d.days) ? d.days[0] : null;
         if (!row?.open) {
+          /* A legacy DB may carry no operating-hours rows at all — the admin
+             schedule must still show the day's bookings, so keep the default
+             slots and let the render decide whether the day is really empty. */
           setClosed(true);
-          setSlots([]);
+          setSlots(TIME_SLOTS);
           return;
         }
         const [sh, sm] = String(row.startTime || "09:00").split(":").map(Number);
@@ -442,20 +445,28 @@ function DayScheduleGrid({ bookings, providers, onCardClick, date, locCode }: {
         setSlots(next);
         setClosed(false);
       })
-      .catch(() => { if (live) { setClosed(true); setSlots([]); } });
+      .catch(() => { if (live) { setClosed(true); setSlots(TIME_SLOTS); } });
     return () => { live = false; };
   }, [date, locCode]);
 
   const totalSlots = slots.length;
   const gridH      = totalSlots * SLOT_H;
 
-  if (closed || totalSlots === 0) {
+  /* Booked work wins over a missing/closed hours row: an empty day with no
+     hours data is "closed", a day that has bookings still gets its grid. */
+  if ((closed || totalSlots === 0) && bookings.length === 0) {
     return <p style={{ padding: 24, color: '#6b7280', fontSize: 13, fontWeight: 600 }}>Salon is closed this day.</p>;
   }
 
+  /* Bookings without a technician still need a lane on the schedule. */
+  const hasUnassigned = bookings.some(b => b.providers.length === 0);
+  const lanes = hasUnassigned ? [...providers, 'Unassigned'] : providers;
+
   function getProviderAppts(providerName: string) {
-    return bookings
-      .filter(b => b.providers.some(p => p.name === providerName))
+    const source = providerName === 'Unassigned'
+      ? bookings.filter(b => b.providers.length === 0)
+      : bookings.filter(b => b.providers.some(p => p.name === providerName));
+    return source
       .map(b => {
         const startMin  = slotToMin(b.TimeSlot);
         const offsetMin = startMin - dayStart;
@@ -481,7 +492,7 @@ function DayScheduleGrid({ bookings, providers, onCardClick, date, locCode }: {
 
   return (
     <div className="cal-grid-wrap">
-      <div className="cal-grid-outer" style={{minWidth: 72 + providers.length * 150}}>
+      <div className="cal-grid-outer" style={{minWidth: 72 + lanes.length * 150}}>
         {/* Time gutter */}
         <div className="time-gutter">
           {slots.map((slot, i) => {
@@ -495,7 +506,7 @@ function DayScheduleGrid({ bookings, providers, onCardClick, date, locCode }: {
         </div>
         {/* Provider columns */}
         <div className="provider-cols">
-          {providers.map(provName => {
+          {lanes.map(provName => {
             const appts = getProviderAppts(provName);
             return (
               <div key={provName} className="provider-col">
