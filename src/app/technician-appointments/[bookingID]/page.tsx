@@ -34,6 +34,12 @@ interface RecipeRow {
   subUnitID: string;
   qty: number;
   itemCost: number;
+  /* Category chain of this ingredient (tbl_itemmaster Category1–4) —
+     used to scope the add-ingredient search to the same categories. */
+  category1?: string;
+  category2?: string;
+  category3?: string;
+  category4?: string;
 }
 
 interface SubUnit {
@@ -57,6 +63,10 @@ interface ItemOption {
   masterUnitID: string;
   retailPrice: number;
   serviceItem: boolean;
+  category1?: string;
+  category2?: string;
+  category3?: string;
+  category4?: string;
 }
 
 interface ServiceRecipe {
@@ -289,6 +299,10 @@ function mapRecipeRow(r: Record<string, unknown>): RecipeRow {
     subUnitID: String(r.subUnitID || ""),
     qty: Number(r.qty || 0),
     itemCost: Number(r.itemCost || 0),
+    category1: String(r.category1 || ""),
+    category2: String(r.category2 || ""),
+    category3: String(r.category3 || ""),
+    category4: String(r.category4 || ""),
   };
 }
 
@@ -441,6 +455,9 @@ export default function TechnicianAppointmentDetailPage() {
   const [savingRecipe, setSavingRecipe] = useState(false);
   const [itemQuery, setItemQuery] = useState("");
   const [itemOptions, setItemOptions] = useState<ItemOption[]>([]);
+  /* Selected ingredient row (rev 26): click a recipe row to highlight it;
+     the add-ingredient search is then limited to that item's categories. */
+  const [selectedRowCode, setSelectedRowCode] = useState<string | null>(null);
   const [itemSearching, setItemSearching] = useState(false);
 
   // Technician name suggest dropdown
@@ -691,7 +708,21 @@ export default function TechnicianAppointmentDetailPage() {
     };
   }, [tab, appt, usingSample]);
 
+  // Drop the row selection when the editor closes or the row disappears.
+  useEffect(() => {
+    if (!editingRecipe) {
+      setSelectedRowCode(null);
+      return;
+    }
+    setSelectedRowCode((cur) =>
+      cur && editRows.some((r) => r.rowItemCode === cur) ? cur : null,
+    );
+  }, [editingRecipe, editRows]);
+
   // Debounced stock-item search for the recipe "add ingredient" picker.
+  // When a row is selected the search is scoped to that item's category
+  // chain (c1..c4); items already in the recipe are filtered out, and
+  // services never appear (enforced by the API as well).
   useEffect(() => {
     if (!editingRecipe) return;
     const q = itemQuery.trim();
@@ -700,14 +731,28 @@ export default function TechnicianAppointmentDetailPage() {
       return;
     }
     const loc = (appt?.locCode || "").trim();
+    const sel = editRows.find((r) => r.rowItemCode === selectedRowCode) ?? null;
     const t = setTimeout(async () => {
       setItemSearching(true);
       try {
         const p = new URLSearchParams({ q });
         if (loc) p.set("locCode", loc);
+        if (sel) {
+          const chain = [sel.category1, sel.category2, sel.category3, sel.category4];
+          chain.forEach((c, idx) => {
+            const v = String(c || "").trim();
+            if (v) p.set(`c${idx + 1}`, v);
+          });
+        }
         const res = await fetch(`/api/items/search?${p.toString()}`);
         const json = await res.json();
-        setItemOptions(Array.isArray(json.items) ? (json.items as ItemOption[]) : []);
+        const list = Array.isArray(json.items) ? (json.items as ItemOption[]) : [];
+        const have = new Set(
+          editRows.map((r) => r.rowItemCode.trim().toUpperCase()),
+        );
+        setItemOptions(
+          list.filter((o) => !have.has(o.code.trim().toUpperCase())),
+        );
       } catch {
         setItemOptions([]);
       } finally {
@@ -715,7 +760,7 @@ export default function TechnicianAppointmentDetailPage() {
       }
     }, 300);
     return () => clearTimeout(t);
-  }, [itemQuery, editingRecipe, appt]);
+  }, [itemQuery, editingRecipe, appt, selectedRowCode]);
 
   const assignedTechs = useMemo(() => {
     if (!appt) return [];
@@ -877,6 +922,10 @@ export default function TechnicianAppointmentDetailPage() {
         subUnitID: "",
         qty: 1,
         itemCost: 0,
+        category1: item.category1 || "",
+        category2: item.category2 || "",
+        category3: item.category3 || "",
+        category4: item.category4 || "",
       },
     ]);
     setItemQuery("");
@@ -1548,7 +1597,28 @@ export default function TechnicianAppointmentDetailPage() {
                                                 ? [{ id: row.subUnitID, des: row.subUnitID }, ...subUnits]
                                                 : subUnits;
                                             return (
-                                              <tr key={`${row.rowItemCode}-${i}`}>
+                                              <tr
+                                                key={`${row.rowItemCode}-${i}`}
+                                                onClick={() =>
+                                                  setSelectedRowCode((cur) =>
+                                                    cur === row.rowItemCode ? null : row.rowItemCode,
+                                                  )
+                                                }
+                                                title={
+                                                  selectedRowCode === row.rowItemCode
+                                                    ? "Selected — ingredient search is limited to this item's categories. Click to deselect."
+                                                    : "Click to select — ingredient search will only show this item's categories"
+                                                }
+                                                style={{
+                                                  cursor: "pointer",
+                                                  ...(selectedRowCode === row.rowItemCode
+                                                    ? {
+                                                        background: "#eff6ff",
+                                                        boxShadow: "inset 0 0 0 2px #3b82f6",
+                                                      }
+                                                    : undefined),
+                                                }}
+                                              >
                                                 <td style={{ fontWeight: 700, color: "#6b7280" }}>{i + 1}</td>
                                                 <td style={{ fontWeight: 700, color: "#1e3a40" }}>
                                                   {row.rowItemCode}
@@ -1610,7 +1680,10 @@ export default function TechnicianAppointmentDetailPage() {
                                                     className="btn-remove"
                                                     type="button"
                                                     title="Remove line"
-                                                    onClick={() => removeEditRow(i)}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      removeEditRow(i);
+                                                    }}
                                                   >
                                                     <Ico.X />
                                                   </button>
@@ -1627,6 +1700,28 @@ export default function TechnicianAppointmentDetailPage() {
                                     <p style={{ color: "#6b7280", fontSize: 10, fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
                                       Add ingredient
                                     </p>
+                                    {(() => {
+                                      const sel = editRows.find(
+                                        (r) => r.rowItemCode === selectedRowCode,
+                                      );
+                                      if (!sel) return null;
+                                      return (
+                                        <p
+                                          style={{
+                                            display: "flex", alignItems: "center", gap: 6,
+                                            margin: "0 0 8px", padding: "7px 10px",
+                                            background: "#eff6ff", border: "1.5px solid #3b82f6",
+                                            borderRadius: 8, color: "#1d4ed8",
+                                            fontSize: 12, fontWeight: 700,
+                                          }}
+                                        >
+                                          ➕ Adding for: {sel.rowItemDes || sel.rowItemCode}
+                                          <span style={{ fontWeight: 600, color: "#3b82f6" }}>
+                                            — search limited to its categories
+                                          </span>
+                                        </p>
+                                      );
+                                    })()}
                                     <div className="suggest-wrap" ref={itemSuggestAnchor}>
                                       <input
                                         className="f-inp"
@@ -1672,7 +1767,6 @@ export default function TechnicianAppointmentDetailPage() {
                                                   </small>
                                                 )}
                                               </span>
-                                              {o.serviceItem && <span className="badge b-pre">Service</span>}
                                             </button>
                                           ))}
                                       </FloatingPanel>

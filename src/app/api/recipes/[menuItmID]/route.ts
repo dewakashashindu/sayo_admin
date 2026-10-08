@@ -76,15 +76,28 @@ export async function GET(req: NextRequest, { params }: Ctx) {
             ItemCode:     true,
             ItemDes:      true,
             MasterUnitID: true,
+            Category1:    true,
+            Category2:    true,
+            Category3:    true,
+            Category4:    true,
           },
         })
       : [];
 
-    const itemMap = new Map<string, { des: string; masterUnitID: string }>();
+    const itemMap = new Map<
+      string,
+      { des: string; masterUnitID: string; cat: [string, string, string, string] }
+    >();
     for (const im of itemMasters) {
       itemMap.set(im.ItemCode.trim(), {
         des:          im.ItemDes,
         masterUnitID: im.MasterUnitID.trim(),
+        cat: [
+          String(im.Category1 ?? '').trim(),
+          String(im.Category2 ?? '').trim(),
+          String(im.Category3 ?? '').trim(),
+          String(im.Category4 ?? '').trim(),
+        ],
       });
     }
 
@@ -110,6 +123,12 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         qty:          r.Qty,
         locCode:      r.LocCode.trim(),
         itemCost:     r.ItemCost,
+        /* Category chain of the ingredient's item master record — the
+           workstation uses it to scope the "add ingredient" search. */
+        category1: info?.cat[0] ?? '',
+        category2: info?.cat[1] ?? '',
+        category3: info?.cat[2] ?? '',
+        category4: info?.cat[3] ?? '',
       };
     });
 

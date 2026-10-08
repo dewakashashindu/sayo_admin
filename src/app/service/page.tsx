@@ -1163,12 +1163,16 @@ function IngredientAC({
   placeholder,
   onSelect,
   onChange,
+  existingCodes,
 }: {
   value: string;
   items: RawItem[];
   placeholder?: string;
   onSelect: (item: RawItem) => void;
   onChange: (value: string) => void;
+  /** Codes already used by other recipe rows — shown as "Already added"
+      and cannot be picked again (rev 26). */
+  existingCodes?: string[];
 }) {
   const [open, setOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(0);
@@ -1188,6 +1192,16 @@ function IngredientAC({
       )
       .slice(0, 14);
   }, [value, items]);
+
+  const dupSet = useMemo(
+    () =>
+      new Set(
+        (existingCodes ?? [])
+          .map((c) => c.trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    [existingCodes],
+  );
 
   const updatePosition = useCallback(() => {
     if (!inputRef.current) return;
@@ -1271,10 +1285,11 @@ function IngredientAC({
             event.preventDefault();
             setHighlightIndex((currentIndex) => Math.max(currentIndex - 1, 0));
           } else if (event.key === "Enter") {
-            if (open && suggestions[highlightIndex]) {
+            const pick = suggestions[highlightIndex];
+            if (open && pick && !dupSet.has(pick.code.trim().toUpperCase())) {
               event.preventDefault();
               event.stopPropagation();
-              onSelect(suggestions[highlightIndex]);
+              onSelect(pick);
               setOpen(false);
             }
           } else if (event.key === "Escape" || event.key === "Tab") {
@@ -1295,12 +1310,18 @@ function IngredientAC({
               style={dropdownStyle}
               onMouseDown={(event) => event.preventDefault()}
             >
-              {suggestions.map((item, index) => (
+              {suggestions.map((item, index) => {
+                const dup = dupSet.has(item.code.trim().toUpperCase());
+                return (
                 <div
                   key={item.code}
                   className={`ac-item ${index === highlightIndex ? "highlighted" : ""}`}
-                  style={{ padding: "10px 13px" }}
+                  style={{
+                    padding: "10px 13px",
+                    ...(dup ? { opacity: 0.55, cursor: "not-allowed" } : undefined),
+                  }}
                   onMouseDown={() => {
+                    if (dup) return; // already in the recipe — cannot add twice
                     onSelect(item);
                     setOpen(false);
                   }}
@@ -1337,6 +1358,20 @@ function IngredientAC({
                           Raw Item
                         </span>
                       )}
+                      {dup && (
+                        <span
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            background: "#fee2e2",
+                            color: "#b91c1c",
+                            borderRadius: 4,
+                            padding: "1px 6px",
+                          }}
+                        >
+                          Already added
+                        </span>
+                      )}
                       <span style={{ fontSize: 10.5, color: "#6b7280" }}>
                         Unit:{" "}
                         <strong style={{ color: "#1e3a40" }}>
@@ -1347,7 +1382,8 @@ function IngredientAC({
                   </div>
                   <span className="ac-cost">LKR {item.cost.toFixed(2)}</span>
                 </div>
-              ))}
+                );
+              })}
             </div>,
             document.body,
           );
@@ -1780,6 +1816,9 @@ function RecipeGrid({
                     value={row.rowItemCode}
                     items={allowedItems}
                     placeholder="Code…"
+                    existingCodes={rows
+                      .filter((_, ri) => ri !== index)
+                      .map((r) => r.rowItemCode)}
                     onChange={(value) =>
                       updateRow(index, "rowItemCode", value.toUpperCase())
                     }
@@ -1791,6 +1830,9 @@ function RecipeGrid({
                     value={row.rowItemDes}
                     items={allowedItems}
                     placeholder="Type description to search…"
+                    existingCodes={rows
+                      .filter((_, ri) => ri !== index)
+                      .map((r) => r.rowItemCode)}
                     onChange={(value) => updateDescription(index, value)}
                     onSelect={(item) => selectByDescription(index, item)}
                   />
@@ -2425,12 +2467,20 @@ function ItemMasterPageContent() {
   );
   // Keep per-location retail in sync: Retail = Overall × (1 + margin/100)
   // When cost/markup changes, overallCost changes and every location's stored retail must follow.
+  // Sub-locations are EXCLUDED — their pricing is permanently zero (#29 + rev 26).
   useEffect(() => {
     setCurrent((prev) => {
       if (!prev.locationDetails.length) return prev;
       const base = Number.isFinite(overallCost) ? overallCost : 0;
       let changed = false;
       const next = prev.locationDetails.map((loc) => {
+        if (loc.sub) {
+          if (Number(loc.retailPrice) !== 0) {
+            changed = true;
+            return { ...loc, retailPrice: 0 };
+          }
+          return loc;
+        }
         const m = Number(loc.salesMargin) || 0;
         const expected = Number((base * (1 + m / 100)).toFixed(2));
         if (Number(loc.retailPrice) !== expected) {
@@ -2769,11 +2819,14 @@ function ItemMasterPageContent() {
         locCode: savedLocCode,
         itemCode: savedItemCode,
         // Per-location retail is always derived: Overall(=Raw*(1+markup%)) * (1+margin%)
+        // Sub-locations never carry pricing — they are saved as zero.
         locationDetails: current.locationDetails.map((loc) => ({
           ...loc,
-          retailPrice: Number(
-            (overallCost * (1 + (Number(loc.salesMargin) || 0) / 100)).toFixed(2),
-          ),
+          retailPrice: loc.sub
+            ? 0
+            : Number(
+                (overallCost * (1 + (Number(loc.salesMargin) || 0) / 100)).toFixed(2),
+              ),
         })),
       };
 
