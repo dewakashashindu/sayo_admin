@@ -9,7 +9,7 @@ if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 
 export async function GET() {
   try {
-    const [recipes, allItems, subUnits, locations] = await Promise.all([
+    const [recipes, allItems, subUnits, locations, conversions] = await Promise.all([
       prisma.tbl_Recipes.findMany(),
       prisma.tbl_ItemMaster.findMany({
         where: { Enable: true },
@@ -24,6 +24,7 @@ export async function GET() {
       }),
       prisma.tbl_UnitSub.findMany({ where: { Enable: true } }),
       prisma.tbl_LocationMaster.findMany({ where: { Enable: true } }),
+      prisma.tbl_UnitConversion.findMany({ where: { Enable: true } }),
     ]);
 
     const formattedRecipes = recipes.map((r, i) => ({
@@ -56,6 +57,13 @@ export async function GET() {
       rawItems,
       subUnits: subUnits.map(s => ({ id: s.SubUnitID.trim(), des: s.SubUnitDes })),
       locations: locations.map(l => ({ code: l.LocCode.trim(), name: l.LocDes })),
+      /* Master→sub conversion factors so recipe cost can be computed as
+         (UnitCost / NoOfUnits) * Qty. */
+      conversions: conversions.map(c => ({
+        masterUnitID: c.MasterUnitID.trim(),
+        subUnitID:    c.SubUnitID.trim(),
+        noOfUnits:    Number(c.NoOfUnits) || 0,
+      })),
     });
   } catch (err) {
     console.error('GET /api/recipes error:', err);

@@ -95,6 +95,13 @@ interface SubUnit {
   des: string;
 }
 
+/** tbl_unitconversion row: how many sub units make one master unit. */
+interface UnitConv {
+  masterUnitID: string;
+  subUnitID: string;
+  noOfUnits: number;
+}
+
 /** A row of tbl_technicianspecilities, for the Speciality dropdown. */
 interface SpecOpt {
   id: string;
@@ -1596,6 +1603,7 @@ function RecipeGrid({
   onChange,
   menuItmID,
   defaultLocCode,
+  conversions,
 }: {
   rows: RecipeRow[];
   allowedItems: RawItem[];
@@ -1603,7 +1611,18 @@ function RecipeGrid({
   onChange: (rows: RecipeRow[]) => void;
   menuItmID: string;
   defaultLocCode: string;
+  conversions: UnitConv[];
 }) {
+  /** How many sub units make one master unit for this row's item. */
+  const noOfUnitsFor = (row: RecipeRow): number => {
+    const c = conversions.find(
+      (x) => x.masterUnitID === row.masterUnitID && x.subUnitID === row.subUnitID,
+    );
+    return c && c.noOfUnits > 0 ? c.noOfUnits : 1;
+  };
+  /** Recipe line cost = (Unit Cost / No Of Units) * Qty. */
+  const rowCost = (row: RecipeRow): number =>
+    (row.itemCost / noOfUnitsFor(row)) * row.qty;
   function selectByCode(index: number, item: RawItem) {
     onChange(
       rows.map((row, rowIndex) =>
@@ -1677,10 +1696,7 @@ function RecipeGrid({
     ]);
   }
 
-  const totalCost = rows.reduce(
-    (sum, row) => sum + Number(row.qty) * Number(row.itemCost),
-    0,
-  );
+  const totalCost = rows.reduce((sum, row) => sum + rowCost(row), 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1811,7 +1827,7 @@ function RecipeGrid({
                       color: "#0369a1",
                       fontWeight: 700,
                     }}
-                    value={(Number(row.qty) * Number(row.itemCost)).toFixed(2)}
+                    value={rowCost(row).toFixed(2)}
                   />
                 </td>
                 <td>
@@ -2332,6 +2348,7 @@ function ItemMasterPageContent() {
   const [allRawItems, setAllRawItems] = useState<RawItem[]>([]);
   const [recipeRows, setRecipeRows] = useState<RecipeRow[]>([]);
   const [subUnits, setSubUnits] = useState<SubUnit[]>([]);
+  const [conversions, setConversions] = useState<UnitConv[]>([]);
   const [recipeSaving, setRecipeSaving] = useState(false);
   const [recipeLocCodes, setRecipeLocCodes] = useState<string[]>([]);
 
@@ -2505,6 +2522,7 @@ function ItemMasterPageContent() {
         }>;
         rawItems: RawItem[];
         subUnits: SubUnit[];
+        conversions?: UnitConv[];
       };
 
       if (!json.success) return;
@@ -2512,6 +2530,7 @@ function ItemMasterPageContent() {
       const rawItems = json.rawItems ?? [];
       setAllRawItems(rawItems);
       setSubUnits(json.subUnits ?? []);
+      setConversions(json.conversions ?? []);
       setAllRecipes(
         (json.recipes ?? []).map((recipe) => {
           const code = recipe.rowItemCode.trim().toUpperCase();
@@ -3781,6 +3800,7 @@ function ItemMasterPageContent() {
                             onChange={setRecipeRows}
                             menuItmID={current.itemCode}
                             defaultLocCode={primaryLocCode}
+                            conversions={conversions}
                           />
                         </Card>
                       </>
