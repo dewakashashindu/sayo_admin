@@ -128,11 +128,39 @@ export default function BillingReportPage() {
   }
 
   function onPdf() {
+    const src = document.getElementById("br-print-area");
+    if (!src || !report) {
+      showToast("Report data not ready yet — load the report first.");
+      return;
+    }
+    const w = window.open("", "_blank", "width=1280,height=900");
+    if (!w) {
+      showToast("Pop-up blocked — allow pop-ups to download the PDF.");
+      return;
+    }
     setPdfBusy(true);
-    window.setTimeout(() => {
-      setPdfBusy(false);
-      showToast("PDF download will connect when reports use live bills.");
-    }, 700);
+    const locLabel = loc ? `Location: ${loc}` : "All locations";
+    const printedAt = new Date().toLocaleString("en-GB");
+    w.document.write(
+      `<!DOCTYPE html><html><head><meta charset="utf-8" />
+<title>${report.title}</title>
+<style>${REPORT_CSS}</style>
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+  body { background: #fff !important; padding: 14px; }
+  h1 { font-size: 16px; margin: 0 0 2px; color: #12313a; }
+  p.meta { font-size: 11px; color: #555; margin: 0 0 14px; }
+  table { font-size: 11px; }
+</style></head><body>
+<h1>${report.title}</h1>
+<p class="meta">${locLabel} &nbsp;·&nbsp; ${from} → ${to} &nbsp;·&nbsp; printed ${printedAt}</p>
+${src.innerHTML}
+<script>window.onload = function () { window.focus(); window.print(); };<\/script>
+</body></html>`,
+    );
+    w.document.close();
+    setPdfBusy(false);
+    showToast("Print dialog opened — choose “Save as PDF”.");
   }
 
   function onShare(kind: "wa" | "email" | "device" | "copy") {
@@ -223,6 +251,7 @@ export default function BillingReportPage() {
                     padding: 16,
                   }}
                 >
+                  <div id="br-print-area">
                   {loading ? (
                     <div className="br-load">
                       <div className="br-spin" />
@@ -239,6 +268,7 @@ export default function BillingReportPage() {
                   ) : (
                     renderReport(report.id, bills, credit, unusedItems)
                   )}
+                  </div>
                 </div>
               </div>
             </>
