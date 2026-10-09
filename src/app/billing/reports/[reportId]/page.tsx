@@ -12,6 +12,23 @@ import { REPORT_CSS } from "@/components/billing-reports/reportCss";
 import ReportToolbar from "@/components/billing-reports/ReportToolbar";
 import ReportCharts from "@/components/billing-reports/ReportCharts";
 import { chartsFor, renderReport, searchBills, searchCredit } from "@/components/billing-reports/renderers";
+import {
+  CashierBreakdownPdfDocument,
+  CashierSalesPdfDocument,
+  CreditPdfDocument,
+  fmtDMonY,
+  HourlySalesPdfDocument,
+  ItemIssuePdfDocument,
+  ItemMovementPdfDocument,
+  PaxPdfDocument,
+  PaymentGridPdfDocument,
+  PaymentSummaryPdfDocument,
+  ReportPdfDocument,
+  SalesCategoryPdfDocument,
+  SalesDetailPdfDocument,
+  SalesSummaryPdfDocument,
+  TaxPdfDocument,
+} from "@/components/billing-reports/pdfDocs";
 import { isReportId, reportById } from "@/lib/billingReports/config";
 import { presetRange, todayISO, yearStartISO } from "@/lib/billingReports/dates";
 import type { CreditTxn, MockBill, MockLocation, MockPayMode } from "@/lib/billingReports/types";
@@ -26,7 +43,8 @@ export default function BillingReportPage() {
   const [zoom, setZoom] = useState(100);
   const [chartMode, setChartMode] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [pdfBusy, setPdfBusy] = useState(false);
+  /* rev 33: print stamp fixed at page mount (same as the legacy reports). */
+  const [printedAt] = useState(() => new Date());
   const [toast, setToast] = useState("");
   const [err, setErr] = useState("");
   const [rawBills, setRawBills] = useState<MockBill[]>([]);
@@ -127,41 +145,91 @@ export default function BillingReportPage() {
     window.setTimeout(() => setToast(""), 2800);
   }
 
-  function onPdf() {
-    const src = document.getElementById("br-print-area");
-    if (!src || !report) {
-      showToast("Report data not ready yet — load the report first.");
-      return;
+  /* rev 33: the PDF document is built from the SAME filtered data the
+     screen shows (search + location + pay-mode filters already applied). */
+  const pdfDocument = useMemo(() => {
+    if (!report || loading || err) return undefined;
+    const meta = {
+      title: report.title,
+      printDate: fmtDMonY(printedAt.toISOString().slice(0, 10)),
+      printTime: printedAt.toTimeString().slice(0, 5),
+      from: fmtDMonY(from),
+      to: fmtDMonY(to),
+    };
+    switch (report.id) {
+      case "sales-summary":
+        return <SalesSummaryPdfDocument meta={meta} bills={bills} />;
+      case "sales-details":
+        return <SalesDetailPdfDocument meta={meta} bills={bills} />;
+      case "sales-category-summary":
+        return <SalesCategoryPdfDocument meta={meta} bills={bills} />;
+      case "sales-category-detail":
+        return <SalesCategoryPdfDocument meta={meta} bills={bills} detail />;
+      case "hourly-sales":
+        return <HourlySalesPdfDocument meta={meta} bills={bills} />;
+      case "payment-summary":
+      case "payment-summary-wise":
+        return <PaymentSummaryPdfDocument meta={meta} bills={bills} />;
+      case "payment-bill-paymode-grid":
+      case "cashier-breakdown-grid":
+        return <PaymentGridPdfDocument meta={meta} bills={bills} />;
+      case "cashier-collection":
+        return <CashierSalesPdfDocument meta={meta} bills={bills} />;
+      case "cashier-payment-breakdown":
+        return <CashierBreakdownPdfDocument meta={meta} bills={bills} />;
+      case "menu-item-issue":
+        return <ItemIssuePdfDocument meta={meta} bills={bills} />;
+      case "menu-item-issue-date":
+        return <ItemIssuePdfDocument meta={meta} bills={bills} byDate />;
+      case "item-movement":
+        return <ItemMovementPdfDocument meta={meta} bills={bills} unusedItems={unusedItems} />;
+      case "transaction-summary":
+        return (
+          <ReportPdfDocument
+            meta={meta}
+            bills={bills}
+            columns={[
+              { header: "Date", width: 14, get: (b) => b.date },
+              { header: "Bill No", width: 16, get: (b) => b.billNo },
+              { header: "Cashier", width: 20, get: (b) => b.cashierName },
+              { header: "Pax", width: 8, num: true, get: (b) => String(b.pax) },
+              { header: "Net Total", width: 16, num: true, get: (b) => b.netTotal.toFixed(2) },
+            ]}
+          />
+        );
+      case "service-charge":
+        return (
+          <ReportPdfDocument
+            meta={meta}
+            bills={bills}
+            columns={[
+              { header: "Date", width: 14, get: (b) => b.date },
+              { header: "Bill No", width: 16, get: (b) => b.billNo },
+              { header: "Cashier", width: 20, get: (b) => b.cashierName },
+              { header: "Service Charge", width: 16, num: true, get: (b) => b.serviceCharge.toFixed(2) },
+              { header: "Other SC", width: 14, num: true, get: (b) => b.otherServiceCharge.toFixed(2) },
+              { header: "Net Total", width: 16, num: true, get: (b) => b.netTotal.toFixed(2) },
+            ]}
+          />
+        );
+      case "tax-vat":
+        return <TaxPdfDocument meta={meta} bills={bills} />;
+      case "pax-count":
+        return <PaxPdfDocument meta={meta} bills={bills} />;
+      case "credit-history":
+      case "credit-pay-history":
+      case "credit-account-detail":
+        return <CreditPdfDocument meta={meta} credit={credit} />;
+      default:
+        return undefined;
     }
-    const w = window.open("", "_blank", "width=1280,height=900");
-    if (!w) {
-      showToast("Pop-up blocked — allow pop-ups to download the PDF.");
-      return;
-    }
-    setPdfBusy(true);
-    const locLabel = loc ? `Location: ${loc}` : "All locations";
-    const printedAt = new Date().toLocaleString("en-GB");
-    w.document.write(
-      `<!DOCTYPE html><html><head><meta charset="utf-8" />
-<title>${report.title}</title>
-<style>${REPORT_CSS}</style>
-<style>
-  @page { size: A4 landscape; margin: 10mm; }
-  body { background: #fff !important; padding: 14px; }
-  h1 { font-size: 16px; margin: 0 0 2px; color: #12313a; }
-  p.meta { font-size: 11px; color: #555; margin: 0 0 14px; }
-  table { font-size: 11px; }
-</style></head><body>
-<h1>${report.title}</h1>
-<p class="meta">${locLabel} &nbsp;·&nbsp; ${from} → ${to} &nbsp;·&nbsp; printed ${printedAt}</p>
-${src.innerHTML}
-<script>window.onload = function () { window.focus(); window.print(); };<\/script>
-</body></html>`,
-    );
-    w.document.close();
-    setPdfBusy(false);
-    showToast("Print dialog opened — choose “Save as PDF”.");
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report, loading, err, bills, credit, unusedItems, from, to, printedAt]);
+
+  const pdfFileName = useMemo(() => {
+    const mode = report?.id === "item-movement" ? "-all" : "";
+    return `${report?.id ?? "report"}${mode}-${from}_to_${to}.pdf`;
+  }, [report, from, to]);
 
   function onShare(kind: "wa" | "email" | "device" | "copy") {
     const url = typeof window !== "undefined" ? window.location.href : "";
@@ -238,9 +306,9 @@ ${src.innerHTML}
                 onPm={(next) => patchQuery({ pm: next })}
                 onZoom={setZoom}
                 onToggleChart={() => setChartMode((v) => !v)}
-                onPdf={onPdf}
+                pdfDocument={pdfDocument}
+                pdfFileName={pdfFileName}
                 onShare={onShare}
-                pdfBusy={pdfBusy}
               />
               <div className="main-body" style={{ flex: 1, overflow: "auto", background: "#f8fafc" }}>
                 <div
@@ -251,7 +319,6 @@ ${src.innerHTML}
                     padding: 16,
                   }}
                 >
-                  <div id="br-print-area">
                   {loading ? (
                     <div className="br-load">
                       <div className="br-spin" />
@@ -268,7 +335,6 @@ ${src.innerHTML}
                   ) : (
                     renderReport(report.id, bills, credit, unusedItems)
                   )}
-                  </div>
                 </div>
               </div>
             </>

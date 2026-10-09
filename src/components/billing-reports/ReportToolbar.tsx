@@ -1,8 +1,54 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import type { MockLocation, MockPayMode, ReportDef } from "@/lib/billingReports/types";
 import { DatePreset, matchPreset, presetRange } from "@/lib/billingReports/dates";
+
+/* rev 33: client-only import so SSR never touches the browser PDF APIs. */
+const PDFDownloadLink = dynamic(
+  () => import("@react-pdf/renderer").then((m) => m.PDFDownloadLink),
+  { ssr: false },
+) as unknown as React.ComponentType<{
+  document: unknown;
+  fileName: string;
+  className?: string;
+  style?: React.CSSProperties;
+  children: (arg: { loading: boolean }) => React.ReactNode;
+}>;
+
+/* rev 34: pdfkit 0.20 browser builds need the base-14 fonts registered
+   before any PDF renders ("Standard font Helvetica is not registered").
+   Runs once, client-side, before the download link is mounted. */
+let stdFontsPromise: Promise<void> | null = null;
+function ensureStdFonts(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+  stdFontsPromise ??= (async () => {
+    const [pk, hel, helB, helI, helBI, tRom, tB, tI, tBI, c, cB, cI, cBI] =
+      await Promise.all([
+        import("pdfkit"),
+        import("pdfkit/standard-fonts/Helvetica"),
+        import("pdfkit/standard-fonts/HelveticaBold"),
+        import("pdfkit/standard-fonts/HelveticaOblique"),
+        import("pdfkit/standard-fonts/HelveticaBoldOblique"),
+        import("pdfkit/standard-fonts/TimesRoman"),
+        import("pdfkit/standard-fonts/TimesBold"),
+        import("pdfkit/standard-fonts/TimesItalic"),
+        import("pdfkit/standard-fonts/TimesBoldItalic"),
+        import("pdfkit/standard-fonts/Courier"),
+        import("pdfkit/standard-fonts/CourierBold"),
+        import("pdfkit/standard-fonts/CourierOblique"),
+        import("pdfkit/standard-fonts/CourierBoldOblique"),
+      ]);
+    (pk as unknown as { registerStdFonts: (...fonts: unknown[]) => void })
+      .registerStdFonts(
+        hel.default, helB.default, helI.default, helBI.default,
+        tRom.default, tB.default, tI.default, tBI.default,
+        c.default, cB.default, cI.default, cBI.default,
+      );
+  })();
+  return stdFontsPromise;
+}
 
 const PRESETS: { id: DatePreset; label: string }[] = [
   { id: "today", label: "Today" },
@@ -30,9 +76,9 @@ export default function ReportToolbar({
   onPm,
   onZoom,
   onToggleChart,
-  onPdf,
+  pdfDocument,
+  pdfFileName,
   onShare,
-  pdfBusy,
 }: {
   report: ReportDef;
   from: string;
@@ -50,13 +96,26 @@ export default function ReportToolbar({
   onPm: (pm: string) => void;
   onZoom: (z: number) => void;
   onToggleChart: () => void;
-  onPdf: () => void;
+  pdfDocument?: React.ReactNode;
+  pdfFileName?: string;
   onShare: (kind: "wa" | "email" | "device" | "copy") => void;
-  pdfBusy: boolean;
 }) {
   const [shareOpen, setShareOpen] = useState(false);
+  const [fontsReady, setFontsReady] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const active = matchPreset(from, to);
+
+  useEffect(() => {
+    let cancelled = false;
+    void ensureStdFonts()
+      .catch(() => undefined)
+      .then(() => {
+        if (!cancelled) setFontsReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="br-toolbar">
@@ -72,9 +131,35 @@ export default function ReportToolbar({
           {report.subtitle && <div className="br-sub">{report.subtitle}</div>}
         </div>
         <div style={{ flex: 1 }} />
-        <button className="br-pdf" type="button" onClick={onPdf} disabled={pdfBusy}>
-          {pdfBusy ? "Preparing PDF..." : "Download PDF"}
-        </button>
+        {pdfDocument && pdfFileName && fontsReady ? (
+          <PDFDownloadLink
+            document={pdfDocument}
+            fileName={pdfFileName}
+            className="br-pdf"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 7,
+              background: "linear-gradient(180deg,#1d7a34,#145a26)",
+              color: "#fff", border: "none", borderRadius: 8,
+              padding: "9px 16px", fontSize: 13, fontWeight: 700,
+              cursor: "pointer", textDecoration: "none",
+            }}
+          >
+            {({ loading }) =>
+              loading ? (
+                "Preparing PDF..."
+              ) : (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Download PDF
+                </>
+              )
+            }
+          </PDFDownloadLink>
+        ) : null}
       </div>
 
       <div className="br-t-row">

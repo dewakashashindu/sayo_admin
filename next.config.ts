@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 /* Kept in step with SECURITY_HEADERS in server.mjs (the custom server used by
    `npm start` sets them itself, because next.config headers are ignored there).
@@ -20,6 +21,34 @@ const nextConfig: NextConfig = {
      must stay a real node_modules package instead of being bundled into the
      server chunk. This is what Next recommends for packages like it. */
   serverExternalPackages: ["pdfkit"],
+
+  /* rev 33: @react-pdf/renderer ships ESM-only — without this the server
+     compile tries to require() it and fails (import-esm-externals). */
+  transpilePackages: ["@react-pdf/renderer"],
+
+  /* rev 35: force the CLIENT bundle (app code AND @react-pdf/renderer) to
+     resolve one single pdfkit copy, so registerStdFonts() reaches the same
+     Font registry the renderer uses. Server keeps the real external package
+     (pdfkit reads .afm metrics from disk at run time). */
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      const pk = path.resolve(process.cwd(), "node_modules/pdfkit/js");
+      const fonts = [
+        "Helvetica", "HelveticaBold", "HelveticaOblique", "HelveticaBoldOblique",
+        "TimesRoman", "TimesBold", "TimesItalic", "TimesBoldItalic",
+        "Courier", "CourierBold", "CourierOblique", "CourierBoldOblique",
+      ];
+      const alias: Record<string, string> = {
+        ...config.resolve.alias as Record<string, string>,
+        pdfkit$: path.join(pk, "pdfkit.browser.mjs"),
+      };
+      for (const f of fonts) {
+        alias[`pdfkit/standard-fonts/${f}$`] = path.join(pk, "standard-fonts", `${f}.mjs`);
+      }
+      config.resolve.alias = alias;
+    }
+    return config;
+  },
 
   /* Personal/business data must never be cached by a browser or a proxy. */
   async headers() {
